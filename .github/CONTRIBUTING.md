@@ -151,10 +151,13 @@ Use the matching form in `.github/ISSUE_TEMPLATE`: **task** for a deliverable,
 **bug** for a reproduced failure, **design** for a decision a human must make.
 
 Title: `[type][area] outcome`, for example `[task][ci] Run tests on macOS and Windows`.
-Types: `task, bug, design`; areas:
-<!-- issue-areas -->`repo, ci, docs, test, gateway, access, metering, mock, client, console, infra, loadtest`.
-The module areas follow [Code layout](../AGENTS.md#code-layout); add one when a new
-module is agreed. The issue format check reads only the list after the marker.
+Types: `task, bug, design`. The areas are the repository's
+[`area:` labels](https://github.com/bibi45c/gateflow/labels?q=area%3A): the label
+`area:infra` allows the title area `infra`. A maintainer adds, renames or deletes
+area labels on GitHub without a PR; the issue format check then rechecks every open
+issue, and a maintainer can rerun it from the Actions tab. Module areas follow
+[Code layout](../AGENTS.md#code-layout): when a new module is agreed, add its label
+and its row there.
 
 Every issue belongs to a GitHub milestone, one per delivery stage (see
 [docs/feasibility-plan.md](../docs/feasibility-plan.md)). Whoever creates the issue sets
@@ -265,7 +268,7 @@ Run every step from a different checkout, never from inside the target.
 Commit and PR titles: `type(scope): change`, for example
 `docs(repo): define agent workflow`. Types:
 `feat, fix, docs, test, refactor, perf, build, ci, chore, revert`. The scope is one of
-the issue areas listed under Issues.
+the issue areas (see [Issues](#issues)).
 
 Fill every heading of the [PR template](pull_request_template.md):
 

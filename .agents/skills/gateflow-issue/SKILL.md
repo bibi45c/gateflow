@@ -22,7 +22,9 @@ fields.
    python tools/repo/check_issue.py --title "<title>" --body-file "<draft file>"
    ```
 
-   A passing format check does not make the issue Ready.
+   The check reads the `area:` labels from GitHub. If that fails, retry, set
+   `GH_TOKEN`, or pass the areas with `--areas "repo, ci"`. A passing format check
+   does not make the issue Ready.
 4. Check readiness against Issues. Split a broad outcome into sub-issues that can each
    be verified, and record their order.
 5. Never invent an owner, approval, observation or issue number. List unknowns as

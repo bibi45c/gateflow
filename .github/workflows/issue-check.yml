@@ -2,11 +2,15 @@ name: Issue format check
 on:
   issues:
     types: [opened, edited]
+  # A changed area: label rechecks every open issue; other labels are skipped.
+  label:
+    types: [created, edited, deleted]
+  workflow_dispatch:
 permissions:
   contents: read
   issues: write
 concurrency:
-  group: issue-format-${{ github.event.issue.number }}
+  group: issue-format-${{ github.event.issue.number || 'all' }}
   cancel-in-progress: false
 jobs:
   check:
@@ -19,7 +23,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
-      - name: Check the current issue and update its format reminder
+      - name: Check the affected issues and update their format reminders
         env:
           GH_TOKEN: ${{ github.token }}
         run: python tools/repo/check_issue.py

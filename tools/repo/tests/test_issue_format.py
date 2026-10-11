@@ -7,10 +7,16 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from check_issue import (BOT, CONTRIBUTING, FORMS, MARKER, PHASE_FIELD, ROOT, check_remote,
-                         issue_areas, requirements, validate)
+import check_issue
+from check_issue import (BOT, FORMS, MARKER, PHASE_FIELD, ROOT, changes_areas, check_all,
+                         check_remote, issue_areas, requirements)
 
 SCRIPT = ROOT / "tools" / "repo" / "check_issue.py"
+AREAS = {"repo", "ci", "docs"}
+
+
+def validate(title, body, forms=FORMS):
+    return check_issue.validate(title, body, AREAS, forms)
 
 
 def valid_body(kind="task"):
@@ -30,24 +36,24 @@ class IssueFormatTests(unittest.TestCase):
             with self.subTest(title=title):
                 self.assertIn("Title:", validate(title, valid_body())[0])
 
-    def test_unknown_area_is_rejected(self):
-        self.assertIn("Title:", validate("[task][banana] Verify reminder", valid_body())[0])
+    def test_unknown_area_is_rejected_and_the_labels_are_named(self):
+        errors = validate("[task][banana] Verify reminder", valid_body())
+        self.assertEqual(["Title: Use an area that has an area: label: ci, docs, repo."], errors)
 
-    def test_contributing_lists_the_agreed_areas(self):
-        contract = CONTRIBUTING.read_text(encoding="utf-8-sig")
-        self.assertEqual({"repo", "ci", "docs", "test", "gateway", "access", "metering", "mock",
-                          "client", "console", "infra", "loadtest"}, issue_areas(contract))
+    def test_areas_come_only_from_well_formed_area_labels(self):
+        labels = ["area:repo", "area:ci", "bug", "state:ready", "area:Bad.Name", "Area:docs", "area:"]
+        self.assertEqual({"repo", "ci"}, issue_areas(labels))
 
-    def test_other_area_wording_does_not_change_the_list(self):
-        contract = ("Focus areas: `repo` for now. Issue areas are listed below.\n"
-                    "Types: `task`; areas: <!-- issue-areas -->`repo, ci`.")
-        self.assertEqual({"repo", "ci"}, issue_areas(contract))
+    def test_no_area_label_fails_visibly(self):
+        for labels in ([], ["bug", "state:ready"], ["area:Bad"]):
+            with self.subTest(labels=labels), self.assertRaises(ValueError):
+                issue_areas(labels)
 
-    def test_marker_quoted_in_code_is_not_the_list(self):
-        contract = ("Write `<!-- issue-areas -->` before the list.\n\n"
-                    "```text\n<!-- issue-areas -->`example`\n```\n\n"
-                    "areas: <!-- issue-areas -->`repo, ci`.")
-        self.assertEqual({"repo", "ci"}, issue_areas(contract))
+    def test_only_area_label_changes_start_a_recheck(self):
+        self.assertTrue(changes_areas({"label": {"name": "area:infra"}}))
+        self.assertTrue(changes_areas({"label": {"name": "infra"}, "changes": {"name": {"from": "area:infra"}}}))
+        self.assertFalse(changes_areas({"label": {"name": "state:ready"}}))
+        self.assertFalse(changes_areas({"label": {"name": "bug"}, "changes": {"color": {"from": "ffffff"}}}))
 
     def test_acceptance_phase_accepts_only_the_two_phases(self):
         def body(value):
@@ -68,20 +74,14 @@ class IssueFormatTests(unittest.TestCase):
             utf16.write_text(valid_body(), encoding="utf-16")
             def run(path):
                 return subprocess.run([sys.executable, str(SCRIPT), "--title", "[task][repo] Verify CLI",
-                                       "--body-file", str(path)], capture_output=True, text=True)
+                                       "--body-file", str(path), "--areas", "repo, ci"],
+                                      capture_output=True, text=True)
             self.assertEqual(0, run(good).returncode)
             self.assertEqual(1, run(partial).returncode)
             result = run(utf16)
             self.assertNotEqual(0, result.returncode)
             self.assertIn("not UTF-8", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
-
-    def test_missing_duplicate_or_malformed_area_lists_fail_visibly(self):
-        for contract in ("areas: `repo, ci`.",
-                         "<!-- issue-areas -->`repo` and <!-- issue-areas -->`ci`",
-                         "<!-- issue-areas -->`repo, Api.v2`"):
-            with self.subTest(contract=contract), self.assertRaises(ValueError):
-                issue_areas(contract)
 
     def test_missing_empty_and_placeholder_fields(self):
         for value in (None, "", "_No response_", "TODO", "<!-- pending -->", "<fill this in>"):
@@ -145,10 +145,17 @@ class FakeGitHub:
     def __init__(self):
         self.issue = {"title": "[task][repo] Verify reminder", "body": "", "state": "open"}
         self.comments, self.writes = [], []
+        self.labels = [{"name": "area:repo"}, {"name": "bug"}]
+        self.open_issues = [{"number": 1}]
         self.changed = False
-        self.reads = 0
+        self.reads = self.label_reads = 0
 
     def call(self, path, payload=None, method=None):
+        if "/labels?" in path:
+            self.label_reads += 1
+            return self.labels if path.endswith("page=1") else []
+        if "/issues?state=open" in path:
+            return self.open_issues if path.endswith("page=1") else []
         if payload is not None:
             self.writes.append((path, payload, method))
             if method == "POST":
@@ -201,6 +208,29 @@ class IssueCommentTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             check_remote("owner/repo", 1, fake.call)
         self.assertEqual([], fake.writes)
+
+    def test_deleted_area_label_fails_issues_that_use_it(self):
+        fake = FakeGitHub()
+        fake.issue["body"] = valid_body()
+        self.assertEqual("passed", check_remote("owner/repo", 1, fake.call)["result"])
+        fake.labels = [{"name": "area:ci"}]
+        self.assertEqual("needs-info", check_remote("owner/repo", 1, fake.call)["result"])
+        self.assertIn("area: label: ci.", fake.comments[0]["body"])
+
+    def test_recheck_covers_open_issues_and_reads_labels_once(self):
+        fake = FakeGitHub()
+        fake.issue["body"] = valid_body()
+        fake.open_issues = [{"number": 1}, {"number": 2, "pull_request": {}}, {"number": 3}]
+        results, failed = check_all("owner/repo", fake.call)
+        self.assertEqual(([1, 3], 0), ([item["issue"] for item in results], failed))
+        self.assertEqual(1, fake.label_reads)
+
+    def test_recheck_continues_after_an_issue_changes(self):
+        fake = FakeGitHub()
+        fake.changed = True
+        fake.open_issues = [{"number": 1}, {"number": 2}]
+        results, failed = check_all("owner/repo", fake.call)
+        self.assertEqual((["failed", "created"], 1), ([item["action"] for item in results], failed))
 
     def test_closed_issues_and_pull_requests_are_skipped(self):
         for update in ({"state": "closed"}, {"pull_request": {}}):
