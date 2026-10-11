@@ -7,10 +7,10 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.check_issue import (BOT, FORMS, MARKER, PHASE_FIELD, ROOT, check_remote,
-                                 issue_areas, requirements, validate)
+from check_issue import (BOT, CONTRIBUTING, FORMS, MARKER, PHASE_FIELD, ROOT, check_remote,
+                         issue_areas, requirements, validate)
 
-SCRIPT = ROOT / "scripts" / "check_issue.py"
+SCRIPT = ROOT / "tools" / "repo" / "check_issue.py"
 
 
 def valid_body(kind="task"):
@@ -34,7 +34,7 @@ class IssueFormatTests(unittest.TestCase):
         self.assertIn("Title:", validate("[task][banana] Verify reminder", valid_body())[0])
 
     def test_contributing_lists_the_agreed_areas(self):
-        contract = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8-sig")
+        contract = CONTRIBUTING.read_text(encoding="utf-8-sig")
         self.assertEqual({"repo", "ci", "docs", "test", "gateway", "access", "metering", "mock",
                           "client", "console", "infra", "loadtest"}, issue_areas(contract))
 

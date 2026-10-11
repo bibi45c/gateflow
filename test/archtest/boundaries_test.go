@@ -9,12 +9,12 @@ import (
 
 const module = "github.com/bibi45c/gateflow"
 
-// area names the module a package belongs to: "services/<name>" for services,
-// otherwise its top-level directory.
+// area names the module a package belongs to: "services/<name>" or "test/<name>"
+// for services and test tools, otherwise its top-level directory.
 func area(importPath string) string {
 	parts := strings.Split(strings.TrimPrefix(importPath, module+"/"), "/")
-	if parts[0] == "services" && len(parts) > 1 {
-		return "services/" + parts[1]
+	if (parts[0] == "services" || parts[0] == "test") && len(parts) > 1 {
+		return parts[0] + "/" + parts[1]
 	}
 	return parts[0]
 }
@@ -58,10 +58,12 @@ func TestViolationsDetectsCrossServiceImports(t *testing.T) {
 		module + "/services/gateway":                {module + "/pkg/server", module + "/services/gateway/internal/relay"},
 		module + "/services/gateway/internal/relay": {module + "/services/metering/internal/ledger", "net/http"},
 		module + "/pkg/server":                      {module + "/services/access"},
+		module + "/test/mock-upstream":              {module + "/pkg/server", module + "/test/archtest"},
 	}
 	want := []string{
 		module + "/pkg/server imports " + module + "/services/access",
 		module + "/services/gateway/internal/relay imports " + module + "/services/metering/internal/ledger",
+		module + "/test/mock-upstream imports " + module + "/test/archtest",
 	}
 	if got := violations(imports); !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)

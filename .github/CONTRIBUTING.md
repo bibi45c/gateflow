@@ -4,10 +4,10 @@ GateFlow is built by a team on macOS and Windows, by people and coding agents wo
 in parallel. This file is the single source for how work moves from issue to merge.
 Other rule sources:
 
-- [AGENTS.md](AGENTS.md): rules every agent session needs, and skill routing.
-- [docs/testing.md](docs/testing.md): checks, evidence and merge gates.
-- [Issue forms](.github/ISSUE_TEMPLATE) and the
-  [PR template](.github/pull_request_template.md): required fields.
+- [AGENTS.md](../AGENTS.md): rules every agent session needs, and skill routing.
+- [docs/testing.md](../docs/testing.md): checks, evidence and merge gates.
+- [Issue forms](ISSUE_TEMPLATE) and the
+  [PR template](pull_request_template.md): required fields.
 - Skills under `.agents/skills`: step-by-step procedures. They link here, add no rules
   and grant no permission.
 
@@ -50,9 +50,9 @@ personal data. Keep drafts and local notes in `.local/`, which Git ignores.
   tags, changing configuration, `git worktree prune`, `gc` and other maintenance.
   Commits, amends and rebases of your own branch inside your own worktree are not
   shared operations.
-- **Rule files**: AGENTS.md, CLAUDE.md, CONTRIBUTING.md, docs/testing.md, everything
-  under `.agents/`, `.claude/` and `.github/`, and the tooling that enforces them:
-  `scripts/check_issue.py`, `tests/test_docs.py` and `tests/test_issue_format.py`. A
+- **Rule files**: AGENTS.md, docs/testing.md, everything under `.agents/`, `.claude/` and
+  `.github/` (including this file and `.claude/CLAUDE.md`), and the tooling that
+  enforces them under `tools/repo/`. A
   PR changes a rule file when any file it adds, modifies, deletes or renames, from or
   to, is one.
 
@@ -153,11 +153,11 @@ Use the matching form in `.github/ISSUE_TEMPLATE`: **task** for a deliverable,
 Title: `[type][area] outcome`, for example `[task][ci] Run tests on macOS and Windows`.
 Types: `task, bug, design`; areas:
 <!-- issue-areas -->`repo, ci, docs, test, gateway, access, metering, mock, client, console, infra, loadtest`.
-The module areas follow [Code layout](AGENTS.md#code-layout); add one when a new
+The module areas follow [Code layout](../AGENTS.md#code-layout); add one when a new
 module is agreed. The issue format check reads only the list after the marker.
 
 Every issue belongs to a GitHub milestone, one per delivery stage (see
-[docs/feasibility-plan.md](docs/feasibility-plan.md)). Whoever creates the issue sets
+[docs/feasibility-plan.md](../docs/feasibility-plan.md)). Whoever creates the issue sets
 it; a maintainer moves it when the plan changes.
 
 Record dependencies with GitHub's issue relationships: mark an issue as blocked by
@@ -267,7 +267,7 @@ Commit and PR titles: `type(scope): change`, for example
 `feat, fix, docs, test, refactor, perf, build, ci, chore, revert`. The scope is one of
 the issue areas listed under Issues.
 
-Fill every heading of the [PR template](.github/pull_request_template.md):
+Fill every heading of the [PR template](pull_request_template.md):
 
 - **Delivery**: `complete` or `partial`. A partial PR lists the remaining work.
 - **Acceptance phase**: `pre-merge` or `post-merge`. A post-merge PR says what is
@@ -290,7 +290,7 @@ recorded.
 
 Draft, ready for review, mergeable and issue Done are separate states. Keep a PR in
 draft while preparing it; mark it ready when its evidence is complete. Evidence and
-merge gates follow [docs/testing.md](docs/testing.md).
+merge gates follow [docs/testing.md](../docs/testing.md).
 
 ## Review and merge
 
@@ -303,7 +303,7 @@ merge gates follow [docs/testing.md](docs/testing.md).
   2. Every required check passed on that head, judged by the latest run of each
      check, and no check failed without a reason recorded on the PR by the owner, or
      by the integrator when the owner is the author. See
-     [Gates](docs/testing.md#gates).
+     [Gates](../docs/testing.md#gates).
   3. The issue's pre-merge acceptance evidence is in the PR.
   4. No maintainer's latest review on the PR requests changes.
 - During the MVP phase no approving review is required, including for rule-file
@@ -335,7 +335,7 @@ on all three.
 - **File names.** macOS and Windows ignore case by default; Linux CI does not. Use
   lowercase names, match case exactly in references, and never rename by case alone.
 - **Automation.** Write repository scripts in Python with the standard library and run
-  them as `python scripts/<name>.py`. No Bash or PowerShell scripts, no reliance on
+  them as `python tools/repo/<name>.py`. No Bash or PowerShell scripts, no reliance on
   the executable bit, no symlinks.
 - **Commands in docs.** One command per line, with no `&&`, inline environment
   variables or other shell-specific syntax. Write `python`; on macOS use `python3` if

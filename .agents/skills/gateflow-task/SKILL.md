@@ -5,15 +5,15 @@ description: Use when implementing an assigned GateFlow issue end to end, from c
 
 # Implement an assigned issue
 
-Sources: CONTRIBUTING.md [Authorization](../../../CONTRIBUTING.md#authorization),
-[Roles and ownership](../../../CONTRIBUTING.md#roles-and-ownership),
-[Issues](../../../CONTRIBUTING.md#issues) and
-[Cross-platform](../../../CONTRIBUTING.md#cross-platform), and AGENTS.md
+Sources: CONTRIBUTING.md [Authorization](../../../.github/CONTRIBUTING.md#authorization),
+[Roles and ownership](../../../.github/CONTRIBUTING.md#roles-and-ownership),
+[Issues](../../../.github/CONTRIBUTING.md#issues) and
+[Cross-platform](../../../.github/CONTRIBUTING.md#cross-platform), and AGENTS.md
 [Code layout](../../../AGENTS.md#code-layout).
 
 1. Read the issue with `gh issue view <number> --json title,body,labels`, and its
    issue version and assignees with the command under
-   [Delegating work](../../../CONTRIBUTING.md#delegating-work). Check that your
+   [Delegating work](../../../.github/CONTRIBUTING.md#delegating-work). Check that your
    assignment contains every item in Delegating work, that the issue has exactly one
    assignee and the `state:ready` label, and that the issue version matches the
    assignment. If anything is missing or different, stop and ask the owner. Draft missing issue

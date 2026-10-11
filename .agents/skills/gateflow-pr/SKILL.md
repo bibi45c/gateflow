@@ -5,8 +5,8 @@ description: Use when writing GateFlow commits or preparing, opening or updating
 
 # Commit and prepare a PR
 
-Sources: CONTRIBUTING.md [Commits and PRs](../../../CONTRIBUTING.md#commits-and-prs)
-and [Stacked PRs](../../../CONTRIBUTING.md#stacked-prs), the
+Sources: CONTRIBUTING.md [Commits and PRs](../../../.github/CONTRIBUTING.md#commits-and-prs)
+and [Stacked PRs](../../../.github/CONTRIBUTING.md#stacked-prs), the
 [PR template](../../../.github/pull_request_template.md) and docs/testing.md
 [Evidence](../../../docs/testing.md#evidence).
 

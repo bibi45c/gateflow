@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 from urllib.parse import unquote
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 SKIP = {".git", ".venv", ".local", "worktrees", "node_modules"}
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 FENCE_CLOSE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")

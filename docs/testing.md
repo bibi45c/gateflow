@@ -4,7 +4,7 @@
 
 | Check | Command, from the repository root | Required for merge |
 |---|---|---|
-| Repository tests | `python -m unittest discover -s tests -v` | Yes: CI jobs `Tests (ubuntu-latest)`, `Tests (macos-latest)` and `Tests (windows-latest)` |
+| Repository tests | `python -m unittest discover -s tools/repo/tests -v` | Yes: CI jobs `Tests (ubuntu-latest)`, `Tests (macos-latest)` and `Tests (windows-latest)` |
 | Go checks | `go vet ./...`, then `go test ./...`, then `go build ./...` | Yes: CI jobs `Go (ubuntu-latest)`, `Go (macos-latest)` and `Go (windows-latest)` |
 | Compose smoke test | `docker compose -p <worktree-name> -f deploy/compose/compose.yaml up --build --detach`, then open `http://localhost:<port>/healthz` for ports 8080, 8081, 8082 and 8090, then `docker compose -p <worktree-name> -f deploy/compose/compose.yaml down --volumes` | Yes: CI job `Compose smoke test` |
 
@@ -46,7 +46,7 @@ Report each check with:
 - Result: passed, failed, not run or blocked. Explain the last three.
 - Short evidence, such as the summary line of the output.
 
-Example, with illustrative SHAs: `python -m unittest discover -s tests -v`; Windows 11,
+Example, with illustrative SHAs: `python -m unittest discover -s tools/repo/tests -v`; Windows 11,
 Python 3.14; head `1a2b3c4`, base `main` at `5d6e7f8`, up to date; passed, 30 tests.
 
 Re-run affected checks when the head or base changes, or when you are unsure that the

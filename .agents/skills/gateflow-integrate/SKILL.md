@@ -5,14 +5,14 @@ description: Use when merging a GateFlow pull request into main and closing out 
 
 # Merge and close out
 
-Sources: CONTRIBUTING.md [Review and merge](../../../CONTRIBUTING.md#review-and-merge),
-[Authorization](../../../CONTRIBUTING.md#authorization),
-[Commits and PRs](../../../CONTRIBUTING.md#commits-and-prs) and
-[Stacked PRs](../../../CONTRIBUTING.md#stacked-prs), and docs/testing.md
+Sources: CONTRIBUTING.md [Review and merge](../../../.github/CONTRIBUTING.md#review-and-merge),
+[Authorization](../../../.github/CONTRIBUTING.md#authorization),
+[Commits and PRs](../../../.github/CONTRIBUTING.md#commits-and-prs) and
+[Stacked PRs](../../../.github/CONTRIBUTING.md#stacked-prs), and docs/testing.md
 [Gates](../../../docs/testing.md#gates).
 
 1. Confirm that you are the integrator named under
-   [Terms](../../../CONTRIBUTING.md#terms), or acting for them on their direct
+   [Terms](../../../.github/CONTRIBUTING.md#terms), or acting for them on their direct
    instruction in this session.
 2. Read the PR, whether it is up to date with the live base branch, and its reviews:
 
