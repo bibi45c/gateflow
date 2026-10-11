@@ -1,10 +1,13 @@
 """Exercise format feedback and bot-comment updates without network access."""
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 
-from scripts.check_issue import BOT, FORMS, MARKER, check_remote, requirements, validate
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.check_issue import (BOT, FORMS, MARKER, ROOT, check_remote, issue_areas,
+                                 requirements, validate)
 
 
 def valid_body(kind="task"):
@@ -25,6 +28,22 @@ class IssueFormatTests(unittest.TestCase):
 
     def test_unknown_area_is_rejected(self):
         self.assertIn("Title:", validate("[task][banana] Verify reminder", valid_body())[0])
+
+    def test_contributing_lists_the_agreed_areas(self):
+        contract = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8-sig")
+        self.assertEqual({"repo", "ci", "docs", "test"}, issue_areas(contract))
+
+    def test_other_area_wording_does_not_change_the_list(self):
+        contract = ("Focus areas: `repo` for now. Issue areas are listed below.\n"
+                    "Types: `task`; areas: <!-- issue-areas -->`repo, ci`.")
+        self.assertEqual({"repo", "ci"}, issue_areas(contract))
+
+    def test_missing_duplicate_or_malformed_area_lists_fail_visibly(self):
+        for contract in ("areas: `repo, ci`.",
+                         "<!-- issue-areas -->`repo` and <!-- issue-areas -->`ci`",
+                         "<!-- issue-areas -->`repo, Api.v2`"):
+            with self.subTest(contract=contract), self.assertRaises(ValueError):
+                issue_areas(contract)
 
     def test_missing_empty_and_placeholder_fields(self):
         for value in (None, "", "_No response_", "TODO", "<!-- pending -->", "<fill this in>"):

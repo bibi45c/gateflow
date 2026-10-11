@@ -34,9 +34,17 @@ body:
     validations:
       required: true
   - type: input
+    id: acceptance_phase
+    attributes:
+      label: Acceptance phase
+      description: pre-merge, or post-merge plus what is checked after merge and by whom.
+    validations:
+      required: true
+  - type: input
     id: owner
     attributes:
       label: Accountable human owner
+      description: GitHub username. A maintainer assigns this person; the assignee is the owner.
     validations:
       required: true
   - type: textarea

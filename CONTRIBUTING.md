@@ -21,7 +21,7 @@ keep machine paths/session details local.
 
 ## Issues
 
-Titles: `[type][area] outcome`. Types: `task, bug, design`; areas: `repo, ci, docs, test`.
+Titles: `[type][area] outcome`. Types: `task, bug, design`; areas: <!-- issue-areas -->`repo, ci, docs, test`.
 Add module areas when boundaries are agreed. Use the matching issue form when available.
 Ready requires observable acceptance, scope, owner, dependencies, risks and acceptance
 phase (`pre-merge|post-merge`). Required approval covers the implementation scope/version.

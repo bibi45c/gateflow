@@ -17,6 +17,8 @@ MARKER = "<!-- gateflow-issue-format:v1 -->"
 BOT = "github-actions[bot]"
 TITLE = re.compile(r"^\[([a-z]+)\]\[([a-z][a-z0-9-]*)\] (\S.*)$")
 EMPTY = {"", "no response", "todo", "tbd", "fill this in", "fill here"}
+AREA_MARKER = "<!-- issue-areas -->"
+AREAS = re.compile(re.escape(AREA_MARKER) + r"\s*`([^`]+)`")
 
 
 def scalar(value):
@@ -103,16 +105,22 @@ def sections(body):
     return {key: "\n".join(value).strip() for key, value in result.items()}, duplicates
 
 
+def issue_areas(contract):
+    """Read the one area list that follows the issue-areas marker in CONTRIBUTING.md."""
+    found = AREAS.findall(contract)
+    if len(found) != 1:
+        raise ValueError(f"CONTRIBUTING.md must contain exactly one {AREA_MARKER} list")
+    areas = {area.strip() for area in found[0].split(",") if area.strip()}
+    if not all(re.fullmatch(r"[a-z][a-z0-9-]*", area) for area in areas):
+        raise ValueError("Issue areas must be lowercase words separated by commas")
+    return areas
+
+
 def validate(title, body, forms=FORMS):
     match = TITLE.fullmatch(title)
     if not match or not (forms / f"{match[1]}.yml").is_file() or match[1] == "config":
         return ["Title: Use [task|bug|design][area] followed by a concrete outcome."]
-    contract = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8-sig")
-    area_section = re.search(r"\bareas(?: are|:)\s+([^.]*)\.", contract)
-    if not area_section:
-        raise ValueError("Cannot read the issue areas from CONTRIBUTING.md")
-    areas = {area.strip() for group in re.findall(r"`([^`]+)`", area_section[1])
-             for area in group.split(",")}
+    areas = issue_areas((ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8-sig"))
     fields, duplicates = sections(body)
     errors = []
     if match[2] not in areas:
