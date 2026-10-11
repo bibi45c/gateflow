@@ -38,16 +38,8 @@ Sources: CONTRIBUTING.md [Review and merge](../../../CONTRIBUTING.md#review-and-
 6. If asked to cross-check another review, re-verify the disputed evidence and keep
    genuine disagreements visible.
 
-Never submit an approving review or write a self-review; only a human approves, from
-their own account. Post comments only when the owner authorized it, ending each with
-`_Posted by an agent._`.
-
-For an [agent review with owner confirmation](../../../CONTRIBUTING.md#agent-review-with-owner-confirmation),
-first confirm that this session is an independent session as defined under Terms;
-otherwise stop. The posted comment starts with `Agent review:`, names the full
-40-character head SHA, lists findings with severity, states whether the diff touches a
-controlled area, and states no approval. Never edit it after posting; post a new one
-instead.
+Never submit an approving review; only a human approves, from their own account. Post
+comments only when the owner authorized it, ending each with `_Posted by an agent._`.
 
 Return: the reviewed head and base SHAs, findings ordered by severity, checks with
 their actual results, and open questions.
