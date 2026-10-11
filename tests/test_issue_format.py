@@ -1,17 +1,21 @@
 """Exercise format feedback and bot-comment updates without network access."""
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.check_issue import (BOT, FORMS, MARKER, ROOT, check_remote, issue_areas,
-                                 requirements, validate)
+from scripts.check_issue import (BOT, FORMS, MARKER, PHASE_FIELD, ROOT, check_remote,
+                                 issue_areas, requirements, validate)
+
+SCRIPT = ROOT / "scripts" / "check_issue.py"
 
 
 def valid_body(kind="task"):
-    return "\n\n".join(f"### {name}\n\nSynthetic evidence for this field."
+    return "\n\n".join(f"### {name}\n\n" + ("pre-merge" if name == PHASE_FIELD
+                                           else "Synthetic evidence for this field.")
                        for name in requirements(FORMS / f"{kind}.yml"))
 
 
@@ -37,6 +41,39 @@ class IssueFormatTests(unittest.TestCase):
         contract = ("Focus areas: `repo` for now. Issue areas are listed below.\n"
                     "Types: `task`; areas: <!-- issue-areas -->`repo, ci`.")
         self.assertEqual({"repo", "ci"}, issue_areas(contract))
+
+    def test_marker_quoted_in_code_is_not_the_list(self):
+        contract = ("Write `<!-- issue-areas -->` before the list.\n\n"
+                    "```text\n<!-- issue-areas -->`example`\n```\n\n"
+                    "areas: <!-- issue-areas -->`repo, ci`.")
+        self.assertEqual({"repo", "ci"}, issue_areas(contract))
+
+    def test_acceptance_phase_accepts_only_the_two_phases(self):
+        def body(value):
+            return valid_body().replace(f"### {PHASE_FIELD}\n\npre-merge", f"### {PHASE_FIELD}\n\n{value}")
+        for value in ("pre-merge", "Pre-merge.", "post-merge: owner runs the load test after deploy"):
+            with self.subTest(value=value):
+                self.assertEqual([], validate("[task][repo] Verify phase", body(value)))
+        for value in ("banana", "post-merge", "merge later"):
+            with self.subTest(value=value):
+                self.assertTrue(any(item.startswith(f"{PHASE_FIELD}:")
+                                    for item in validate("[task][repo] Verify phase", body(value))))
+
+    def test_cli_exit_code_and_non_utf8_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good, partial, utf16 = (Path(directory) / name for name in ("good.md", "partial.md", "utf16.md"))
+            good.write_text(valid_body(), encoding="utf-8")
+            partial.write_text("### Outcome\n\nOnly one field.\n", encoding="utf-8")
+            utf16.write_text(valid_body(), encoding="utf-16")
+            def run(path):
+                return subprocess.run([sys.executable, str(SCRIPT), "--title", "[task][repo] Verify CLI",
+                                       "--body-file", str(path)], capture_output=True, text=True)
+            self.assertEqual(0, run(good).returncode)
+            self.assertEqual(1, run(partial).returncode)
+            result = run(utf16)
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("not UTF-8", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
 
     def test_missing_duplicate_or_malformed_area_lists_fail_visibly(self):
         for contract in ("areas: `repo, ci`.",

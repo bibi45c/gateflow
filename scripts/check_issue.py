@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,8 @@ TITLE = re.compile(r"^\[([a-z]+)\]\[([a-z][a-z0-9-]*)\] (\S.*)$")
 EMPTY = {"", "no response", "todo", "tbd", "fill this in", "fill here"}
 AREA_MARKER = "<!-- issue-areas -->"
 AREAS = re.compile(re.escape(AREA_MARKER) + r"\s*`([^`]+)`")
+PHASE_FIELD = "Acceptance phase"
+PHASE = re.compile(r"pre-merge\.?|post-merge\b.*\S.*", re.S)
 
 
 def scalar(value):
@@ -107,6 +110,9 @@ def sections(body):
 
 def issue_areas(contract):
     """Read the one area list that follows the issue-areas marker in CONTRIBUTING.md."""
+    # A marker quoted in code documents the convention; it is not the list.
+    contract = re.sub(r"^ {0,3}(`{3,}|~{3,}).*?^ {0,3}\1[ \t]*$", "", contract, flags=re.M | re.S)
+    contract = re.sub(r"`[^`\n]*`", lambda span: "" if AREA_MARKER in span[0] else span[0], contract)
     found = AREAS.findall(contract)
     if len(found) != 1:
         raise ValueError(f"CONTRIBUTING.md must contain exactly one {AREA_MARKER} list")
@@ -136,6 +142,8 @@ def validate(title, body, forms=FORMS):
                 errors.append(f"{name}: Replace empty content or placeholder text.")
             elif value in {"none", "n/a", "not applicable"} and not allows_none:
                 errors.append(f"{name}: This required field does not allow an empty alternative.")
+            elif name == PHASE_FIELD and not PHASE.fullmatch(value):
+                errors.append(f"{name}: Write pre-merge, or post-merge plus what is checked after merge and by whom.")
     return errors
 
 
@@ -203,9 +211,13 @@ def main():
     if args.title is not None:
         if not args.body_file:
             parser.error("--title requires --body-file")
-        errors = validate(args.title, args.body_file.read_text(encoding="utf-8-sig"))
+        try:
+            body = args.body_file.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            sys.exit(f"{args.body_file} is not UTF-8; save it as UTF-8 and retry.")
+        errors = validate(args.title, body)
         print(json.dumps({"result": "needs-info" if errors else "passed", "errors": errors}))
-        return
+        sys.exit(1 if errors else 0)
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
     if event.get("action") not in {"opened", "edited"} or "issue" not in event:
         raise ValueError("Expected an opened or edited issue event")
