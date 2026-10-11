@@ -29,7 +29,9 @@ Sources: CONTRIBUTING.md [Review and merge](../../../CONTRIBUTING.md#review-and-
 3. Stay read-only: no edits, commits or pushes. Run tests only when your assignment
    allows it, in a separate worktree with its own temporary resources.
 4. For each finding, give the location (`file:line`), trigger, observable impact and
-   evidence, and label it confirmed, likely or missing proof.
+   evidence, a severity as defined under
+   [Terms](../../../CONTRIBUTING.md#terms), and a label: confirmed, likely or missing
+   proof.
 5. Also check that issue links match the acceptance phase and the PR's base, that the
    change follows Cross-platform, and that the evidence matches the current head and
    base tip.
@@ -41,9 +43,11 @@ their own account. Post comments only when the owner authorized it, ending each 
 `_Posted by an agent._`.
 
 For an [agent review with owner confirmation](../../../CONTRIBUTING.md#agent-review-with-owner-confirmation),
-first confirm that this session wrote, committed and submitted no part of the PR;
-otherwise stop. The posted comment starts with `Agent review:`, names the reviewed
-head SHA, lists findings with severity, and states no approval.
+first confirm that this session is an independent session as defined under Terms;
+otherwise stop. The posted comment starts with `Agent review:`, names the full
+40-character head SHA, lists findings with severity, states whether the diff touches a
+controlled area, and states no approval. Never edit it after posting; post a new one
+instead.
 
 Return: the reviewed head and base SHAs, findings ordered by severity, checks with
 their actual results, and open questions.

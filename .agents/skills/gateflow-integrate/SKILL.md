@@ -15,32 +15,41 @@ Sources: CONTRIBUTING.md [Review and merge](../../../CONTRIBUTING.md#review-and-
 1. Confirm that you are the integrator named under
    [Terms](../../../CONTRIBUTING.md#terms), or acting for them on their direct
    instruction in this session.
-2. Read the PR, whether it is up to date with the live base branch, and its reviews:
+2. Read the PR, whether it is up to date with the live base branch, its reviews, its
+   files including the old names of renamed files, and its comments:
 
    ```text
    gh pr view <number> --json isDraft,author,baseRefName,headRefOid,statusCheckRollup,closingIssuesReferences,body
    gh api repos/bibi45c/gateflow/compare/<baseRefName>...<headRefOid> --jq "{behind_by, merge_base: .merge_base_commit.sha}"
    gh api --paginate repos/bibi45c/gateflow/pulls/<number>/reviews --jq ".[] | {user: .user.login, state, commit_id, submitted_at}"
-   gh api repos/bibi45c/gateflow/collaborators/<reviewer>/permission --jq .permission
+   gh api --paginate repos/bibi45c/gateflow/pulls/<number>/files --jq ".[] | .filename, .previous_filename // empty"
+   gh api --paginate repos/bibi45c/gateflow/issues/<number>/comments --jq ".[] | {id, user: .user.login, created_at, updated_at, html_url, body}"
+   gh api repos/bibi45c/gateflow/collaborators/<login>/permission --jq .permission
    ```
 
    Use the branch name, not `baseRefOid`: GitHub updates `baseRefOid` only when the
-   head is pushed, so it can be stale.
+   head is pushed, so it can be stale. Read the owner (the linked issue's single
+   assignee) with the command under
+   [Delegating work](../../../CONTRIBUTING.md#delegating-work).
 3. Stop unless every merge condition in Review and merge holds:
    - the body links an issue, the PR is not a draft, and `behind_by` is `0`;
    - in `statusCheckRollup`, the latest run of each required check succeeded, and no
      latest run failed without a recorded reason;
    - the issue's pre-merge acceptance evidence is in the PR;
-   - approval: for each reviewer, take their latest review that is not `COMMENTED`.
-     At least one is `APPROVED` with `commit_id` equal to `headRefOid`, from someone
-     other than the author whose permission is `write`, `maintain` or `admin`, and
-     none is `CHANGES_REQUESTED`.
-   - alternatively, only when `gh pr diff <number> --name-only` lists no rule file
-     (see Terms) and the issue is not a controlled change: an `Agent review:` comment
-     naming `headRefOid` with no unresolved confirmed high or medium finding, and a
-     `Self-review:` comment from the owner that names `headRefOid`, links that agent
-     review and passes the comment check under Authorization. Never write or post
-     either comment as the integrator's agent.
+   - for each reviewer, take their latest review that is not `COMMENTED`; none is
+     `CHANGES_REQUESTED`, whichever approval path is used;
+   - approval, either:
+     - at least one `APPROVED` review with `commit_id` equal to `headRefOid`, from
+       someone other than the author whose permission is `write`, `maintain` or
+       `admin`; or
+     - an agent review with owner confirmation, only when no listed file, current or
+       previous name, is a rule file (see Terms), and you judge from the diff that it
+       is not a controlled change. Every `Agent review:` comment that names the full
+       `headRefOid` is unedited (`created_at` equals `updated_at`), and none has a
+       confirmed high or medium finding without a resolving reply from a non-author
+       maintainer. The owner's `Self-review:` comment names the full `headRefOid`,
+       links one of those agent reviews, is unedited, is posted by the owner, and the
+       owner's permission is `write`, `maintain` or `admin`.
 4. Write the squash title (`<type>(<scope>): <change> (#<number>)`) and body to a
    UTF-8 file under `.local/`. The body summarizes the change and links the issue; it
    says `Closes #<n>` only when the base is `main` and all acceptance is met. Read
