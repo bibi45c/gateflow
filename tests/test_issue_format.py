@@ -35,7 +35,8 @@ class IssueFormatTests(unittest.TestCase):
 
     def test_contributing_lists_the_agreed_areas(self):
         contract = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8-sig")
-        self.assertEqual({"repo", "ci", "docs", "test"}, issue_areas(contract))
+        self.assertEqual({"repo", "ci", "docs", "test", "gateway", "access", "metering", "mock",
+                          "client", "console", "infra", "loadtest"}, issue_areas(contract))
 
     def test_other_area_wording_does_not_change_the_list(self):
         contract = ("Focus areas: `repo` for now. Issue areas are listed below.\n"

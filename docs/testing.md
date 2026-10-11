@@ -4,16 +4,23 @@
 
 | Check | Command, from the repository root | Required for merge |
 |---|---|---|
-| Repository tests | `python -m unittest discover -s tests -v` | Yes: CI jobs `Tests (ubuntu-latest)`, `Tests (macos-latest)` and `Tests (windows-latest)` must pass on the head; a local run is supporting evidence |
+| Repository tests | `python -m unittest discover -s tests -v` | Yes: CI jobs `Tests (ubuntu-latest)`, `Tests (macos-latest)` and `Tests (windows-latest)` |
+| Go checks | `go vet ./...`, then `go test ./...`, then `go build ./...` | Yes: CI jobs `Go (ubuntu-latest)`, `Go (macos-latest)` and `Go (windows-latest)` |
+| Compose smoke test | `docker compose -f deploy/compose/compose.yaml up --build --detach`, then open `http://localhost:<port>/healthz` for ports 8080, 8081, 8082 and 8090 | Yes: CI job `Compose smoke test` |
 
-The tests need Python 3.13 or newer and only the standard library. On macOS use
-`python3` if `python` is not Python 3; on Windows `py -3.13` also works.
+A required check must pass in CI on the head; a local run is supporting evidence.
 
-The suite covers repository tooling (the issue format check and documentation links),
-not application code. There is no application stack yet: agree its checks before
-implementation, and add their exact commands here together with the configuration
-that runs them. No configured check means no automated evidence; report it as
-"not run", never as "passed".
+- **Repository tests** need Python 3.13 or newer and only the standard library. They
+  cover the issue format check and documentation links. On macOS use `python3` if
+  `python` is not Python 3; on Windows `py -3.13` also works.
+- **Go checks** need the Go version in `go.mod`. They cover the services, `pkg/`,
+  the mock upstream and the module boundaries (`archtest`).
+- **The compose smoke test** needs Docker. It builds every image and checks that each
+  process answers its health endpoint.
+
+Add a check here, with its exact command and the CI job that runs it, in the same PR
+that adds its configuration. No configured check means no automated evidence; report
+it as "not run", never as "passed".
 
 For each change:
 

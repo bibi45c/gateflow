@@ -10,6 +10,11 @@ __pycache__/
 .pytest_cache/
 node_modules/
 
+# Go build and test output
+/bin/
+*.test
+coverage.out
+
 # Local drafts and data, and worktrees misplaced at the repository root
 .local/
 /worktrees/

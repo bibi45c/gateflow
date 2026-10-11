@@ -71,6 +71,29 @@ This file holds only what every session needs. Each detailed rule lives in one p
 - Never switch branches in an active checkout or discard its changes. Never remove a
   worktree or branch without the [cleanup steps](CONTRIBUTING.md#cleanup).
 
+## Code layout
+
+| Path | Issue area | Contents |
+|---|---|---|
+| `services/gateway/` | gateway | Model gateway: native model APIs, routing, streaming relay, rate limits |
+| `services/access/` | access | Tenants, gateway keys, channels and price versions |
+| `services/metering/` | metering | Wallets, reservations, settlement, ledger and usage |
+| `mock-upstream/` | mock | Controllable fake model provider for load and failure tests |
+| `clients/` | client | Reference client applications (planned) |
+| `console/` | console | Management console (planned) |
+| `deploy/` | infra | Dockerfile, local compose stack, Helm charts and Terraform |
+| `loadtest/` | loadtest | Load scenarios (planned) |
+| `pkg/`, `archtest/` | repo | Shared technical helpers and module boundary checks |
+| `scripts/`, `tests/`, `docs/`, `.github/` | repo, test, docs, ci | Repository tooling, rules and CI |
+
+- One Go module covers the repository (`go.mod` at the root).
+- Each service keeps its private packages under `services/<name>/internal/`; Go
+  refuses imports of another service's `internal` packages.
+- `pkg/` holds technical helpers every module may use: configuration, health and the
+  HTTP server. Never put business rules there.
+- Services call each other only through their HTTP APIs. The `archtest` package fails
+  the tests when a package imports another module other than `pkg/`.
+
 ## Cross-platform
 
 Code, scripts and documented commands must work on macOS, Windows and Linux CI. In

@@ -1,0 +1,72 @@
+# Local development stack. Start it from the repository root:
+#   docker compose -f deploy/compose/compose.yaml up --build
+# The database password is a local-only default; never reuse it elsewhere.
+name: gateflow
+
+x-service-build: &service-build
+  context: ../..
+  dockerfile: deploy/docker/Dockerfile
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: gateflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gateflow-local-only}
+      POSTGRES_DB: gateflow
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateflow"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:8
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  access:
+    build:
+      <<: *service-build
+      args:
+        TARGET: services/access
+    ports: ["8081:8081"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  metering:
+    build:
+      <<: *service-build
+      args:
+        TARGET: services/metering
+    ports: ["8082:8082"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  mock-upstream:
+    build:
+      <<: *service-build
+      args:
+        TARGET: mock-upstream
+    ports: ["8090:8090"]
+
+  gateway:
+    build:
+      <<: *service-build
+      args:
+        TARGET: services/gateway
+    ports: ["8080:8080"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      access:
+        condition: service_started
+      metering:
+        condition: service_started
+      mock-upstream:
+        condition: service_started
