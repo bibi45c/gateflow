@@ -44,8 +44,9 @@ personal data. Keep drafts and local notes in `.local/`, which Git ignores.
   public; schema or data migrations; security-relevant changes; production. For a PR,
   the integrator decides this from the diff.
 - **Independent session**: an agent session that wrote, committed and submitted no
-  part of the PR, was not spawned or forked by a session that did, and was briefed
-  only with the PR number, the issue and the review skill.
+  part of the PR, was not spawned or forked by a session that did, and received no
+  conclusions from the writers. Its brief may name the PR, the issue, the review
+  skill, where the repository is and the read-only constraints.
 - **Finding severity**: **high** means the change can merge wrong or unsafe behaviour,
   break a contract, or bypass a rule; **medium** means a defect or gap that should be
   fixed before merge but has a workaround; **low** means everything else.
@@ -330,8 +331,9 @@ head SHA:
 
 Also:
 
-- Every `Agent review:` comment on that head counts, not only the linked one. None
-  may contain a confirmed high or medium finding that is unresolved. A finding is
+- Every `Agent review:` comment that names that head, in full or abbreviated, counts,
+  not only the linked one. None may contain a confirmed high or medium finding that
+  is unresolved. A finding is
   resolved only by a reply on the PR from a maintainer who is not the author,
   explaining why it does not apply; otherwise fix it, which changes the head.
 - If the head changes, both steps repeat.

@@ -44,8 +44,9 @@ Sources: CONTRIBUTING.md [Review and merge](../../../CONTRIBUTING.md#review-and-
        `admin`; or
      - an agent review with owner confirmation, only when no listed file, current or
        previous name, is a rule file (see Terms), and you judge from the diff that it
-       is not a controlled change. Every `Agent review:` comment that names the full
-       `headRefOid` is unedited (`created_at` equals `updated_at`), and none has a
+       is not a controlled change. Every `Agent review:` comment that names
+       `headRefOid`, in full or by a prefix of it, is unedited (`created_at` equals
+       `updated_at`), and none has a
        confirmed high or medium finding without a resolving reply from a non-author
        maintainer. The owner's `Self-review:` comment names the full `headRefOid`,
        links one of those agent reviews, is unedited, is posted by the owner, and the
