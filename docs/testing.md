@@ -2,10 +2,20 @@
 
 ## Checks
 
-No application stack, automated checks or required CI gates are configured yet.
-Agree the application checks before implementation; add exact commands and mandatory
-gates here when their configuration is committed. No configured check means no
-automated evidence, not a passed result.
+Repository tooling tests use Python 3.13 and the standard library only. Run from the
+repository root:
+
+```text
+python -m unittest discover -s tests -v
+```
+
+This suite covers repository tooling (the issue format check), not application code.
+It is not yet a required CI gate.
+
+No application stack or required CI gates are configured yet. Agree the application
+checks before implementation; add exact commands and mandatory gates here when their
+configuration is committed. No configured check means no automated evidence, not a
+passed result.
 
 For each change, run the closest meaningful checks, then all applicable mandatory
 checks. Governance/template changes also need a realistic case; syntax alone does
