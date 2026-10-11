@@ -41,18 +41,29 @@ personal data. Keep drafts and local notes in `.local/`, which Git ignores.
 - **Up to date**: the base tip is an ancestor of the head, so testing the head also
   tests the result of merging it.
 - **Controlled change**: architecture; contracts between components, internal or
-  public; schema or data migrations; security-relevant changes; production.
+  public; schema or data migrations; security-relevant changes; production. For a PR,
+  the integrator decides this from the diff.
+- **Independent session**: an agent session that wrote, committed and submitted no
+  part of the PR, was not spawned or forked by a session that did, and received no
+  conclusions from the writers. Its brief may name the PR, the issue, the review
+  skill, where the repository is and the read-only constraints.
+- **Finding severity**: **high** means the change can merge wrong or unsafe behaviour,
+  break a contract, or bypass a rule; **medium** means a defect or gap that should be
+  fixed before merge but has a workaround; **low** means everything else.
 - **Shared Git operation**: fetch, push, stash, creating or deleting branches and
   tags, changing configuration, `git worktree prune`, `gc` and other maintenance.
   Commits, amends and rebases of your own branch inside your own worktree are not
   shared operations.
-- **Rule files**: AGENTS.md, CLAUDE.md, CONTRIBUTING.md, docs/testing.md, and
-  everything under `.agents/`, `.claude/` and `.github/`.
+- **Rule files**: AGENTS.md, CLAUDE.md, CONTRIBUTING.md, docs/testing.md, everything
+  under `.agents/`, `.claude/` and `.github/`, and the tooling that enforces them:
+  `scripts/check_issue.py`, `tests/test_docs.py` and `tests/test_issue_format.py`. A
+  PR changes a rule file when any file it adds, modifies, deletes or renames, from or
+  to, is one.
 
 ## Authorization
 
 - The owner authorizes scope, plans, delegated remote actions and coordinator
-  designation. The integrator authorizes merges. Approval to merge is a review,
+  designation. The integrator authorizes merges. What approves a PR for merge is
   described under [Review and merge](#review-and-merge).
 - Authorization counts only through one of two channels:
   1. The person's direct instructions in the agent's current session. This is the
@@ -288,11 +299,11 @@ merge gates follow [docs/testing.md](docs/testing.md).
      by the integrator when the owner is the author. See
      [Gates](docs/testing.md#gates).
   3. The issue's pre-merge acceptance evidence is in the PR.
-  4. An approving GitHub review on that head from a maintainer who is not the author,
-     with no maintainer's latest review requesting changes. For a PR that changes no
-     rule file and is not a controlled change, an
-     [agent review with owner confirmation](#agent-review-with-owner-confirmation)
-     may replace it.
+  4. No maintainer's latest review on the PR requests changes, and either:
+     - an approving GitHub review on that head from a maintainer who is not the
+       author; or
+     - for a PR that changes no rule file and is not a controlled change, an
+       [agent review with owner confirmation](#agent-review-with-owner-confirmation).
 - Merge method: squash, with a title and body the integrator has read:
   `gh pr merge <number> --squash --match-head-commit <sha> --subject "<title>" --body-file "<file>"`.
 - Afterwards read back the PR and issue state, update the issue label, and tell the
@@ -303,25 +314,38 @@ merge gates follow [docs/testing.md](docs/testing.md).
 
 ### Agent review with owner confirmation
 
-For a PR that changes no rule file and is not a controlled change, condition 4 may
-instead be met by both of these, on the same head:
+For a PR that changes no rule file and is not a controlled change, the approving
+review in condition 4 may be replaced by both of these, on the same full 40-character
+head SHA:
 
-1. **Independent agent review.** A session that did not write, commit or submit any
-   part of the PR reviews the pinned head with
-   [gateflow-review](.agents/skills/gateflow-review/SKILL.md) and posts the result as a
-   PR comment. The comment starts with `Agent review:`, names the reviewed head SHA,
-   lists findings with severity, and ends with `_Posted by an agent._`. It reports
-   findings only and never states approval. No confirmed high or medium finding may
-   remain unresolved.
-2. **Owner confirmation.** The owner posts a comment from their own account that
-   starts with `Self-review:`, names the head SHA and links the agent review. It must
-   be unedited and is checked like an authorization comment under
-   [Authorization](#authorization). Agents never write or post it.
+1. **Independent agent review.** An independent session (see Terms) reviews the
+   pinned head with [gateflow-review](.agents/skills/gateflow-review/SKILL.md) and
+   posts the result as a PR comment. The comment starts with `Agent review:`, names
+   the full head SHA, lists findings with severity, states whether the diff touches a
+   controlled area, and ends with `_Posted by an agent._`. It reports findings only,
+   never states approval, and must stay unedited.
+2. **Owner confirmation.** The owner, who must have write access, posts a comment from
+   their own account that starts with `Self-review:`, names the full head SHA and
+   links the agent review. It must be unedited and is checked like an authorization
+   comment under [Authorization](#authorization).
 
-GitHub cannot show which session wrote a comment, so the owner's confirmation is what
-asserts that the review was independent. If the head changes, both steps repeat. The
-integrator still merges. PRs merged earlier under the owner-only self-review (#1 and
-#2) are re-reviewed by another maintainer.
+Also:
+
+- Every `Agent review:` comment that names that head, in full or abbreviated, counts,
+  not only the linked one. None may contain a confirmed high or medium finding that
+  is unresolved. A finding is
+  resolved only by a reply on the PR from a maintainer who is not the author,
+  explaining why it does not apply; otherwise fix it, which changes the head.
+- If the head changes, both steps repeat.
+- Agents never write or post the owner confirmation. The integrator's own session
+  never writes the agent review.
+- GitHub cannot show which session wrote a comment, so the owner's confirmation is
+  what asserts that the review was independent.
+- The integrator still merges.
+
+A PR merged with an owner-only self-review, meaning a `Self-review:` comment that links
+no agent review and no approving review from a non-author maintainer, is re-reviewed
+by another maintainer. Issue #8 tracks these PRs.
 
 ## Cross-platform
 

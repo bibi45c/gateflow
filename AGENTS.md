@@ -57,9 +57,10 @@ This file holds only what every session needs. Each detailed rule lives in one p
   explicit approval for that action, even inside an approved task.
 - Reviewers never edit. Agents never submit approving reviews, and agent review is
   never human approval.
-- Merging needs a GitHub review approving the head from a maintainer who is not the
-  author. For a PR that changes no rule file and is not a controlled change, an
-  independent agent review plus the owner's own confirmation may replace it; see
+- Merging needs no maintainer requesting changes, plus a GitHub review approving the
+  head from a maintainer who is not the author. For a PR that changes no rule file and
+  is not a controlled change, an independent agent review plus the owner's own
+  confirmation may replace that approval; see
   [Agent review with owner confirmation](CONTRIBUTING.md#agent-review-with-owner-confirmation).
   Changing a rule file needs a non-author maintainer's approval of the complete diff.
   A PR cannot exempt itself from these rules.
