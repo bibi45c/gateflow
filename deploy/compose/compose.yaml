@@ -61,7 +61,7 @@ services:
     build:
       <<: *service-build
       args:
-        TARGET: mock-upstream
+        TARGET: test/mock-upstream
     <<: *stop
     ports: ["127.0.0.1:${MOCK_UPSTREAM_PORT:-8090}:8090"]
 

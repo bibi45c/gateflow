@@ -5,8 +5,8 @@ description: Use when drafting, splitting, checking or closing a GateFlow issue 
 
 # Draft or check an issue
 
-Sources: CONTRIBUTING.md [Issues](../../../CONTRIBUTING.md#issues) and
-[Authorization](../../../CONTRIBUTING.md#authorization), and the matching form in
+Sources: CONTRIBUTING.md [Issues](../../../.github/CONTRIBUTING.md#issues) and
+[Authorization](../../../.github/CONTRIBUTING.md#authorization), and the matching form in
 [.github/ISSUE_TEMPLATE](../../../.github/ISSUE_TEMPLATE). The form defines the
 fields.
 
@@ -19,7 +19,7 @@ fields.
 3. Check the format (on macOS use `python3` if `python` is not Python 3):
 
    ```text
-   python scripts/check_issue.py --title "<title>" --body-file "<draft file>"
+   python tools/repo/check_issue.py --title "<title>" --body-file "<draft file>"
    ```
 
    A passing format check does not make the issue Ready.

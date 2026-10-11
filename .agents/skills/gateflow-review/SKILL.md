@@ -5,9 +5,9 @@ description: Use when independently reviewing a GateFlow pull request or commit 
 
 # Review a change
 
-Sources: CONTRIBUTING.md [Review and merge](../../../CONTRIBUTING.md#review-and-merge),
-[Authorization](../../../CONTRIBUTING.md#authorization) and
-[Cross-platform](../../../CONTRIBUTING.md#cross-platform), and
+Sources: CONTRIBUTING.md [Review and merge](../../../.github/CONTRIBUTING.md#review-and-merge),
+[Authorization](../../../.github/CONTRIBUTING.md#authorization) and
+[Cross-platform](../../../.github/CONTRIBUTING.md#cross-platform), and
 [docs/testing.md](../../../docs/testing.md).
 
 1. Pin the version you review and record the head, the base branch and its live tip:
@@ -30,7 +30,7 @@ Sources: CONTRIBUTING.md [Review and merge](../../../CONTRIBUTING.md#review-and-
    allows it, in a separate worktree with its own temporary resources.
 4. For each finding, give the location (`file:line`), trigger, observable impact and
    evidence, a severity as defined under
-   [Terms](../../../CONTRIBUTING.md#terms), and a label: confirmed, likely or missing
+   [Terms](../../../.github/CONTRIBUTING.md#terms), and a label: confirmed, likely or missing
    proof.
 5. Also check that issue links match the acceptance phase and the PR's base, that the
    change follows Cross-platform, and that the evidence matches the current head and

@@ -12,7 +12,8 @@ import re
 import sys
 import urllib.request
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
+CONTRIBUTING = ROOT / ".github" / "CONTRIBUTING.md"
 FORMS = ROOT / ".github" / "ISSUE_TEMPLATE"
 MARKER = "<!-- gateflow-issue-format:v1 -->"
 BOT = "github-actions[bot]"
@@ -126,7 +127,7 @@ def validate(title, body, forms=FORMS):
     match = TITLE.fullmatch(title)
     if not match or not (forms / f"{match[1]}.yml").is_file() or match[1] == "config":
         return ["Title: Use [task|bug|design][area] followed by a concrete outcome."]
-    areas = issue_areas((ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8-sig"))
+    areas = issue_areas(CONTRIBUTING.read_text(encoding="utf-8-sig"))
     fields, duplicates = sections(body)
     errors = []
     if match[2] not in areas:

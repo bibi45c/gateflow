@@ -8,10 +8,10 @@ the feasibility test in [docs/feasibility-plan.md](docs/feasibility-plan.md).
 
 ## Start here
 
-- People: [CONTRIBUTING.md](CONTRIBUTING.md). The directory layout is under
+- People: [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md). The directory layout is under
   [Code layout](AGENTS.md#code-layout).
 - Coding agents: [AGENTS.md](AGENTS.md). Claude Code loads it through
-  [CLAUDE.md](CLAUDE.md).
+  [.claude/CLAUDE.md](.claude/CLAUDE.md).
 - Checks and evidence: [docs/testing.md](docs/testing.md).
 
 ## Setup on macOS and Windows
@@ -34,7 +34,7 @@ the feasibility test in [docs/feasibility-plan.md](docs/feasibility-plan.md).
    Python 3):
 
    ```text
-   python -m unittest discover -s tests -v
+   python -m unittest discover -s tools/repo/tests -v
    go vet ./...
    go test ./...
    go build ./...

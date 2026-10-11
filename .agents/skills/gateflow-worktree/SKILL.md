@@ -5,9 +5,9 @@ description: Use when creating, resuming, handing off or removing a GateFlow wor
 
 # Manage a worktree
 
-Sources: CONTRIBUTING.md [Branches and worktrees](../../../CONTRIBUTING.md#branches-and-worktrees),
-[Rule version](../../../CONTRIBUTING.md#rule-version) and
-[Handoff](../../../CONTRIBUTING.md#handoff).
+Sources: CONTRIBUTING.md [Branches and worktrees](../../../.github/CONTRIBUTING.md#branches-and-worktrees),
+[Rule version](../../../.github/CONTRIBUTING.md#rule-version) and
+[Handoff](../../../.github/CONTRIBUTING.md#handoff).
 
 Inspect first:
 
@@ -32,7 +32,7 @@ git worktree add --no-track -b <type>/<slug> "../GateFlowWorktrees/<slug>" <base
 
 **Resume.** Confirm that you are the only writer, that the branch and head match the
 handoff, and that the issue version and owner are unchanged (command under
-[Delegating work](../../../CONTRIBUTING.md#delegating-work)). If the owner or
+[Delegating work](../../../.github/CONTRIBUTING.md#delegating-work)). If the owner or
 coordinator reported newer rules, re-read them first.
 
 **Hand off.** Follow Handoff: stop your processes and record branch, head SHA,
@@ -40,7 +40,7 @@ uncommitted changes, evidence and open questions. The next writer confirms befor
 editing.
 
 **Remove.** Only with approval from the owner or coordinator, and only after every
-step in [Cleanup](../../../CONTRIBUTING.md#cleanup), run from a different checkout.
+step in [Cleanup](../../../.github/CONTRIBUTING.md#cleanup), run from a different checkout.
 `git worktree prune` is a shared operation.
 
 Return: branch, head SHA, base commit, writer, and anything kept or still
