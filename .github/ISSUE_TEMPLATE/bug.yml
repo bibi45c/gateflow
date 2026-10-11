@@ -1,0 +1,61 @@
+name: Reproducible bug
+description: Reproducible failure and verification.
+title: "[bug][repo] "
+body:
+  - type: markdown
+    attributes:
+      value: "Minimal redacted reproduction; no credentials, conversations or personal data."
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction and environment
+      description: Minimal steps/input, commit and environment.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and observed behavior
+      description: Both outcomes and concise evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope, impact and exclusions
+      description: Affected behavior, severity and fix boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance and verification
+      description: Regression/related checks; separate pre-merge gates and post-merge acceptance.
+    validations:
+      required: true
+  - type: input
+    id: acceptance_phase
+    attributes:
+      label: Acceptance phase
+      description: pre-merge, or post-merge plus what is checked after merge and by whom.
+    validations:
+      required: true
+  - type: input
+    id: owner
+    attributes:
+      label: Accountable human owner
+      description: GitHub username. A maintainer assigns this person; the assignee is the owner.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies, risk and recovery
+      description: Related work/order, fix/revert impact and recovery, or why none applies.
+    validations:
+      required: true
+  - type: textarea
+    id: approval
+    attributes:
+      label: Approval evidence if required
+      description: Approved scope/version and decision before controlled changes.

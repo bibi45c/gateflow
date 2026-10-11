@@ -1,0 +1,68 @@
+name: Scoped development task
+description: One verifiable project deliverable.
+title: "[task][repo] "
+body:
+  - type: markdown
+    attributes:
+      value: "Follow CONTRIBUTING.md; this issue grants no extra permission."
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: Observable result and purpose.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and exclusions
+      description: Allowed changes and excluded work.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Verifiable outcomes, including failure cases.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification plan
+      description: Required pre-merge checks. Use None only for no post-merge acceptance.
+    validations:
+      required: true
+  - type: input
+    id: acceptance_phase
+    attributes:
+      label: Acceptance phase
+      description: pre-merge, or post-merge plus what is checked after merge and by whom.
+    validations:
+      required: true
+  - type: input
+    id: owner
+    attributes:
+      label: Accountable human owner
+      description: GitHub username. A maintainer assigns this person; the assignee is the owner.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and sequence
+      description: Related work, order and revalidation owner, or None.
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risk and recovery
+      description: Affected contracts/state, failure impact and recovery, or why none applies.
+    validations:
+      required: true
+  - type: textarea
+    id: approval
+    attributes:
+      label: Approval evidence if required
+      description: Approved scope/version and human decision. Pending blocks controlled implementation.
