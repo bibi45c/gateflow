@@ -31,7 +31,14 @@ fields.
    delegated publishing to you:
 
    ```text
-   gh issue create --title "<title>" --body-file "<draft file>"
+   gh issue create --title "<title>" --body-file "<draft file>" --milestone "<milestone>"
+   ```
+
+   Then mark it as blocked by each issue it needs, using the blocking issue's
+   numeric id (`gh api repos/bibi45c/gateflow/issues/<blocking number> --jq .id`):
+
+   ```text
+   gh api -X POST repos/bibi45c/gateflow/issues/<number>/dependencies/blocked_by -F issue_id=<id>
    ```
 
 To close an issue as Not planned or Duplicate, record the reason and any replacement

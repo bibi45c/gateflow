@@ -160,10 +160,19 @@ Types: `task, bug, design`; areas:
 The module areas follow [Code layout](AGENTS.md#code-layout); add one when a new
 module is agreed. The issue format check reads only the list after the marker.
 
+Every issue belongs to a GitHub milestone, one per delivery stage (see
+[docs/feasibility-plan.md](docs/feasibility-plan.md)). Whoever creates the issue sets
+it; a maintainer moves it when the plan changes.
+
+Record dependencies with GitHub's issue relationships: mark an issue as blocked by
+each issue it needs, and state the order in its Dependencies field. This shows
+which work can start in parallel and what waits for what.
+
 An issue is **Ready** when it has observable acceptance criteria, scope and
-exclusions, exactly one owner assigned by a maintainer, dependencies, risks and an
-acceptance phase. A controlled change also needs the owner's recorded approval. The issue format
-check confirms fields only; it does not make an issue Ready.
+exclusions, exactly one owner assigned by a maintainer, a milestone, dependencies,
+risks and an acceptance phase. A controlled change also needs the owner's recorded
+approval. The issue format check confirms fields only; it does not make an issue
+Ready.
 
 - Every PR links at least one issue. Normally one issue is delivered by one PR.
   Split a broad outcome into sub-issues that can each be verified.

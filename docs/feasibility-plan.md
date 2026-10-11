@@ -17,7 +17,8 @@ section 7.2.
 | 14 October | S1 done; feasibility gate |
 | 16 October | S2 done |
 | 18 October | S3 done |
-| 19–20 October | Freeze, record fallback runs, rehearse |
+| 19 October | Freeze, record fallback runs, rehearse |
+| 20 October | Cut the release used for the demo (tag `v0.1.0` on `main`); rehearse |
 | 21 October, 09:00–09:40 SGT | Team 1 presentation: 8-minute demo plus 2 minutes of questions, showing use cases, autoscaling, a scripted performance test and the DevOps pipeline |
 | 16 November | Final report due |
 
@@ -41,6 +42,10 @@ scope or estimates are reviewed with the lecturer, as proposal section 7.1 requi
 | Environment | Local docker-compose for S0 to S2. From S3, EKS with Terraform, Helm and KEDA, using a plain RDS PostgreSQL database. | Aurora Serverless v2, Argo CD, Cognito and CloudFront (section 5.5) |
 | Metering | Reservation and settlement in PostgreSQL transactions. Usage queries read the ledger directly. | Transactional outbox, SQS, idempotent consumers and recovery of pending reservations (UC6, sections 5.1 and 5.4) |
 | Contracts | Public protocol wire types under `pkg/protocol/`. Internal API contracts as `api/<service>.yaml`. | Same |
+| Pricing | Metering looks up the price version from access and computes the reserved and charged amounts itself; the gateway sends only token bounds and usage. | Same (section 5.3) |
+| Seed data | Seed commands write directly to each service's own schema, with fixed tenant ids, because the key and channel APIs arrive with UC1 and UC2. | Created through the access and metering APIs |
+| Images | CI builds one Docker image per service and publishes it to GitHub Container Registry (`ghcr.io/bibi45c/gateflow-<service>`), tagged with the commit SHA. EKS pulls from there. | ECR (section 5.5) |
+| Branching | Trunk-based: every PR merges into `main`, with no long-lived dev branch. The demo runs from the release cut on 20 October. | Short-lived branches and reviewed merge requests (section 6.4) |
 | Reviews | PRs merge without a second approval; see CONTRIBUTING.md. | Reviewed merge requests |
 
 ## Model upstreams
@@ -68,10 +73,10 @@ scope or estimates are reviewed with the lecturer, as proposal section 7.1 requi
   The adapter is therefore optional test tooling with no use-case budget. Its results
   are not evidence for the native paths in UC3 and UC4. Free availability can change
   without notice.
-- **Test tenants.** Tests need many FlowGate tenants. Seed scripts create tenants and
-  gateway keys through the access API, and wallets through the metering API, for
-  example ten tenants for the isolation test and one shared wallet for the hot-spot
-  test.
+- **Test tenants.** Tests need many FlowGate tenants, for example ten tenants for the
+  isolation test and one shared wallet for the hot-spot test. In S1, the access seed
+  command creates tenants and keys, and the metering seed command creates wallets.
+  Both use the same fixed tenant ids, and keys are never printed in service logs.
 
 ## Stages
 
