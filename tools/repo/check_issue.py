@@ -2,6 +2,7 @@
 
 Uses the repository forms' simple YAML layout, without a third-party YAML dependency.
 Unsupported field layouts fail visibly rather than silently skipping requirements.
+Issue areas are the repository's area:<name> labels.
 """
 import argparse
 import hashlib
@@ -13,14 +14,14 @@ import sys
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-CONTRIBUTING = ROOT / ".github" / "CONTRIBUTING.md"
+REPO = "bibi45c/gateflow"
 FORMS = ROOT / ".github" / "ISSUE_TEMPLATE"
 MARKER = "<!-- gateflow-issue-format:v1 -->"
 BOT = "github-actions[bot]"
 TITLE = re.compile(r"^\[([a-z]+)\]\[([a-z][a-z0-9-]*)\] (\S.*)$")
 EMPTY = {"", "no response", "todo", "tbd", "fill this in", "fill here"}
-AREA_MARKER = "<!-- issue-areas -->"
-AREAS = re.compile(re.escape(AREA_MARKER) + r"\s*`([^`]+)`")
+AREA_LABEL = "area:"
+AREA = re.compile(r"[a-z][a-z0-9-]*")
 PHASE_FIELD = "Acceptance phase"
 PHASE = re.compile(r"pre-merge\.?|post-merge\b.*\S.*", re.S)
 
@@ -109,29 +110,23 @@ def sections(body):
     return {key: "\n".join(value).strip() for key, value in result.items()}, duplicates
 
 
-def issue_areas(contract):
-    """Read the one area list that follows the issue-areas marker in CONTRIBUTING.md."""
-    # A marker quoted in code documents the convention; it is not the list.
-    contract = re.sub(r"^ {0,3}(`{3,}|~{3,}).*?^ {0,3}\1[ \t]*$", "", contract, flags=re.M | re.S)
-    contract = re.sub(r"`[^`\n]*`", lambda span: "" if AREA_MARKER in span[0] else span[0], contract)
-    found = AREAS.findall(contract)
-    if len(found) != 1:
-        raise ValueError(f"CONTRIBUTING.md must contain exactly one {AREA_MARKER} list")
-    areas = {area.strip() for area in found[0].split(",") if area.strip()}
-    if not all(re.fullmatch(r"[a-z][a-z0-9-]*", area) for area in areas):
-        raise ValueError("Issue areas must be lowercase words separated by commas")
+def issue_areas(labels):
+    """Return the areas named by area:<name> labels; other labels are ignored."""
+    areas = {name[len(AREA_LABEL):] for name in labels if name.startswith(AREA_LABEL)}
+    areas = {area for area in areas if AREA.fullmatch(area)}
+    if not areas:
+        raise ValueError(f"The repository has no {AREA_LABEL}<name> label")
     return areas
 
 
-def validate(title, body, forms=FORMS):
+def validate(title, body, areas, forms=FORMS):
     match = TITLE.fullmatch(title)
     if not match or not (forms / f"{match[1]}.yml").is_file() or match[1] == "config":
         return ["Title: Use [task|bug|design][area] followed by a concrete outcome."]
-    areas = issue_areas(CONTRIBUTING.read_text(encoding="utf-8-sig"))
     fields, duplicates = sections(body)
     errors = []
     if match[2] not in areas:
-        errors.append("Title: Use an area listed in CONTRIBUTING.md: " + ", ".join(sorted(areas)) + ".")
+        errors.append(f"Title: Use an area that has an {AREA_LABEL} label: " + ", ".join(sorted(areas)) + ".")
     for name, allows_none in requirements(forms / f"{match[1]}.yml").items():
         if name in duplicates:
             errors.append(f"{name}: Keep one section with this name.")
@@ -161,34 +156,41 @@ def comment_body(issue, errors):
 
 
 def api(path, payload=None, method=None):
+    headers = {"Accept": "application/vnd.github+json", "Content-Type": "application/json",
+               "User-Agent": "gateflow-issue-format"}
+    if os.environ.get("GH_TOKEN"):
+        headers["Authorization"] = "Bearer " + os.environ["GH_TOKEN"]
     request = urllib.request.Request("https://api.github.com/" + path,
         data=json.dumps(payload).encode() if payload is not None else None,
-        method=method, headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
-        "Accept": "application/vnd.github+json", "Content-Type": "application/json",
-        "User-Agent": "gateflow-issue-format"})
+        method=method, headers=headers)
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)
 
 
-def check_remote(repo, number, call=api, forms=FORMS):
+def every_page(call, path):
+    page = 1
+    while True:
+        items = call(f"{path}{'&' if '?' in path else '?'}per_page=100&page={page}")
+        yield from items
+        if len(items) < 100:
+            return
+        page += 1
+
+
+def repo_areas(repo, call=api):
+    return issue_areas(label["name"] for label in every_page(call, f"repos/{repo}/labels"))
+
+
+def check_remote(repo, number, call=api, forms=FORMS, areas=None):
     path = f"repos/{repo}/issues/{number}"
     issue = call(path)
     if "pull_request" in issue or issue["state"] != "open":
         return {"issue": number, "action": "skipped"}
-    errors = validate(issue["title"], issue.get("body"), forms)
+    errors = validate(issue["title"], issue.get("body"), areas or repo_areas(repo, call), forms)
     body = comment_body(issue, errors)
-    existing = None
-    page = 1
-    while True:
-        comments = call(f"{path}/comments?per_page=100&page={page}")
-        for item in comments:
-            if (item["user"]["login"] == BOT and item["user"]["type"] == "Bot"
-                    and item.get("body", "").startswith(MARKER)):
-                existing = item
-                break
-        if existing or len(comments) < 100:
-            break
-        page += 1
+    existing = next((item for item in every_page(call, f"{path}/comments")
+                     if item["user"]["login"] == BOT and item["user"]["type"] == "Bot"
+                     and item.get("body", "").startswith(MARKER)), None)
     current = call(path)
     if (current["title"], current.get("body"), current["state"]) != (issue["title"], issue.get("body"), issue["state"]):
         raise RuntimeError("Issue changed during checking; retry the current version")
@@ -204,10 +206,32 @@ def check_remote(repo, number, call=api, forms=FORMS):
             "action": action, "comment_id": comment["id"], "missing": len(errors)}
 
 
+def check_all(repo, call=api, forms=FORMS):
+    """Recheck every open issue, for example after the area labels change."""
+    areas = repo_areas(repo, call)
+    results, failed = [], 0
+    for issue in list(every_page(call, f"repos/{repo}/issues?state=open")):
+        if "pull_request" in issue:
+            continue
+        try:
+            results.append(check_remote(repo, issue["number"], call, forms, areas))
+        except RuntimeError as error:
+            failed += 1
+            results.append({"issue": issue["number"], "action": "failed", "error": str(error)})
+    return results, failed
+
+
+def changes_areas(event):
+    names = [event["label"]["name"], event.get("changes", {}).get("name", {}).get("from", "")]
+    return any(name.startswith(AREA_LABEL) for name in names)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--title")
     parser.add_argument("--body-file", type=Path)
+    parser.add_argument("--repo", default=REPO, help="repository whose area labels apply")
+    parser.add_argument("--areas", help="comma-separated areas to use instead of the labels")
     args = parser.parse_args()
     if args.title is not None:
         if not args.body_file:
@@ -216,13 +240,30 @@ def main():
             body = args.body_file.read_text(encoding="utf-8-sig")
         except UnicodeDecodeError:
             sys.exit(f"{args.body_file} is not UTF-8; save it as UTF-8 and retry.")
-        errors = validate(args.title, body)
+        if args.areas is not None:
+            areas = issue_areas(AREA_LABEL + area.strip() for area in args.areas.split(","))
+        else:
+            try:
+                areas = repo_areas(args.repo)
+            except OSError as error:
+                sys.exit(f"Cannot read the {AREA_LABEL} labels of {args.repo} ({error}); "
+                         "retry, set GH_TOKEN, or pass --areas.")
+        errors = validate(args.title, body, areas)
         print(json.dumps({"result": "needs-info" if errors else "passed", "errors": errors}))
         sys.exit(1 if errors else 0)
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
-    if event.get("action") not in {"opened", "edited"} or "issue" not in event:
-        raise ValueError("Expected an opened or edited issue event")
-    print(json.dumps(check_remote(event["repository"]["full_name"], int(event["issue"]["number"]))))
+    name, repo = os.environ.get("GITHUB_EVENT_NAME"), event["repository"]["full_name"]
+    if name == "issues" and event.get("action") in {"opened", "edited"}:
+        print(json.dumps(check_remote(repo, int(event["issue"]["number"]))))
+    elif name == "label" and not changes_areas(event):
+        print(json.dumps({"action": "skipped", "reason": "not an area label"}))
+    elif name in {"label", "workflow_dispatch"}:
+        results, failed = check_all(repo)
+        for result in results:
+            print(json.dumps(result))
+        sys.exit(1 if failed else 0)
+    else:
+        raise ValueError(f"Unexpected event: {name} {event.get('action')}")
 
 
 if __name__ == "__main__":
