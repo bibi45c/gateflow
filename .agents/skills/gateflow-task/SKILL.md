@@ -10,16 +10,12 @@ Sources: CONTRIBUTING.md [Authorization](../../../CONTRIBUTING.md#authorization)
 [Issues](../../../CONTRIBUTING.md#issues) and
 [Cross-platform](../../../CONTRIBUTING.md#cross-platform).
 
-1. Read the issue:
-
-   ```text
-   gh issue view <number> --json title,body,labels,assignees,updatedAt
-   ```
-
-   Check that your assignment contains every item in
-   [Delegating work](../../../CONTRIBUTING.md#delegating-work), that the issue has an
-   assignee and the `state:ready` label, and that `updatedAt` matches the assignment.
-   If anything is missing or different, stop and ask the owner. Draft missing issue
+1. Read the issue with `gh issue view <number> --json title,body,labels`, and its
+   issue version and assignees with the command under
+   [Delegating work](../../../CONTRIBUTING.md#delegating-work). Check that your
+   assignment contains every item in Delegating work, that the issue has exactly one
+   assignee and the `state:ready` label, and that the issue version matches the
+   assignment. If anything is missing or different, stop and ask the owner. Draft missing issue
    content with [gateflow-issue](../gateflow-issue/SKILL.md).
 2. For a controlled change, confirm that the owner's approval covers this scope and
    issue version, and that it came through a channel listed under Authorization.

@@ -22,7 +22,8 @@ Commit, in your own worktree:
 PR:
 
 4. Write the body in a UTF-8 file under `.local/`, filling every heading of the PR
-   template, and choose Delivery and Acceptance phase deliberately.
+   template, and choose Delivery and Acceptance phase deliberately. Every PR links an
+   issue; without one, stop and ask the owner to create it.
 5. Check the issue links in the body and in every commit message
    (`git log --format=%B <base tip>..HEAD`).
 6. The evidence must match the current head and base tip. After new commits, update

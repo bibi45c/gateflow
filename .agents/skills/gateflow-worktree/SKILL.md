@@ -12,14 +12,17 @@ Sources: CONTRIBUTING.md [Branches and worktrees](../../../CONTRIBUTING.md#branc
 Inspect first:
 
 ```text
-git worktree list
+git worktree list --porcelain
 git status --short --branch
 git log -1 --oneline
 ```
 
+Copy paths only from `--porcelain` output; plain `git worktree list` escapes
+non-ASCII characters.
+
 **Create.** Fetching and creating branches are shared operations, so only the
-coordinator does this. Run from the main checkout's root, which is the first path
-`git worktree list` prints, and use the branch name and base commit from the
+coordinator does this. Run from the main checkout's root, which is the first
+`worktree` line printed above, and use the branch name and base commit from the
 assignment:
 
 ```text
@@ -28,9 +31,9 @@ git worktree add --no-track -b <type>/<slug> "../GateFlowWorktrees/<slug>" <base
 ```
 
 **Resume.** Confirm that you are the only writer, that the branch and head match the
-handoff, and that the issue's last-edited time is unchanged
-(`gh issue view <number> --json updatedAt`). If the owner or coordinator reported
-newer rules, re-read them first.
+handoff, and that the issue version and owner are unchanged (command under
+[Delegating work](../../../CONTRIBUTING.md#delegating-work)). If the owner or
+coordinator reported newer rules, re-read them first.
 
 **Hand off.** Follow Handoff: stop your processes and record branch, head SHA,
 uncommitted changes, evidence and open questions. The next writer confirms before

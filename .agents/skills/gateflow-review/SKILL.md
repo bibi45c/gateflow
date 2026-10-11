@@ -10,10 +10,11 @@ Sources: CONTRIBUTING.md [Review and merge](../../../CONTRIBUTING.md#review-and-
 [Cross-platform](../../../CONTRIBUTING.md#cross-platform), and
 [docs/testing.md](../../../docs/testing.md).
 
-1. Pin the version you review and record it:
+1. Pin the version you review and record the head, the base branch and its live tip:
 
    ```text
-   gh pr view <number> --json headRefOid,baseRefName,baseRefOid,author
+   gh pr view <number> --json headRefOid,baseRefName,author
+   git ls-remote origin refs/heads/<baseRefName>
    ```
 
 2. Read the issue and its contracts, then the diff, before reading other reviewers'
@@ -35,8 +36,9 @@ Sources: CONTRIBUTING.md [Review and merge](../../../CONTRIBUTING.md#review-and-
 6. If asked to cross-check another review, re-verify the disputed evidence and keep
    genuine disagreements visible.
 
-Never submit an approving review; only a human approves, from their own account. Post
-comments only when the owner authorized it.
+Never submit an approving review or write a self-review; only a human approves, from
+their own account. Post comments only when the owner authorized it, ending each with
+`_Posted by an agent._`.
 
 Return: the reviewed head and base SHAs, findings ordered by severity, checks with
 their actual results, and open questions.

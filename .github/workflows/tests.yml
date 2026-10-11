@@ -2,9 +2,8 @@ name: Tests
 on:
   push:
     branches: [main]
+  # A retargeted stacked PR is rebased and pushed, which reruns this as synchronize.
   pull_request:
-    # edited covers retargeting a stacked PR to a new base.
-    types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
 jobs:

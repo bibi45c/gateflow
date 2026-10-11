@@ -11,7 +11,7 @@ __pycache__/
 node_modules/
 
 # Local drafts and data, and worktrees misplaced at the repository root
-/.local/
+.local/
 /worktrees/
 
 # Personal agent settings; shared settings are committed explicitly

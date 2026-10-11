@@ -4,8 +4,9 @@
 
 ## Linked issues
 
-<!-- `Closes #n` only in a PR into main that meets all of the issue's acceptance
-before merge; otherwise `Refs #n`. Check the commit messages too. -->
+<!-- Required: every PR links an issue. `Closes #n` only in a PR into main that meets
+all of the issue's acceptance before merge; otherwise `Refs #n`. Check the commit
+messages too. -->
 
 ## Delivery
 
