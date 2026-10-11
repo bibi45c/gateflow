@@ -289,8 +289,10 @@ merge gates follow [docs/testing.md](docs/testing.md).
      [Gates](docs/testing.md#gates).
   3. The issue's pre-merge acceptance evidence is in the PR.
   4. An approving GitHub review on that head from a maintainer who is not the author,
-     with no maintainer's latest review requesting changes; or the interim
-     [self-review](#self-review-interim).
+     with no maintainer's latest review requesting changes. For a PR that changes no
+     rule file and is not a controlled change, an
+     [agent review with owner confirmation](#agent-review-with-owner-confirmation)
+     may replace it.
 - Merge method: squash, with a title and body the integrator has read:
   `gh pr merge <number> --squash --match-head-commit <sha> --subject "<title>" --body-file "<file>"`.
 - Afterwards read back the PR and issue state, update the issue label, and tell the
@@ -299,18 +301,27 @@ merge gates follow [docs/testing.md](docs/testing.md).
 - Never relax repository protections or rulesets, and never use admin bypass. These
   rules do not enable any protection; check the repository settings.
 
-### Self-review (interim)
+### Agent review with owner confirmation
 
-Until the team revisits this rule, condition 4 may instead be met when the PR's owner
-is also its author:
+For a PR that changes no rule file and is not a controlled change, condition 4 may
+instead be met by both of these, on the same head:
 
-- The owner posts a comment from their own account that starts with `Self-review:`,
-  names the reviewed head SHA and lists what was checked.
-- The comment must be unedited and is checked like an authorization comment under
-  [Authorization](#authorization). Agents never write or post it.
-- The integrator still merges. Rule-file changes may use the same path.
-- When the rule is revisited, another maintainer re-reviews the PRs merged this way;
-  their `Self-review:` comments identify them.
+1. **Independent agent review.** A session that did not write, commit or submit any
+   part of the PR reviews the pinned head with
+   [gateflow-review](.agents/skills/gateflow-review/SKILL.md) and posts the result as a
+   PR comment. The comment starts with `Agent review:`, names the reviewed head SHA,
+   lists findings with severity, and ends with `_Posted by an agent._`. It reports
+   findings only and never states approval. No confirmed high or medium finding may
+   remain unresolved.
+2. **Owner confirmation.** The owner posts a comment from their own account that
+   starts with `Self-review:`, names the head SHA and links the agent review. It must
+   be unedited and is checked like an authorization comment under
+   [Authorization](#authorization). Agents never write or post it.
+
+GitHub cannot show which session wrote a comment, so the owner's confirmation is what
+asserts that the review was independent. If the head changes, both steps repeat. The
+integrator still merges. PRs merged earlier under the owner-only self-review (#1 and
+#2) are re-reviewed by another maintainer.
 
 ## Cross-platform
 
@@ -345,8 +356,8 @@ on all three.
 ## Changing these rules
 
 - Changing a rule file needs explicit approval of the complete diff from a human
-  maintainer who is not its author, or the interim self-review. Agents may
-  propose rule changes but never approve them.
+  maintainer who is not its author. Agents may propose rule changes but never approve
+  them.
 - Each rule lives in one place. Elsewhere, link to it instead of restating it. Skills
   link to sections; they never add rules.
 - AGENTS.md holds only what every session needs; details belong here or in

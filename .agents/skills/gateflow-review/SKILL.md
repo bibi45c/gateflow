@@ -40,5 +40,10 @@ Never submit an approving review or write a self-review; only a human approves, 
 their own account. Post comments only when the owner authorized it, ending each with
 `_Posted by an agent._`.
 
+For an [agent review with owner confirmation](../../../CONTRIBUTING.md#agent-review-with-owner-confirmation),
+first confirm that this session wrote, committed and submitted no part of the PR;
+otherwise stop. The posted comment starts with `Agent review:`, names the reviewed
+head SHA, lists findings with severity, and states no approval.
+
 Return: the reviewed head and base SHAs, findings ordered by severity, checks with
 their actual results, and open questions.

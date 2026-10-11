@@ -58,9 +58,11 @@ This file holds only what every session needs. Each detailed rule lives in one p
 - Reviewers never edit. Agents never submit approving reviews, and agent review is
   never human approval.
 - Merging needs a GitHub review approving the head from a maintainer who is not the
-  author, or the owner's own interim [self-review](CONTRIBUTING.md#self-review-interim).
-  Changing a rule file needs the same approval of the complete diff. A PR cannot
-  exempt itself from these rules.
+  author. For a PR that changes no rule file and is not a controlled change, an
+  independent agent review plus the owner's own confirmation may replace it; see
+  [Agent review with owner confirmation](CONTRIBUTING.md#agent-review-with-owner-confirmation).
+  Changing a rule file needs a non-author maintainer's approval of the complete diff.
+  A PR cannot exempt itself from these rules.
 - Report every check with the head and base it ran on. A pass on an older head or
   base does not count.
 - Every PR links an issue. Use `Closes #n` only in a PR into `main` that meets all of
