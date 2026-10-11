@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -40,5 +41,34 @@ func TestServeAnswersThenStopsWhenContextEnds(t *testing.T) {
 		}
 	case <-time.After(ShutdownTimeout + time.Second):
 		t.Fatal("server did not stop after its context ended")
+	}
+}
+
+func TestCheckHealthReportsTheProcessOnThePort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, port, _ := net.SplitHostPort(listener.Addr().String())
+	mux := http.NewServeMux()
+	var unhealthy atomic.Bool
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		if unhealthy.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = Serve(ctx, listener, mux) }()
+
+	if err := CheckHealth(":" + port); err != nil {
+		t.Errorf("healthy process: %v", err)
+	}
+	unhealthy.Store(true)
+	if err := CheckHealth("0.0.0.0:" + port); err == nil {
+		t.Error("an unhealthy status passed")
+	}
+	if err := CheckHealth("no-port"); err == nil {
+		t.Error("an address without a port passed")
 	}
 }

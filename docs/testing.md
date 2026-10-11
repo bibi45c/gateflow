@@ -6,6 +6,7 @@
 |---|---|---|
 | Repository tests | `python -m unittest discover -s tools/repo/tests -v` | Yes: CI jobs `Tests (ubuntu-latest)`, `Tests (macos-latest)` and `Tests (windows-latest)` |
 | Go checks | `go vet ./...`, then `go test ./...`, then `go build ./...` | Yes: CI jobs `Go (ubuntu-latest)`, `Go (macos-latest)` and `Go (windows-latest)` |
+| Go integration tests | With `GATEFLOW_TEST_POSTGRES_URL` set to a Postgres superuser URL, `go test -count=1 ./...` | Yes: CI job `Go integration (ubuntu-latest)` |
 | Compose smoke test | `docker compose -p <worktree-name> -f deploy/compose/compose.yaml up --build --detach`, then open `http://localhost:<port>/healthz` for ports 8080, 8081, 8082 and 8090, then `docker compose -p <worktree-name> -f deploy/compose/compose.yaml down --volumes` | Yes: CI job `Compose smoke test` |
 
 A required check must pass in CI on the head; a local run is supporting evidence.
@@ -15,6 +16,12 @@ A required check must pass in CI on the head; a local run is supporting evidence
   `python` is not Python 3; on Windows `py -3.13` also works.
 - **Go checks** need the Go version in `go.mod`. They cover the services, `pkg/`,
   the mock upstream and the module boundaries (`archtest`).
+- **Go integration tests** need a Postgres 17 server. They cover migrations and the
+  isolation between service roles. Without `GATEFLOW_TEST_POSTGRES_URL` they skip, so
+  the plain Go checks never need a database. `pkg/pgtest` gives each test its own
+  database and drops it afterwards, and never reads `DATABASE_URL`. To run them
+  locally, start the compose `postgres` service (`up --detach postgres`) and use
+  `postgres://gateflow:gateflow-local-only@localhost:<POSTGRES_PORT>/gateflow?sslmode=disable`.
 - **The compose smoke test** needs Docker. It builds every image and checks that each
   process answers its health endpoint. Use a project name per worktree (`-p`), so
   one worktree never reuses another's containers, and change host ports with the
