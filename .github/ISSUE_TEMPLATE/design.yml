@@ -1,0 +1,55 @@
+name: Reviewable design decision
+description: Bounded proposal requiring a human decision.
+title: "[design][repo] "
+body:
+  - type: markdown
+    attributes:
+      value: "Proposal is not approval. Record approved scope/version before controlled implementation."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and decision needed
+      description: Current behavior, outcome and constraints.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal, alternatives and tradeoffs
+      description: Design, affected contracts/state and viable alternatives.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Implementation scope and exclusions
+      description: Allowed changes/dependencies; approval excludes unrelated remote/production actions.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance and verification
+      description: Pre-merge gates, approved post-merge acceptance and evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: recovery
+    attributes:
+      label: Risk and recovery strategy
+      description: Failure impact, recovery and irreversible limits.
+    validations:
+      required: true
+  - type: input
+    id: owner
+    attributes:
+      label: Accountable human owner
+    validations:
+      required: true
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision status and approval evidence
+      description: Proposed, or human decision and approved scope/version. Material changes need renewed approval.
+    validations:
+      required: true

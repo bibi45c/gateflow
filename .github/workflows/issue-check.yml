@@ -1,0 +1,25 @@
+name: Issue format check
+on:
+  issues:
+    types: [opened, edited]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: issue-format-${{ github.event.issue.number }}
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Check the current issue and update its format reminder
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/check_issue.py
