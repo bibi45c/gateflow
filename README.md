@@ -53,3 +53,14 @@ the feasibility test in [docs/feasibility-plan.md](docs/feasibility-plan.md).
    ```text
    docker compose -f deploy/compose/compose.yaml down --volumes
    ```
+
+   If a port is taken or reserved, put other ports in `deploy/compose/.env`, which
+   Git ignores, for example `GATEWAY_PORT=18080`. The variables are `GATEWAY_PORT`,
+   `ACCESS_PORT`, `METERING_PORT`, `MOCK_UPSTREAM_PORT`, `POSTGRES_PORT` and
+   `REDIS_PORT`. To see the reserved ranges on Windows:
+
+   ```text
+   netsh interface ipv4 show excludedportrange protocol=tcp
+   ```
+
+   On macOS, `lsof -i :8080` shows what holds a port.
