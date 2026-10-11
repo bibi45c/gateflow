@@ -20,8 +20,8 @@ merge and by whom. -->
 
 ## Verification
 
-<!-- One record per check, as in docs/testing.md Evidence: command, OS and Python
-version, head SHA, base branch and tip, up to date or not, uncommitted inputs,
+<!-- One record per check, as in docs/testing.md Evidence: command, OS and tool
+versions, head SHA, base branch and tip, up to date or not, uncommitted inputs,
 result, short evidence. -->
 
 ## Risk and recovery

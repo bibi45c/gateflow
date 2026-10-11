@@ -81,16 +81,23 @@ This file holds only what every session needs. Each detailed rule lives in one p
 | `mock-upstream/` | mock | Controllable fake model provider for load and failure tests |
 | `clients/` | client | Reference client applications (planned) |
 | `console/` | console | Management console (planned) |
-| `deploy/` | infra | Dockerfile, local compose stack, Helm charts and Terraform |
+| `deploy/` | infra | Dockerfile and local compose stack; Helm charts and Terraform (planned) |
 | `loadtest/` | loadtest | Load scenarios (planned) |
-| `pkg/`, `archtest/` | repo | Shared technical helpers and module boundary checks |
+| `pkg/`, `archtest/` | repo | Shared technical helpers, public protocol wire types, and module boundary checks |
+| `api/` | per service | Internal API contracts as OpenAPI files, one per service (planned) |
 | `scripts/`, `tests/`, `docs/`, `.github/` | repo, test, docs, ci | Repository tooling, rules and CI |
 
+- The repository is named GateFlow; the product is FlowGate. The services `gateway`,
+  `access` and `metering` are the proposal's Model Gateway, Access and Channel, and
+  Accounting services; `mock-upstream` is its simulator.
 - One Go module covers the repository (`go.mod` at the root).
 - Each service keeps its private packages under `services/<name>/internal/`; Go
   refuses imports of another service's `internal` packages.
-- `pkg/` holds technical helpers every module may use: configuration, health and the
-  HTTP server. Never put business rules there.
+- `pkg/` holds technical helpers every module may use: configuration, health, the
+  HTTP server, and public protocol wire types and codecs under `pkg/protocol/`
+  (Anthropic Messages, OpenAI Responses). Never put business rules there.
+- Each service publishes its internal API contract as `api/<service>.yaml`; callers
+  write their own client in their `internal/` packages.
 - Services call each other only through their HTTP APIs. The `archtest` package fails
   the tests when a package imports another module other than `pkg/`.
 

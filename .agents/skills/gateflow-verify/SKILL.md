@@ -13,6 +13,7 @@ criteria and verification plan.
 
    ```text
    python --version
+   go version
    git rev-parse HEAD
    git ls-remote origin refs/heads/<base branch>
    git status --short

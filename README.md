@@ -37,6 +37,7 @@ the feasibility test in [docs/feasibility-plan.md](docs/feasibility-plan.md).
    python -m unittest discover -s tests -v
    go vet ./...
    go test ./...
+   go build ./...
    ```
 
 5. Start the local stack: PostgreSQL, Redis, the three services and the mock
@@ -45,4 +46,10 @@ the feasibility test in [docs/feasibility-plan.md](docs/feasibility-plan.md).
 
    ```text
    docker compose -f deploy/compose/compose.yaml up --build
+   ```
+
+   Stop it and remove its data with:
+
+   ```text
+   docker compose -f deploy/compose/compose.yaml down --volumes
    ```

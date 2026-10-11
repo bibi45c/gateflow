@@ -6,7 +6,7 @@
 |---|---|---|
 | Repository tests | `python -m unittest discover -s tests -v` | Yes: CI jobs `Tests (ubuntu-latest)`, `Tests (macos-latest)` and `Tests (windows-latest)` |
 | Go checks | `go vet ./...`, then `go test ./...`, then `go build ./...` | Yes: CI jobs `Go (ubuntu-latest)`, `Go (macos-latest)` and `Go (windows-latest)` |
-| Compose smoke test | `docker compose -f deploy/compose/compose.yaml up --build --detach`, then open `http://localhost:<port>/healthz` for ports 8080, 8081, 8082 and 8090 | Yes: CI job `Compose smoke test` |
+| Compose smoke test | `docker compose -p <worktree-name> -f deploy/compose/compose.yaml up --build --detach`, then open `http://localhost:<port>/healthz` for ports 8080, 8081, 8082 and 8090, then `docker compose -p <worktree-name> -f deploy/compose/compose.yaml down --volumes` | Yes: CI job `Compose smoke test` |
 
 A required check must pass in CI on the head; a local run is supporting evidence.
 
@@ -16,7 +16,9 @@ A required check must pass in CI on the head; a local run is supporting evidence
 - **Go checks** need the Go version in `go.mod`. They cover the services, `pkg/`,
   the mock upstream and the module boundaries (`archtest`).
 - **The compose smoke test** needs Docker. It builds every image and checks that each
-  process answers its health endpoint.
+  process answers its health endpoint. Use a project name per worktree (`-p`), so
+  one worktree never reuses another's containers, and change host ports with the
+  `*_PORT` variables when two stacks run at once.
 
 Add a check here, with its exact command and the CI job that runs it, in the same PR
 that adds its configuration. No configured check means no automated evidence; report
@@ -36,7 +38,8 @@ For each change:
 Report each check with:
 
 - Command or scenario.
-- Environment: OS and Python version.
+- Environment: OS and the version of each tool the check uses (`python --version`,
+  `go version`, `docker version`).
 - Head SHA, base branch and base tip SHA, and whether the head is up to date with the
   base.
 - Uncommitted inputs, if any.

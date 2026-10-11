@@ -1,11 +1,17 @@
-# Local development stack. Start it from the repository root:
-#   docker compose -f deploy/compose/compose.yaml up --build
+# Local development stack. Start it from the repository root, with a project name
+# per worktree, and stop it with `down --volumes` when done:
+#   docker compose -p <worktree-name> -f deploy/compose/compose.yaml up --build
+# Ports bind to localhost only and can be changed through the *_PORT variables.
 # The database password is a local-only default; never reuse it elsewhere.
 name: gateflow
 
 x-service-build: &service-build
   context: ../..
   dockerfile: deploy/docker/Dockerfile
+
+# Longer than pkg/server.ShutdownTimeout (10 s), so a drain finishes before SIGKILL.
+x-stop: &stop
+  stop_grace_period: 15s
 
 services:
   postgres:
@@ -14,15 +20,16 @@ services:
       POSTGRES_USER: gateflow
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gateflow-local-only}
       POSTGRES_DB: gateflow
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gateflow"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U gateflow -d gateflow"]
       interval: 5s
+      start_period: 10s
       retries: 10
 
   redis:
     image: redis:8
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -33,7 +40,8 @@ services:
       <<: *service-build
       args:
         TARGET: services/access
-    ports: ["8081:8081"]
+    <<: *stop
+    ports: ["127.0.0.1:${ACCESS_PORT:-8081}:8081"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,7 +51,8 @@ services:
       <<: *service-build
       args:
         TARGET: services/metering
-    ports: ["8082:8082"]
+    <<: *stop
+    ports: ["127.0.0.1:${METERING_PORT:-8082}:8082"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,14 +62,16 @@ services:
       <<: *service-build
       args:
         TARGET: mock-upstream
-    ports: ["8090:8090"]
+    <<: *stop
+    ports: ["127.0.0.1:${MOCK_UPSTREAM_PORT:-8090}:8090"]
 
   gateway:
     build:
       <<: *service-build
       args:
         TARGET: services/gateway
-    ports: ["8080:8080"]
+    <<: *stop
+    ports: ["127.0.0.1:${GATEWAY_PORT:-8080}:8080"]
     depends_on:
       redis:
         condition: service_healthy
