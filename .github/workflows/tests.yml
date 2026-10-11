@@ -14,6 +14,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -22,3 +23,48 @@ jobs:
         with:
           python-version: '3.13'
       - run: python -m unittest discover -s tests -v
+
+  go:
+    name: Go (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go build ./...
+
+  compose:
+    name: Compose smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: docker compose -f deploy/compose/compose.yaml up --build --detach
+      - name: Check every health endpoint
+        run: |
+          for port in 8080 8081 8082 8090; do
+            for attempt in $(seq 1 30); do
+              if curl -fsS --max-time 5 "http://localhost:$port/healthz"; then echo; continue 2; fi
+              sleep 2
+            done
+            echo "port $port never became healthy"
+            docker compose -f deploy/compose/compose.yaml logs
+            exit 1
+          done
+      - if: always()
+        run: docker compose -f deploy/compose/compose.yaml down --volumes

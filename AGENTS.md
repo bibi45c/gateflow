@@ -67,6 +67,36 @@ This file holds only what every session needs. Each detailed rule lives in one p
 - Never switch branches in an active checkout or discard its changes. Never remove a
   worktree or branch without the [cleanup steps](CONTRIBUTING.md#cleanup).
 
+## Code layout
+
+| Path | Issue area | Contents |
+|---|---|---|
+| `services/gateway/` | gateway | Model gateway: native model APIs, routing, streaming relay, rate limits |
+| `services/access/` | access | Tenants, gateway keys, channels and price versions |
+| `services/metering/` | metering | Wallets, reservations, settlement, ledger and usage |
+| `mock-upstream/` | mock | Controllable fake model provider for load and failure tests |
+| `clients/` | client | Reference client applications (planned) |
+| `console/` | console | Management console (planned) |
+| `deploy/` | infra | Dockerfile and local compose stack; Helm charts and Terraform (planned) |
+| `loadtest/` | loadtest | Load scenarios (planned) |
+| `pkg/`, `archtest/` | repo | Shared technical helpers, public protocol wire types, and module boundary checks |
+| `api/` | per service | Internal API contracts as OpenAPI files, one per service (planned) |
+| `scripts/`, `tests/`, `docs/`, `.github/` | repo, test, docs, ci | Repository tooling, rules and CI |
+
+- The repository is named GateFlow; the product is FlowGate. The services `gateway`,
+  `access` and `metering` are the proposal's Model Gateway, Access and Channel, and
+  Accounting services; `mock-upstream` is its simulator.
+- One Go module covers the repository (`go.mod` at the root).
+- Each service keeps its private packages under `services/<name>/internal/`; Go
+  refuses imports of another service's `internal` packages.
+- `pkg/` holds technical helpers every module may use: configuration, health, the
+  HTTP server, and public protocol wire types and codecs under `pkg/protocol/`
+  (Anthropic Messages, OpenAI Responses). Never put business rules there.
+- Each service publishes its internal API contract as `api/<service>.yaml`; callers
+  write their own client in their `internal/` packages.
+- Services call each other only through their HTTP APIs. The `archtest` package fails
+  the tests when a package imports another module other than `pkg/`.
+
 ## Cross-platform
 
 Code, scripts and documented commands must work on macOS, Windows and Linux CI. In
