@@ -22,7 +22,8 @@ Sources: CONTRIBUTING.md [Authorization](../../../CONTRIBUTING.md#authorization)
    If anything is missing or different, stop and ask the owner. Draft missing issue
    content with [gateflow-issue](../gateflow-issue/SKILL.md).
 2. For a controlled change, confirm that the owner's approval covers this scope and
-   issue version. Otherwise stop.
+   issue version, and that it came through a channel listed under Authorization.
+   Otherwise stop.
 3. Get or resume your worktree with [gateflow-worktree](../gateflow-worktree/SKILL.md).
 4. Implement only the assigned scope and leave unrelated changes alone. If the scope
    must change, stop and ask; meanwhile continue only work that does not depend on the
