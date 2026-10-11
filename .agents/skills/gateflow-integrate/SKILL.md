@@ -6,7 +6,7 @@ description: Use when merging an approved GateFlow pull request into main and cl
 # Merge and close out
 
 Sources: CONTRIBUTING.md [Review and merge](../../../CONTRIBUTING.md#review-and-merge),
-[Self-review (interim)](../../../CONTRIBUTING.md#self-review-interim),
+[Agent review with owner confirmation](../../../CONTRIBUTING.md#agent-review-with-owner-confirmation),
 [Authorization](../../../CONTRIBUTING.md#authorization),
 [Commits and PRs](../../../CONTRIBUTING.md#commits-and-prs) and
 [Stacked PRs](../../../CONTRIBUTING.md#stacked-prs), and docs/testing.md
@@ -34,9 +34,13 @@ Sources: CONTRIBUTING.md [Review and merge](../../../CONTRIBUTING.md#review-and-
    - approval: for each reviewer, take their latest review that is not `COMMENTED`.
      At least one is `APPROVED` with `commit_id` equal to `headRefOid`, from someone
      other than the author whose permission is `write`, `maintain` or `admin`, and
-     none is `CHANGES_REQUESTED`. Alternatively, there is a `Self-review:` comment that
-     the owner, who is also the author, posted and that passes the comment check under
-     Authorization. Never write or post a self-review yourself.
+     none is `CHANGES_REQUESTED`.
+   - alternatively, only when `gh pr diff <number> --name-only` lists no rule file
+     (see Terms) and the issue is not a controlled change: an `Agent review:` comment
+     naming `headRefOid` with no unresolved confirmed high or medium finding, and a
+     `Self-review:` comment from the owner that names `headRefOid`, links that agent
+     review and passes the comment check under Authorization. Never write or post
+     either comment as the integrator's agent.
 4. Write the squash title (`<type>(<scope>): <change> (#<number>)`) and body to a
    UTF-8 file under `.local/`. The body summarizes the change and links the issue; it
    says `Closes #<n>` only when the base is `main` and all acceptance is met. Read
