@@ -1,63 +1,120 @@
 """Keep rule documents linked: relative links, heading anchors and skill routing."""
+import html
 from pathlib import Path
+import posixpath
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 SKIP = {".git", ".venv", ".local", "worktrees", "node_modules"}
-LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:")
+LINK = re.compile(r"\[(?:[^\[\]]|\[[^\]]*\])*\]\(\s*(<[^>]*>|[^\s)]+)(?:\s+\"[^\"]*\")?\s*\)")
+REFERENCE = re.compile(r"^ {0,3}\[[^\]]+\]:\s*(<[^>]*>|\S+)", re.M)
+HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$", re.M)
+HTML_ANCHOR = re.compile(r"<a\s[^>]*\b(?:name|id)=\"([^\"]+)\"")
+SCHEME = re.compile(r"^[a-z][a-z0-9+.-]+:", re.I)
 
 
-def documents(root):
-    for path in sorted(root.rglob("*.md")):
-        if not SKIP.intersection(path.relative_to(root).parts):
-            yield path
+def repository_files(root):
+    """Paths Git would commit (tracked or untracked, not ignored); None without Git."""
+    try:
+        output = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--cached",
+                                 "--others", "--exclude-standard"],
+                                capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return {name for name in output.decode("utf-8").split("\0")
+            if name and (root / name).is_file()}
 
 
-def prose_lines(path):
-    """Yield lines outside fenced code blocks."""
-    fence = None
+def documents(root, files):
+    if files is None:
+        return sorted(path.relative_to(root).as_posix() for path in root.rglob("*.md")
+                      if not SKIP.intersection(path.relative_to(root).parts))
+    return sorted(name for name in files if name.endswith(".md"))
+
+
+def exists(relative, root, files):
+    """Case-exact when Git is available, so Windows and macOS agree with Linux CI."""
+    if files is None:
+        return (root / relative).exists()
+    return (relative == "." or relative in files
+            or any(name.startswith(relative + "/") for name in files))
+
+
+def prose(path):
+    """Document text without fenced code blocks or HTML comments."""
+    lines, fence = [], None
     for line in path.read_text(encoding="utf-8-sig").splitlines():
         opening = FENCE.match(line)
         if fence:
             if opening and opening[1][0] == fence[0] and len(opening[1]) >= len(fence):
                 fence = None
+            lines.append("")
         elif opening:
             fence = opening[1]
+            lines.append("")
         else:
-            yield line
+            lines.append(line)
+    return re.sub(r"<!--.*?-->", "", "\n".join(lines), flags=re.S)
+
+
+def slug(heading):
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", heading)
+    text = html.unescape(text.replace("`", "")).strip().lower()
+    return re.sub(r"[^\w\- ]", "", text).replace(" ", "-")
 
 
 def anchors(path):
-    """Heading anchors as GitHub generates them, ignoring duplicate suffixes."""
-    result = set()
-    for line in prose_lines(path):
-        heading = re.match(r"^#{1,6} (.+?)\s*$", line)
-        if heading:
-            text = heading[1].replace("`", "").strip().lower()
-            result.add(re.sub(r"[^\w\- ]", "", text).replace(" ", "-"))
+    """Heading anchors as GitHub generates them, including -1 style duplicates."""
+    text = prose(path)
+    result, seen = set(HTML_ANCHOR.findall(text)), {}
+    for heading in HEADING.findall(text):
+        base = slug(heading)
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        result.add(base if count == 0 else f"{base}-{count}")
     return result
+
+
+def targets(text):
+    """Link targets per paragraph, so link text may wrap across lines."""
+    for paragraph in re.split(r"\n[ \t]*\n", text):
+        yield from LINK.findall(re.sub(r"`[^`]*`", "", " ".join(paragraph.splitlines())))
+    yield from REFERENCE.findall(text)
 
 
 def link_problems(root):
     root = root.resolve()
-    problems = []
-    for path in documents(root):
-        for line in prose_lines(path):
-            for target in LINK.findall(re.sub(r"`[^`]*`", "", line)):
-                if SCHEME.match(target):
-                    continue
-                file_part, _, anchor = target.partition("#")
-                linked = (path.parent / file_part).resolve() if file_part else path
-                where = f"{path.relative_to(root).as_posix()}: {target}"
-                if linked != root and root not in linked.parents:
-                    problems.append(f"{where} (outside the repository)")
-                elif not linked.exists():
-                    problems.append(f"{where} (missing file)")
-                elif anchor and linked.suffix == ".md" and anchor not in anchors(linked):
+    files = repository_files(root)
+    problems, cache = [], {}
+    for document in documents(root, files):
+        for raw in targets(prose(root / document)):
+            target = raw[1:-1] if raw.startswith("<") else raw
+            if SCHEME.match(target):
+                continue
+            where = f"{document}: {raw}"
+            if "\\" in target:
+                problems.append(f"{where} (use forward slashes)")
+                continue
+            file_part, _, anchor = unquote(target).partition("#")
+            if file_part:
+                base = "" if file_part.startswith("/") else posixpath.dirname(document)
+                relative = posixpath.normpath(posixpath.join(base, file_part.lstrip("/")))
+            else:
+                relative = document
+            if relative == ".." or relative.startswith("../"):
+                problems.append(f"{where} (outside the repository)")
+            elif not exists(relative, root, files):
+                problems.append(f"{where} (missing file)")
+            elif anchor and relative.endswith(".md"):
+                if relative not in cache:
+                    cache[relative] = anchors(root / relative)
+                if anchor not in cache[relative]:
                     problems.append(f"{where} (missing heading)")
     return problems
 
@@ -66,18 +123,43 @@ class DocumentLinkTests(unittest.TestCase):
     def test_repository_links_and_anchors_resolve(self):
         self.assertEqual([], link_problems(ROOT))
 
-    def test_broken_links_are_reported_and_code_is_ignored(self):
+    def test_link_forms_and_anchor_rules(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "b.md").write_text("# Real heading\n", encoding="utf-8")
+            (root / "b.md").write_text(
+                "# Real heading ##\n\n## FAQ\n\n## FAQ\n\n## The [spec](b.md) rules\n"
+                "\n## Q&amp;A\n\n<a name=\"custom\"></a>\n", encoding="utf-8")
             (root / "a.md").write_text(
-                "[ok](b.md#real-heading) [web](https://example.com)\n"
-                "[gone](missing.md) [anchor](b.md#no-such-heading) [up](../x.md)\n"
-                "`[code](ignored.md)`\n```text\n[fenced](ignored.md)\n```\n",
-                encoding="utf-8")
-            self.assertEqual(["a.md: missing.md (missing file)",
-                              "a.md: b.md#no-such-heading (missing heading)",
-                              "a.md: ../x.md (outside the repository)"], link_problems(root))
+                "[ok](b.md#real-heading) [dup](b.md#faq-1) [linked](b.md#the-spec-rules)\n"
+                "[entity](b.md#qa) [html](b.md#custom) [web](https://example.com)\n"
+                "[titled](b.md \"Title\") [root](/b.md) [self](#local)\n\n## Local\n\n"
+                "See the [wrapped\nlink](wrapped-gone.md) here.\n\n"
+                "[gone](missing.md) [angle](<gone file.md>) [anchor](b.md#no-such)\n"
+                "[up](../x.md) [slash](docs\\b.md) [drive](c:/nope.md) [ref][r]\n\n"
+                "[r]: ref-gone.md\n\n"
+                "`[code](ignored.md)` <!-- [comment](ignored.md) -->\n"
+                "```text\n[fenced](ignored.md)\n```\n", encoding="utf-8")
+            self.assertCountEqual([
+                "a.md: wrapped-gone.md (missing file)",
+                "a.md: missing.md (missing file)",
+                "a.md: <gone file.md> (missing file)",
+                "a.md: b.md#no-such (missing heading)",
+                "a.md: ../x.md (outside the repository)",
+                "a.md: docs\\b.md (use forward slashes)",
+                "a.md: c:/nope.md (missing file)",
+                "a.md: ref-gone.md (missing file)",
+            ], link_problems(root))
+
+    @unittest.skipUnless(shutil.which("git"), "Git is not available")
+    def test_case_mismatch_and_ignored_files_follow_git(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            (root / ".gitignore").write_text("private.md\n", encoding="utf-8")
+            (root / "b.md").write_text("# B\n", encoding="utf-8")
+            (root / "a.md").write_text("[case](B.md)\n", encoding="utf-8")
+            (root / "private.md").write_text("[mine](../outside.md)\n", encoding="utf-8")
+            self.assertEqual(["a.md: B.md (missing file)"], link_problems(root))
 
 
 class SkillRoutingTests(unittest.TestCase):

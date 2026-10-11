@@ -3,6 +3,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # edited covers retargeting a stacked PR to a new base.
+    types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
 jobs:

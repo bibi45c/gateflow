@@ -3,14 +3,16 @@
 .env.*
 !.env.example
 
-# Python
+# Python and tooling caches
 __pycache__/
 *.py[cod]
 .venv/
+.pytest_cache/
+node_modules/
 
-# Local drafts, data and misplaced worktrees
-.local/
-worktrees/
+# Local drafts and data, and worktrees misplaced at the repository root
+/.local/
+/worktrees/
 
 # Personal agent settings; shared settings are committed explicitly
 .claude/settings.local.json
@@ -22,6 +24,7 @@ CLAUDE.local.md
 Thumbs.db
 desktop.ini
 
-# Editors
+# Editors; shared extension recommendations may be committed
 .idea/
-.vscode/
+.vscode/*
+!.vscode/extensions.json

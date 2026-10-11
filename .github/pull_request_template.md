@@ -1,11 +1,11 @@
 ## Summary
 
-<!-- Problem, resulting behavior and scope. -->
+<!-- Problem, resulting behavior and scope. For a stacked PR, name the PR it builds on. -->
 
 ## Linked issues
 
-<!-- `Closes #n` only when this PR meets all of the issue's acceptance before merge;
-otherwise `Refs #n`. Check the commit messages too. -->
+<!-- `Closes #n` only in a PR into main that meets all of the issue's acceptance
+before merge; otherwise `Refs #n`. Check the commit messages too. -->
 
 ## Delivery
 
@@ -20,7 +20,8 @@ merge and by whom. -->
 ## Verification
 
 <!-- One record per check, as in docs/testing.md Evidence: command, OS and Python
-version, head and base SHA, result, short evidence. -->
+version, head SHA, base branch and tip, up to date or not, uncommitted inputs,
+result, short evidence. -->
 
 ## Risk and recovery
 
