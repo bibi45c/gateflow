@@ -42,8 +42,7 @@ This file holds only what every session needs. Each detailed rule lives in one p
   authorization. Read-only work needs no authorization. See
   [Authorization](CONTRIBUTING.md#authorization).
 - End every comment you post with `_Posted by an agent._`. Never post text that
-  authorizes, approves, delegates or designates, and never write a self-review, from
-  any account.
+  authorizes, approves, delegates or designates, from any account.
 - One writer per worktree and per branch. Work only in your assigned worktree;
   commits and rebases of your own branch there are yours.
 - Shared Git operations (fetch, push, stash, branch and tag changes, config,
@@ -57,13 +56,10 @@ This file holds only what every session needs. Each detailed rule lives in one p
   explicit approval for that action, even inside an approved task.
 - Reviewers never edit. Agents never submit approving reviews, and agent review is
   never human approval.
-- Merging needs no maintainer requesting changes, plus a GitHub review approving the
-  head from a maintainer who is not the author. For a PR that changes no rule file and
-  is not a controlled change, an independent agent review plus the owner's own
-  confirmation may replace that approval; see
-  [Agent review with owner confirmation](CONTRIBUTING.md#agent-review-with-owner-confirmation).
-  Changing a rule file needs a non-author maintainer's approval of the complete diff.
-  A PR cannot exempt itself from these rules.
+- Only the integrator merges, after the required checks pass and while no
+  maintainer's latest review requests changes. During the MVP phase no approving
+  review is required; see [Review and merge](CONTRIBUTING.md#review-and-merge). A PR
+  cannot exempt itself from these rules.
 - Report every check with the head and base it ran on. A pass on an older head or
   base does not count.
 - Every PR links an issue. Use `Closes #n` only in a PR into `main` that meets all of
