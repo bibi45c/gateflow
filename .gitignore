@@ -1,0 +1,27 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local drafts, data and misplaced worktrees
+.local/
+worktrees/
+
+# Personal agent settings; shared settings are committed explicitly
+.claude/settings.local.json
+CLAUDE.local.md
+.codex/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.idea/
+.vscode/
