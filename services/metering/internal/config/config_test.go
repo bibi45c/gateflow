@@ -9,6 +9,7 @@ import (
 
 var complete = map[string]string{
 	config.EnvDatabaseURL:           "postgres://metering:db-password@localhost/gateflow",
+	config.EnvAccessURL:             "http://access.example:8081",
 	config.EnvAccessInternalToken:   "access-token-value",
 	config.EnvMeteringInternalToken: "metering-token-value",
 }
@@ -30,6 +31,7 @@ func TestLoadReadsEverySetting(t *testing.T) {
 	}
 	want := config.Config{
 		DatabaseURL:           complete[config.EnvDatabaseURL],
+		AccessURL:             complete[config.EnvAccessURL],
 		AccessInternalToken:   complete[config.EnvAccessInternalToken],
 		MeteringInternalToken: complete[config.EnvMeteringInternalToken],
 	}
