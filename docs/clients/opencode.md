@@ -84,6 +84,8 @@ values:
 - `limit.context` is the context the model really runs with: the `CONTEXT` value that
   `ollama ps` prints, not the value you asked Ollama for. With a larger number,
   OpenCode may send prompts that do not fit, and Ollama cuts them short.
+- `limit.output` is the value OpenCode sends as `max_tokens`. Keep it at or below
+  32,768, the gateway's cap on `max_tokens`.
 - `small_model` is the model OpenCode uses for short side requests: every new session
   starts with one that writes the session title. Set it to a model the gateway key
   may use, so that these requests are not refused.
@@ -344,9 +346,10 @@ docker compose -f deploy/compose/compose.yaml --profile ollama up --detach ollam
   `down` to keep them; `down --volumes` deletes them.
 - **Gateway.** The stack reaches Ollama through `OLLAMA_BASE_URL`, which defaults to
   an Ollama on the host, `http://host.docker.internal:11434`. To use the container,
-  put `OLLAMA_BASE_URL=http://ollama:11434` in `deploy/compose/.env`. Set
-  `OLLAMA_MODEL` there to the model you pulled. Every variable of the stack is listed
-  in [deploy/compose/README.md](../../deploy/compose/README.md).
+  put `OLLAMA_BASE_URL=http://ollama:11434` in `deploy/compose/.env`. Write it without
+  `/v1`: the gateway adds the path, and `/v1` belongs only in the client's `baseURL`.
+  Set `OLLAMA_MODEL` there to the model you pulled. Every variable of the stack is
+  listed in [deploy/compose/README.md](../../deploy/compose/README.md).
 
 ## Troubleshooting
 
