@@ -123,3 +123,23 @@ services:
         condition: service_healthy
       mock-upstream:
         condition: service_healthy
+
+  # Optional: starts only with `--profile ollama`, for people who do not install
+  # Ollama on the host. It runs on the CPU. See docs/clients/opencode.md.
+  ollama:
+    profiles: [ollama]
+    image: ollama/ollama:0.40.3
+    environment:
+      # A request, not a guarantee: Ollama caps it at the model's own maximum.
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-64000}
+    volumes: ["ollama-models:/root/.ollama"]
+    ports: ["127.0.0.1:${OLLAMA_PORT:-11434}:11434"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      start_period: 10s
+      retries: 10
+
+volumes:
+  # Pulled models. `down --volumes` deletes them, and the next pull downloads again.
+  ollama-models:
