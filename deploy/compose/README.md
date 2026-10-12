@@ -23,10 +23,18 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `MOCK_UPSTREAM_BASE_URL` | access seed | `http://mock-upstream:8090` | Base URL of the mock upstream channel |
 | `OLLAMA_BASE_URL` | access seed | `http://host.docker.internal:11434` | Base URL of the Ollama channel; the default reaches Ollama on the host |
 | `OLLAMA_MODEL` | access seed | `qwen2.5-coder:7b` | Model the Ollama channel serves |
+| `OLLAMA_CONTEXT_LENGTH` | ollama, with the `ollama` profile only | `64000` | Context the Ollama container asks for; Ollama caps it at the model's maximum |
 | `MOCK_FIRST_EVENT_DELAY_MS` | mock-upstream | `0` | Delay before the first stream event |
 | `MOCK_EVENT_INTERVAL_MS` | mock-upstream | `0` | Delay between stream events |
 | `POSTGRES_PASSWORD` | postgres | `gateflow-local-only` | Password of the `gateflow` superuser |
-| `*_PORT` | compose | 8080, 8081, 8082, 8090, 5432, 6379 | Host ports, bound to localhost only |
+| `*_PORT` | compose | 8080, 8081, 8082, 8090, 5432, 6379; 11434 for `OLLAMA_PORT` | Host ports, bound to localhost only |
+
+## Ollama profile
+
+The `ollama` service is optional and starts only with `--profile ollama`. It is for
+people who do not install Ollama on the host. To make the stack use it, set
+`OLLAMA_BASE_URL=http://ollama:11434`. The commands and the model to pull are in
+[the OpenCode guide](../../docs/clients/opencode.md#ollama-in-compose).
 
 ## Database roles
 
