@@ -1,0 +1,816 @@
+openapi: 3.1.0
+info:
+  title: FlowGate metering internal API
+  version: 1.0.0
+  description: |
+    Internal API of the metering service (wallets, reservations, settlement and the
+    ledger) for S1, as agreed in issue #18 revision 3.2. The gateway reserves before
+    it dispatches a call and settles after the call ends. Callers write their own
+    clients under `services/<caller>/internal/`.
+
+    `api/errors.md` is the single list of error codes. The `ErrorCode` enum below
+    lists exactly the codes it gives for metering.
+
+    **Conventions**
+
+    - Every call carries `Authorization: Bearer <METERING_INTERNAL_TOKEN>`, from the
+      gateway, and `X-Request-Id` with the gateway request id. A missing, empty or
+      wrong token gets 401 `unauthorized`. The token is compared in constant time.
+    - Metering calls access with `Authorization: Bearer <ACCESS_INTERNAL_TOKEN>` and
+      the same `X-Request-Id`. It refuses to start when `METERING_INTERNAL_TOKEN` or
+      `ACCESS_INTERNAL_TOKEN` is empty. The code holds no default token; compose
+      supplies local-only values. Callers find metering through `METERING_URL`, and
+      metering finds access through `ACCESS_URL`.
+    - Every error has the body `{"error":{"code","message","request_id"}}`. The
+      message is a fixed string per code and never echoes request input. Callers act
+      on `error.code`, never on the status alone.
+    - Any call may also get 500 `internal_error`, and 503 `dependency_unavailable`
+      when the metering database is unavailable.
+    - All amounts and prices are int64 micro-units of the simulated currency (US
+      dollars): 1 micro-unit = 0.000001 USD. A price of 3 micro-units per token is
+      3 USD per million tokens.
+    - `tenant_id`, `price_version_id`, `reservation_id`, `ledger_entry_id` and
+      `call_id` are opaque strings; `attempt_id` is an integer; token counts are
+      int64 or null. The seeded wallets have `tenant_id` exactly `tenant-00` to
+      `tenant-10`, the same strings as the access seed.
+    - No service logs a gateway key, an `Authorization` or `x-api-key` header, an
+      internal token, a credential value or a request or response body.
+    - `/healthz` stays open and is not part of this contract.
+
+    **Recorded S1 deviations** (also listed in #20)
+
+    - Unknown usage is charged at its maximum instead of leaving the reservation
+      pending.
+    - `upstream_error` (a non-2xx reply before any output) and `not_dispatched`
+      charge 0, although a non-2xx reply does not strictly prove the upstream did no
+      work.
+    - Prices are whole micro-units per token, with no separate cache or reasoning
+      token prices: cache-read and cache-creation input tokens are charged at the
+      full input price, and thinking tokens arrive inside `output_tokens`.
+    - On Ollama, the input count in `message_start` is an estimate, so a stream that
+      ends before its `message_delta` is charged on that estimate.
+    - Metering trusts the gateway's `tenant_id` and `price_version_id`.
+    - A reservation left by a failed reserve or settle, or a gateway crash, stays
+      held until recovery (UC6, after the gate).
+servers:
+  - url: http://metering:8082
+    description: The metering service inside the local compose network.
+security:
+  - internalToken: []
+paths:
+  /internal/v1/reservations:
+    post:
+      operationId: reserve
+      summary: Hold the most a call attempt can cost
+      description: |
+        Holds `max_cost` of the tenant's wallet for one call attempt, before the
+        gateway dispatches the call. A rejected reserve creates no reservation and no
+        ledger entry.
+
+        **Price.** Metering fetches the price version from access
+        (`GET /internal/v1/price-versions/{id}`) and computes the amounts itself. It
+        answers 503 `dependency_unavailable` when access does not answer within 1 s,
+        and 500 `internal_error` when access answers with 404 or 401, or with a price
+        outside 0 to 1,000,000 micro-units per token. A replay never fetches the price
+        again.
+
+        **Charge bound.**
+        `max_cost = max_input_tokens x input price + max_output_tokens x output price`.
+        The reservation keeps the bounds and prices that settle charges against.
+
+        **Bounds.**
+
+        - Metering rejects negative token counts with 400 `invalid_request` and uses
+          checked arithmetic; a `max_cost` that overflows int64 gets 400
+          `invalid_request`.
+        - The gateway accepts request bodies up to 2 MiB (larger ones get 413
+          `request_too_large`) and `max_tokens` only as an integer from 1 to 32,768.
+        - The gateway reserves with `max_input_tokens` = request body size in bytes (at
+          most 2,097,152) and `max_output_tokens` = `max_tokens`. Bytes are an upper
+          bound on tokens for text and tool content, which is all S1 accepts; they are
+          not proven for other content types.
+
+        **Idempotency and concurrency.**
+
+        - Reserve is idempotent by (`call_id`, `attempt_id`). Content is compared
+          field by field, including `tenant_id` and `price_version_id`, ignoring JSON
+          key order, whitespace and headers. Different content for the same key gets
+          422 `idempotency_conflict`.
+        - A replay with identical content returns 200 with the recorded body of the
+          first 201, even after the reservation was settled, and creates no new hold.
+        - Metering checks for a replay before it checks the balance, and returns the
+          recorded result even if the balance has since changed.
+        - A concurrent duplicate waits for the first call and returns its result; the
+          duplication itself never causes a 409 or 500. If the first call was
+          rejected, for example with 409, nothing was recorded, so the duplicate is
+          evaluated again on its own and may get 409, or 201 if the balance has
+          changed.
+        - Metering stores `call_id` and `attempt_id` on the reservation and on its
+          ledger entry.
+
+        **Caller.** `call_id` is the gateway request id (`req_<uuid>`) and
+        `attempt_id` is 1. The gateway gives up after 2 s. If reserve times out,
+        returns 5xx or fails to connect, the gateway retries it once with the same
+        ids. If it still has no reservation, it answers 503 and never calls the
+        upstream, and logs `call_id` at error level.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReserveRequest'
+            examples:
+              worked-examples:
+                summary: The reservation behind the worked examples (max_cost 4,500)
+                description: |
+                  Price version `pv-seed-1` has input price 3 and output price 15.
+                  max_cost = 1,000 x 3 + 100 x 15 = 3,000 + 1,500 = 4,500. Each
+                  worked settle example (`worked-*`) settles its own reservation made
+                  like this one, with its own `call_id`.
+                value:
+                  call_id: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
+                  attempt_id: 1
+                  tenant_id: tenant-01
+                  price_version_id: pv-seed-1
+                  max_input_tokens: 1000
+                  max_output_tokens: 100
+              shared-fixture:
+                summary: The reservation behind the shared test fixture (max_cost 300)
+                description: |
+                  Shared fixture for #27 and #39. Price version `pv-fixture-2-5`, a
+                  test price version that is not seeded, has input price 2 and output
+                  price 5. max_cost = 100 x 2 + 20 x 5 = 200 + 100 = 300. Each fixture
+                  settle example (`fixture-*`) settles its own reservation made like
+                  this one, with its own `call_id`.
+                value:
+                  call_id: req_0a9b8c7d-6e5f-4a3b-9c2d-1e0f2a3b4c5d
+                  attempt_id: 1
+                  tenant_id: tenant-01
+                  price_version_id: pv-fixture-2-5
+                  max_input_tokens: 100
+                  max_output_tokens: 20
+      responses:
+        '200':
+          description: |
+            A replay: the recorded body of the first 201, returned even if the
+            reservation was settled since or the balance changed. No new hold is made.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReserveResponse'
+              examples:
+                worked-examples-replayed:
+                  summary: The worked-examples reserve sent again after it was settled
+                  value:
+                    reservation_id: rsv_w1
+                    max_cost: 4500
+                    status: reserved
+        '201':
+          description: The hold is made.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReserveResponse'
+              examples:
+                worked-examples:
+                  summary: max_cost = 1,000 x 3 + 100 x 15 = 4,500
+                  value:
+                    reservation_id: rsv_w1
+                    max_cost: 4500
+                    status: reserved
+                shared-fixture:
+                  summary: max_cost = 100 x 2 + 20 x 5 = 300
+                  value:
+                    reservation_id: rsv_f1
+                    max_cost: 300
+                    status: reserved
+        '400':
+          description: |
+            `invalid_request`: the body is not JSON or breaks the request schema, a
+            token count is negative, or `max_cost` overflows int64.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_request:
+                  $ref: '#/components/examples/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`wallet_not_found`: the tenant has no wallet.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                wallet_not_found:
+                  $ref: '#/components/examples/WalletNotFound'
+        '409':
+          description: |
+            `insufficient_balance`: the wallet's available balance (balance minus the
+            amounts held) is below `max_cost`. Nothing is recorded, so the same
+            request may succeed later.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                insufficient_balance:
+                  $ref: '#/components/examples/InsufficientBalance'
+        '422':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '500':
+          description: |
+            `internal_error`: an unexpected failure, access answered the price lookup
+            with 404 or 401, or the price version is outside 0 to 1,000,000
+            micro-units per token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                internal_error:
+                  $ref: '#/components/examples/InternalError'
+        '503':
+          description: |
+            `dependency_unavailable`: access did not answer the price lookup within
+            1 s, or the metering database is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                dependency_unavailable:
+                  $ref: '#/components/examples/DependencyUnavailable'
+  /internal/v1/reservations/{reservation_id}/settle:
+    post:
+      operationId: settle
+      summary: Charge a call and release the rest of its hold
+      description: |
+        Settles a reservation: charges the call and releases the rest of the hold,
+        `max_cost - charged`. Every settled reservation has exactly one ledger entry,
+        including those charged 0, carrying the reservation's `call_id` and
+        `attempt_id`.
+
+        **Charge rule.**
+
+        - For `upstream_error` and `not_dispatched`, metering ignores the counts and
+          charges 0. The gateway sends both counts as 0.
+        - Otherwise each null count is replaced by its maximum: `input_tokens` by
+          `max_input_tokens`, `output_tokens` by `max_output_tokens`. Then
+          `charged = min(max_cost, input_tokens x input price + output_tokens x output price)`.
+        - Metering rejects negative token counts with 400 `invalid_request` and uses
+          checked arithmetic. An overflow charges `max_cost`, so settle never fails on
+          a large count.
+        - Metering stores the counts as sent (null stays null), the outcome and
+          `charged`, so reported and unknown usage stay distinguishable.
+
+        **Usage source.** The gateway fills the counts as follows. Input is
+        `input_tokens` + `cache_read_input_tokens` + `cache_creation_input_tokens`,
+        adding each field that is present, all charged at the input price. The gateway
+        reads these from `message_start`, and a later `message_delta` that reports an
+        input total greater than 0 replaces them. It takes `output_tokens` from the
+        last `message_delta`. Non-streaming replies use the body's `usage` the same
+        way. An input total that is 0 or never seen is sent as null, because a
+        non-empty request cannot use 0 input tokens and some upstreams report 0 before
+        the real count. An output count of 0 that the upstream reported is a known 0.
+        An output count never seen (no `message_delta`, or no `usage` in the body) is
+        sent as null.
+
+        **Outcome rule.** The gateway picks the outcome; the first rule that matches
+        wins:
+
+        1. `not_dispatched`: no upstream request was sent, including when the
+           connection to the upstream could not be opened.
+        2. `completed`: `message_stop` arrived, or a 2xx non-streaming body was read
+           in full, even if the client then left.
+        3. `client_cancelled`: the client disconnected first.
+        4. `upstream_error`: the upstream answered with a non-2xx status before any
+           output. Only this case is taken as proof that no tokens were used.
+        5. `interrupted`: anything else, including a request that was sent but got no
+           reply (connection reset or timeout), a stream that ends without
+           `message_stop`, and an upstream `event: error` after the stream started.
+
+        **Idempotency and concurrency.**
+
+        - Settle is idempotent by `reservation_id`. Content is compared field by
+          field, ignoring JSON key order, whitespace and headers. A repeat with the
+          same outcome and counts returns the first result and ledger entry id and
+          charges nothing more. Different content gets 422 `idempotency_conflict`.
+        - Settle changes a reservation from `reserved` to `settled` only once, with a
+          conditional update or a row lock, so a concurrent duplicate releases
+          nothing. No lock is held while the model streams.
+
+        **Caller.** The gateway settles with a fresh context: timeout 2 s, and up to 2
+        retries of the identical request on a timeout, 5xx or connection error (at
+        most 6 s, inside the 10 s shutdown drain). If settle finally fails, the
+        gateway logs `call_id` and `reservation_id` at error level, and the
+        reservation stays held until recovery (UC6, after the gate).
+
+        **Examples.** The `worked-*` examples are the worked examples of issue #18
+        and the `fixture-*` examples the shared test fixture for #27 and #39; each
+        response example has the same name as its request example. Every outcome
+        appears: `completed` (worked-1, worked-2, fixture-1, fixture-2),
+        `interrupted` (worked-3, worked-4, worked-6, fixture-3), `client_cancelled`
+        (worked-5, fixture-4), `upstream_error` (worked-7, fixture-5) and
+        `not_dispatched` (worked-8).
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: reservation_id
+          in: path
+          required: true
+          description: The `reservation_id` that reserve returned.
+          schema:
+            type: string
+            minLength: 1
+          example: rsv_w1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettleRequest'
+            examples:
+              worked-1-completed:
+                summary: 'Worked example 1: completed, 3,150 charged'
+                description: |
+                  `rsv_w1`, reserved like `worked-examples`: input price 3, output
+                  price 15, max_cost = 1,000 x 3 + 100 x 15 = 4,500.
+                  charged = 800 x 3 + 50 x 15 = 2,400 + 750 = 3,150; 1,350 is released.
+                value:
+                  input_tokens: 800
+                  output_tokens: 50
+                  outcome: completed
+              worked-2-completed-above-bounds:
+                summary: 'Worked example 2: completed, reported more than the bounds, 4,500 charged'
+                description: |
+                  `rsv_w2`, reserved like `worked-examples` (max_cost 4,500).
+                  charged = min(4,500, 1,200 x 3 + 100 x 15) = min(4,500, 3,600 + 1,500)
+                  = 4,500; nothing is released.
+                value:
+                  input_tokens: 1200
+                  output_tokens: 100
+                  outcome: completed
+              worked-3-interrupted-after-message-start:
+                summary: 'Worked example 3: interrupted, stream dropped after message_start, 3,900 charged'
+                description: |
+                  `rsv_w3`, reserved like `worked-examples` (max_cost 4,500). The null
+                  output count is replaced by max_output_tokens 100.
+                  charged = 800 x 3 + 100 x 15 = 2,400 + 1,500 = 3,900; 600 is released.
+                value:
+                  input_tokens: 800
+                  output_tokens: null
+                  outcome: interrupted
+              worked-4-interrupted-zero-input:
+                summary: 'Worked example 4: interrupted, input reported as 0 and no message_delta, 4,500 charged'
+                description: |
+                  `rsv_w4`, reserved like `worked-examples` (max_cost 4,500). The
+                  upstream reported input 0, so the gateway sends null; both counts are
+                  replaced by their maximums.
+                  charged = 1,000 x 3 + 100 x 15 = 3,000 + 1,500 = 4,500; nothing is
+                  released.
+                value:
+                  input_tokens: null
+                  output_tokens: null
+                  outcome: interrupted
+              worked-5-client-cancelled:
+                summary: 'Worked example 5: client_cancelled, no usage seen, 4,500 charged'
+                description: |
+                  `rsv_w5`, reserved like `worked-examples` (max_cost 4,500).
+                  charged = 1,000 x 3 + 100 x 15 = 3,000 + 1,500 = 4,500; nothing is
+                  released.
+                value:
+                  input_tokens: null
+                  output_tokens: null
+                  outcome: client_cancelled
+              worked-6-interrupted-no-reply:
+                summary: 'Worked example 6: interrupted, request sent and connection dropped with no reply, 4,500 charged'
+                description: |
+                  `rsv_w6`, reserved like `worked-examples` (max_cost 4,500).
+                  charged = 1,000 x 3 + 100 x 15 = 3,000 + 1,500 = 4,500; nothing is
+                  released.
+                value:
+                  input_tokens: null
+                  output_tokens: null
+                  outcome: interrupted
+              worked-7-upstream-error:
+                summary: 'Worked example 7: upstream_error, upstream answered 500, 0 charged'
+                description: |
+                  `rsv_w7`, reserved like `worked-examples` (max_cost 4,500). Metering
+                  ignores the counts for `upstream_error`. charged = 0; 4,500 is
+                  released.
+                value:
+                  input_tokens: 0
+                  output_tokens: 0
+                  outcome: upstream_error
+              worked-8-not-dispatched:
+                summary: 'Worked example 8: not_dispatched, client left before dispatch, 0 charged'
+                description: |
+                  `rsv_w8`, reserved like `worked-examples` (max_cost 4,500). Metering
+                  ignores the counts for `not_dispatched`. charged = 0; 4,500 is
+                  released.
+                value:
+                  input_tokens: 0
+                  output_tokens: 0
+                  outcome: not_dispatched
+              fixture-1-completed:
+                summary: 'Shared fixture 1: 170 charged, 130 released'
+                description: |
+                  `rsv_f1`, reserved like `shared-fixture`: input price 2, output
+                  price 5, max_cost = 100 x 2 + 20 x 5 = 300.
+                  charged = 60 x 2 + 10 x 5 = 120 + 50 = 170; 130 is released.
+                value:
+                  input_tokens: 60
+                  output_tokens: 10
+                  outcome: completed
+              fixture-2-completed:
+                summary: 'Shared fixture 2: 60 charged, 240 released'
+                description: |
+                  `rsv_f2`, reserved like `shared-fixture` (max_cost 300).
+                  charged = 20 x 2 + 4 x 5 = 40 + 20 = 60; 240 is released.
+                value:
+                  input_tokens: 20
+                  output_tokens: 4
+                  outcome: completed
+              fixture-3-interrupted:
+                summary: 'Shared fixture 3: 140 charged, 160 released'
+                description: |
+                  `rsv_f3`, reserved like `shared-fixture` (max_cost 300). The null
+                  output count is replaced by max_output_tokens 20.
+                  charged = 20 x 2 + 20 x 5 = 40 + 100 = 140; 160 is released. The
+                  fixture does not fix the outcome; `completed`, `client_cancelled`
+                  and `interrupted` charge the same.
+                value:
+                  input_tokens: 20
+                  output_tokens: null
+                  outcome: interrupted
+              fixture-4-client-cancelled:
+                summary: 'Shared fixture 4: 300 charged, 0 released'
+                description: |
+                  `rsv_f4`, reserved like `shared-fixture` (max_cost 300). Both null
+                  counts are replaced by their maximums.
+                  charged = 100 x 2 + 20 x 5 = 200 + 100 = 300; 0 is released. The
+                  fixture does not fix the outcome; `completed`, `client_cancelled`
+                  and `interrupted` charge the same.
+                value:
+                  input_tokens: null
+                  output_tokens: null
+                  outcome: client_cancelled
+              fixture-5-upstream-error:
+                summary: 'Shared fixture 5: upstream_error, 0 charged, 300 released'
+                description: |
+                  `rsv_f5`, reserved like `shared-fixture` (max_cost 300). Metering
+                  ignores the counts for `upstream_error`. charged = 0; 300 is
+                  released.
+                value:
+                  input_tokens: 0
+                  output_tokens: 0
+                  outcome: upstream_error
+      responses:
+        '200':
+          description: |
+            The reservation is settled. A repeat with the same outcome and counts
+            returns this same body, including `ledger_entry_id`, and charges nothing
+            more.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettleResponse'
+              examples:
+                worked-1-completed:
+                  summary: 3,150 charged
+                  value:
+                    charged: 3150
+                    ledger_entry_id: led_w1
+                    status: settled
+                worked-2-completed-above-bounds:
+                  summary: 4,500 charged
+                  value:
+                    charged: 4500
+                    ledger_entry_id: led_w2
+                    status: settled
+                worked-3-interrupted-after-message-start:
+                  summary: 3,900 charged
+                  value:
+                    charged: 3900
+                    ledger_entry_id: led_w3
+                    status: settled
+                worked-4-interrupted-zero-input:
+                  summary: 4,500 charged
+                  value:
+                    charged: 4500
+                    ledger_entry_id: led_w4
+                    status: settled
+                worked-5-client-cancelled:
+                  summary: 4,500 charged
+                  value:
+                    charged: 4500
+                    ledger_entry_id: led_w5
+                    status: settled
+                worked-6-interrupted-no-reply:
+                  summary: 4,500 charged
+                  value:
+                    charged: 4500
+                    ledger_entry_id: led_w6
+                    status: settled
+                worked-7-upstream-error:
+                  summary: 0 charged, still with a ledger entry
+                  value:
+                    charged: 0
+                    ledger_entry_id: led_w7
+                    status: settled
+                worked-8-not-dispatched:
+                  summary: 0 charged, still with a ledger entry
+                  value:
+                    charged: 0
+                    ledger_entry_id: led_w8
+                    status: settled
+                fixture-1-completed:
+                  summary: 170 charged
+                  value:
+                    charged: 170
+                    ledger_entry_id: led_f1
+                    status: settled
+                fixture-2-completed:
+                  summary: 60 charged
+                  value:
+                    charged: 60
+                    ledger_entry_id: led_f2
+                    status: settled
+                fixture-3-interrupted:
+                  summary: 140 charged
+                  value:
+                    charged: 140
+                    ledger_entry_id: led_f3
+                    status: settled
+                fixture-4-client-cancelled:
+                  summary: 300 charged
+                  value:
+                    charged: 300
+                    ledger_entry_id: led_f4
+                    status: settled
+                fixture-5-upstream-error:
+                  summary: 0 charged, still with a ledger entry
+                  value:
+                    charged: 0
+                    ledger_entry_id: led_f5
+                    status: settled
+        '400':
+          description: |
+            `invalid_request`: the body is not JSON or breaks the request schema, or a
+            token count is negative.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_request:
+                  $ref: '#/components/examples/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`reservation_not_found`: no reservation has this id.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                reservation_not_found:
+                  $ref: '#/components/examples/ReservationNotFound'
+        '422':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '500':
+          description: '`internal_error`: an unexpected failure inside metering.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                internal_error:
+                  $ref: '#/components/examples/InternalError'
+        '503':
+          description: '`dependency_unavailable`: the metering database is unavailable.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                dependency_unavailable:
+                  $ref: '#/components/examples/DependencyUnavailable'
+components:
+  securitySchemes:
+    internalToken:
+      type: http
+      scheme: bearer
+      description: |
+        `METERING_INTERNAL_TOKEN`, sent by the gateway. Metering refuses to start
+        when it is empty; a missing, empty or wrong token gets 401 `unauthorized`.
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: true
+      description: |
+        The gateway request id, `req_<uuid>`. Metering sends the same value when it
+        calls access; errors return it as `error.request_id`.
+      schema:
+        type: string
+      example: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
+  schemas:
+    ReserveRequest:
+      type: object
+      additionalProperties: false
+      required: [call_id, attempt_id, tenant_id, price_version_id, max_input_tokens, max_output_tokens]
+      properties:
+        call_id:
+          type: string
+          minLength: 1
+          description: The gateway request id, `req_<uuid>`. With `attempt_id`, the idempotency key.
+        attempt_id:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 2147483647
+          description: The attempt of this call; the gateway sends 1.
+        tenant_id:
+          type: string
+          minLength: 1
+          description: The tenant whose wallet is held, as returned by access verify.
+        price_version_id:
+          type: string
+          minLength: 1
+          description: The price version to charge at, as returned by access verify.
+        max_input_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The most input tokens the call can use; the gateway sends the request body size in bytes.
+        max_output_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The most output tokens the call can use; the gateway sends `max_tokens`.
+    ReserveResponse:
+      type: object
+      required: [reservation_id, max_cost, status]
+      properties:
+        reservation_id:
+          type: string
+        max_cost:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The amount held, in micro-units.
+        status:
+          type: string
+          const: reserved
+          description: Always `reserved`, also in a replay after the reservation was settled.
+    SettleRequest:
+      type: object
+      additionalProperties: false
+      required: [input_tokens, output_tokens, outcome]
+      properties:
+        input_tokens:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+          description: |
+            The input total (input, cache-read and cache-creation input tokens), or
+            null when it was 0 or never seen.
+        output_tokens:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+          description: The output tokens, or null when never seen. A reported 0 is sent as 0.
+        outcome:
+          $ref: '#/components/schemas/Outcome'
+    Outcome:
+      type: string
+      description: |
+        How the call ended, by the outcome rule of the settle operation:
+        `not_dispatched`, `completed`, `client_cancelled`, `upstream_error` or
+        `interrupted`, the first that matches. `upstream_error` and `not_dispatched`
+        charge 0.
+      enum:
+        - completed
+        - upstream_error
+        - client_cancelled
+        - interrupted
+        - not_dispatched
+    SettleResponse:
+      type: object
+      required: [charged, ledger_entry_id, status]
+      properties:
+        charged:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The amount charged, in micro-units; at most the reservation's `max_cost`.
+        ledger_entry_id:
+          type: string
+          description: The reservation's one ledger entry.
+        status:
+          type: string
+          const: settled
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              $ref: '#/components/schemas/ErrorCode'
+            message:
+              type: string
+              description: A fixed string per code that never echoes request input.
+            request_id:
+              type: string
+              description: The `X-Request-Id` of the request.
+    ErrorCode:
+      type: string
+      description: The error codes metering returns; must match api/errors.md.
+      enum:
+        - invalid_request
+        - unauthorized
+        - wallet_not_found
+        - reservation_not_found
+        - insufficient_balance
+        - idempotency_conflict
+        - internal_error
+        - dependency_unavailable
+  examples:
+    InvalidRequest:
+      value:
+        error:
+          code: invalid_request
+          message: The request body is invalid.
+          request_id: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
+    Unauthorized:
+      value:
+        error:
+          code: unauthorized
+          message: The internal token is missing or wrong.
+          request_id: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
+    WalletNotFound:
+      value:
+        error:
+          code: wallet_not_found
+          message: The tenant has no wallet.
+          request_id: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
+    InsufficientBalance:
+      value:
+        error:
+          code: insufficient_balance
+          message: The available balance is below the reservation amount.
+          request_id: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
+    ReservationNotFound:
+      value:
+        error:
+          code: reservation_not_found
+          message: The reservation does not exist.
+          request_id: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
+    IdempotencyConflict:
+      value:
+        error:
+          code: idempotency_conflict
+          message: The request differs from an earlier request with the same key.
+          request_id: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
+    InternalError:
+      value:
+        error:
+          code: internal_error
+          message: Internal error.
+          request_id: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
+    DependencyUnavailable:
+      value:
+        error:
+          code: dependency_unavailable
+          message: A dependency is unavailable.
+          request_id: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
+  responses:
+    Unauthorized:
+      description: '`unauthorized`: the internal token is missing, empty or wrong.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            unauthorized:
+              $ref: '#/components/examples/Unauthorized'
+    IdempotencyConflict:
+      description: |
+        `idempotency_conflict`: an earlier reserve with the same (`call_id`,
+        `attempt_id`), or an earlier settle of the same reservation, had different
+        content.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            idempotency_conflict:
+              $ref: '#/components/examples/IdempotencyConflict'

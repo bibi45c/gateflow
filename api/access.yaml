@@ -1,0 +1,390 @@
+openapi: 3.1.0
+info:
+  title: FlowGate access internal API
+  version: 1.0.0
+  description: |
+    Internal API of the access service (tenants, gateway keys, channels and price
+    versions) for S1, as agreed in issue #18 revision 3.2. The gateway calls
+    `POST /internal/v1/keys/verify`; metering calls
+    `GET /internal/v1/price-versions/{id}`. Callers write their own clients under
+    `services/<caller>/internal/`.
+
+    `api/errors.md` is the single list of error codes. The `ErrorCode` enum below
+    lists exactly the codes it gives for access.
+
+    **Conventions**
+
+    - Every call carries `Authorization: Bearer <ACCESS_INTERNAL_TOKEN>`, from the
+      gateway and from metering, and `X-Request-Id` with the gateway request id. A
+      missing, empty or wrong token gets 401 `unauthorized`. The token is compared in
+      constant time.
+    - Access refuses to start when `ACCESS_INTERNAL_TOKEN` is empty. The code holds no
+      default token; compose supplies a local-only value. Callers find access through
+      `ACCESS_URL`.
+    - Every error has the body `{"error":{"code","message","request_id"}}`. The
+      message is a fixed string per code and never echoes request input. Callers act
+      on `error.code`, never on the status alone.
+    - Any call may also get 500 `internal_error`, and 503 `dependency_unavailable`
+      when the access database is unavailable.
+    - `tenant_id`, `key_id`, `price_version_id` and the channel `id` are opaque
+      strings. The seeded tenants have `tenant_id` exactly `tenant-00` to `tenant-10`.
+    - Prices are int64 micro-units of the simulated currency (US dollars) per token:
+      1 micro-unit = 0.000001 USD, so a price of 3 is 3 USD per million tokens.
+    - No service logs a gateway key, an `Authorization` or `x-api-key` header, an
+      internal token, a credential value or a request or response body.
+    - `/healthz` stays open and is not part of this contract.
+
+    **Recorded S1 deviation.** Access uses one internal token for the gateway and
+    metering, with no per-caller permissions.
+servers:
+  - url: http://access:8081
+    description: The access service inside the local compose network.
+security:
+  - internalToken: []
+paths:
+  /internal/v1/keys/verify:
+    post:
+      operationId: verifyKey
+      summary: Verify a gateway key for a model
+      description: |
+        Checks the gateway key the client sent and whether it may use `model`, and
+        returns the tenant, the price version to charge at and the channel to call.
+
+        The gateway calls this after its own checks, in this order: body size (413),
+        gateway key present (401), JSON, `model` and `max_tokens` (400), then verify,
+        then the channel check, then reserve, then dispatch. It gives up on verify
+        after 2 s and then answers 503 without calling the upstream.
+
+        The gateway checks the returned channel again before it reserves (see
+        `Channel`); a channel that breaks the rules gets the client 500 `api_error`,
+        is logged, and no reservation is made. In S1, only the access seed command
+        writes channels and price versions, and it rejects values that break these
+        rules.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyRequest'
+            examples:
+              seeded-key:
+                summary: A seeded key asks for a mock model
+                value:
+                  key: gf_example_only_not_a_real_key
+                  model: mock-small
+      responses:
+        '200':
+          description: The key is valid and may use the model.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyResponse'
+              examples:
+                mock-channel:
+                  summary: The seeded tenant-01 key on the mock channel
+                  value:
+                    tenant_id: tenant-01
+                    key_id: key-tenant-01
+                    price_version_id: pv-seed-1
+                    channel:
+                      id: mock
+                      protocol: anthropic-messages
+                      base_url: http://mock-upstream:8090
+                      credential_env: ''
+                credential-channel:
+                  summary: A channel whose credential the gateway reads from its environment
+                  value:
+                    tenant_id: tenant-02
+                    key_id: key-tenant-02
+                    price_version_id: pv-seed-1
+                    channel:
+                      id: hosted
+                      protocol: anthropic-messages
+                      base_url: https://api.example.com
+                      credential_env: UPSTREAM_CREDENTIAL_HOSTED
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          description: |
+            `invalid_key`: the gateway key is unknown or revoked.
+            `unauthorized`: the internal token is missing, empty or wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_key:
+                  value:
+                    error:
+                      code: invalid_key
+                      message: The gateway key is unknown or revoked.
+                      request_id: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
+                unauthorized:
+                  $ref: '#/components/examples/Unauthorized'
+        '403':
+          description: '`model_not_allowed`: the key is valid but may not use `model`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                model_not_allowed:
+                  value:
+                    error:
+                      code: model_not_allowed
+                      message: The key may not use this model.
+                      request_id: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /internal/v1/price-versions/{id}:
+    get:
+      operationId: getPriceVersion
+      summary: Read a price version
+      description: |
+        Returns the prices of a price version. A price version never changes once
+        stored, so callers may cache it; new prices need a new version.
+
+        Prices are integers from 0 to 1,000,000 micro-units per token. Access
+        enforces this when a price version is stored.
+
+        Metering calls this at reserve. It gives up after 1 s and then answers its
+        caller 503 `dependency_unavailable`; it answers 500 `internal_error` when this
+        call returns 404 or 401, or a price outside 0 to 1,000,000.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: id
+          in: path
+          required: true
+          description: The opaque price version id, as returned by verify.
+          schema:
+            type: string
+            minLength: 1
+          example: pv-seed-1
+      responses:
+        '200':
+          description: The price version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceVersion'
+              examples:
+                seeded:
+                  summary: The seeded price version, 3 and 15 USD per million tokens
+                  value:
+                    id: pv-seed-1
+                    input_micro_per_token: 3
+                    output_micro_per_token: 15
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`price_version_not_found`: no price version has this id.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                price_version_not_found:
+                  value:
+                    error:
+                      code: price_version_not_found
+                      message: The price version does not exist.
+                      request_id: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+components:
+  securitySchemes:
+    internalToken:
+      type: http
+      scheme: bearer
+      description: |
+        `ACCESS_INTERNAL_TOKEN`, sent by the gateway and by metering. Access refuses
+        to start when it is empty; a missing, empty or wrong token gets 401
+        `unauthorized`.
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: true
+      description: |
+        The gateway request id, `req_<uuid>`. Every internal caller sends it,
+        including metering when it calls access; errors return it as
+        `error.request_id`.
+      schema:
+        type: string
+      example: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
+  schemas:
+    VerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [key, model]
+      properties:
+        key:
+          type: string
+          minLength: 1
+          description: The gateway key the client sent. Never logged.
+        model:
+          type: string
+          minLength: 1
+          description: The `model` of the client's request.
+    VerifyResponse:
+      type: object
+      required: [tenant_id, key_id, price_version_id, channel]
+      properties:
+        tenant_id:
+          type: string
+          description: The opaque tenant id, such as `tenant-01`. Metering keeps a wallet under the same string.
+        key_id:
+          type: string
+          description: The opaque id of the key.
+        price_version_id:
+          type: string
+          description: The opaque id of the price version this call is charged at; the gateway passes it to reserve.
+        channel:
+          $ref: '#/components/schemas/Channel'
+    Channel:
+      type: object
+      description: |
+        The upstream the gateway sends this call to. The gateway appends
+        `/v1/messages` to `base_url`. It forwards only the `content-type`,
+        `anthropic-version` and `anthropic-beta` request headers, and never forwards
+        the client's `x-api-key` or `Authorization`, or any internal token, upstream.
+      required: [id, protocol, base_url, credential_env]
+      properties:
+        id:
+          type: string
+          description: The opaque channel id, such as `mock` or `ollama`.
+        protocol:
+          type: string
+          const: anthropic-messages
+        base_url:
+          type: string
+          pattern: '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'
+          description: |
+            `http` or `https`, a host and an optional port, with no path, query or
+            trailing slash, for example `http://mock-upstream:8090`. When
+            `credential_env` is not empty, the scheme must be `https`.
+        credential_env:
+          type: string
+          pattern: '^(UPSTREAM_CREDENTIAL_[A-Z0-9_]+)?$'
+          description: |
+            Empty, or the name of a gateway environment variable matching
+            `UPSTREAM_CREDENTIAL_[A-Z0-9_]+`; never the credential itself. The
+            gateway sends the variable's value upstream as `x-api-key`. It is empty
+            for the mock and for Ollama. A bad name, or a variable that is unset, is a
+            misconfigured channel.
+      if:
+        required: [credential_env]
+        properties:
+          credential_env:
+            minLength: 1
+      then:
+        properties:
+          base_url:
+            pattern: '^https://'
+    PriceVersion:
+      type: object
+      required: [id, input_micro_per_token, output_micro_per_token]
+      properties:
+        id:
+          type: string
+        input_micro_per_token:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000
+          description: Price of one input token, in micro-units. Cache-read and cache-creation input tokens are charged at this price too.
+        output_micro_per_token:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000
+          description: Price of one output token, in micro-units.
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              $ref: '#/components/schemas/ErrorCode'
+            message:
+              type: string
+              description: A fixed string per code that never echoes request input.
+            request_id:
+              type: string
+              description: The `X-Request-Id` of the request.
+    ErrorCode:
+      type: string
+      description: The error codes access returns; must match api/errors.md.
+      enum:
+        - invalid_request
+        - unauthorized
+        - invalid_key
+        - model_not_allowed
+        - price_version_not_found
+        - internal_error
+        - dependency_unavailable
+  examples:
+    Unauthorized:
+      value:
+        error:
+          code: unauthorized
+          message: The internal token is missing or wrong.
+          request_id: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
+  responses:
+    InvalidRequest:
+      description: '`invalid_request`: the body is not JSON or breaks the request schema.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalid_request:
+              value:
+                error:
+                  code: invalid_request
+                  message: The request body is invalid.
+                  request_id: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
+    Unauthorized:
+      description: '`unauthorized`: the internal token is missing, empty or wrong.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            unauthorized:
+              $ref: '#/components/examples/Unauthorized'
+    InternalError:
+      description: '`internal_error`: an unexpected failure inside access.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            internal_error:
+              value:
+                error:
+                  code: internal_error
+                  message: Internal error.
+                  request_id: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
+    DependencyUnavailable:
+      description: '`dependency_unavailable`: the access database is unavailable.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            dependency_unavailable:
+              value:
+                error:
+                  code: dependency_unavailable
+                  message: A dependency is unavailable.
+                  request_id: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
