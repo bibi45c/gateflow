@@ -26,7 +26,19 @@ const ShutdownTimeout = 10 * time.Second
 // Main runs the named service on $ADDR (default defaultAddr) with GET /healthz and
 // the routes that register adds. It logs JSON to stdout and exits with status 1 when
 // the server fails; a drain that times out is logged as a warning.
+//
+// Run as `<binary> healthcheck`, it instead checks the running process's /healthz
+// and exits 0 or 1, so container health checks need no shell or curl.
 func Main(name, defaultAddr string, register func(*http.ServeMux)) {
+	addr := config.Env("ADDR", defaultAddr)
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		if err := CheckHealth(addr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Restore default signal handling once stopping begins, so a second signal
@@ -42,7 +54,6 @@ func Main(name, defaultAddr string, register func(*http.ServeMux)) {
 		register(mux)
 	}
 
-	addr := config.Env("ADDR", defaultAddr)
 	logger.Info("starting", "addr", addr)
 	err := Run(ctx, addr, mux)
 	switch {
@@ -54,6 +65,25 @@ func Main(name, defaultAddr string, register func(*http.ServeMux)) {
 	default:
 		logger.Info("stopped")
 	}
+}
+
+// CheckHealth asks the process listening on addr's port on this host for /healthz
+// and returns an error unless it answers 200 within a few seconds.
+func CheckHealth(addr string) error {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("healthcheck: address %q: %w", addr, err)
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	response, err := client.Get("http://" + net.JoinHostPort("127.0.0.1", port) + "/healthz")
+	if err != nil {
+		return fmt.Errorf("healthcheck: %w", err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthcheck: status %d", response.StatusCode)
+	}
+	return nil
 }
 
 // Run serves handler on addr until ctx ends, then shuts down gracefully.
