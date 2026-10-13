@@ -1,0 +1,19 @@
+{
+  "id": "msg_01FixtureMessage",
+  "type": "message",
+  "role": "assistant",
+  "model": "mock-small",
+  "content": [
+    {"type": "text", "text": "Checking."},
+    {"type": "tool_use", "id": "toolu_01Fixture", "name": "get_weather", "input": {"location": "Paris"}}
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 0,
+    "cache_creation_input_tokens": 12,
+    "output_tokens": 0,
+    "x_future_counter": 7
+  },
+  "x_future_field": true
+}

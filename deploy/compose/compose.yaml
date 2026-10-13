@@ -2,7 +2,8 @@
 # per worktree, and stop it with `down --volumes` when done:
 #   docker compose -p <worktree-name> -f deploy/compose/compose.yaml up --build
 # Ports bind to localhost only and can be changed through the *_PORT variables.
-# The database password is a local-only default; never reuse it elsewhere.
+# Every password, token and secret here is a local-only default; never reuse one
+# elsewhere. The variables are described in README.md next to this file.
 name: gateflow
 
 x-service-build: &service-build
@@ -13,6 +14,21 @@ x-service-build: &service-build
 x-stop: &stop
   stop_grace_period: 15s
 
+# The service binary checks its own /healthz; the images have no shell or curl.
+x-healthcheck: &healthcheck
+  test: ["CMD", "/app", "healthcheck"]
+  interval: 2s
+  start_period: 5s
+  retries: 15
+
+x-internal-urls: &internal-urls
+  ACCESS_URL: http://access:8081
+  METERING_URL: http://metering:8082
+
+x-internal-tokens: &internal-tokens
+  ACCESS_INTERNAL_TOKEN: &access-token ${ACCESS_INTERNAL_TOKEN:-access-token-local-only}
+  METERING_INTERNAL_TOKEN: ${METERING_INTERNAL_TOKEN:-metering-token-local-only}
+
 services:
   postgres:
     image: postgres:17
@@ -20,6 +36,8 @@ services:
       POSTGRES_USER: gateflow
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gateflow-local-only}
       POSTGRES_DB: gateflow
+    # Runs only when the volume is new; after changing it, recreate with `down --volumes`.
+    volumes: ["./postgres-init.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro"]
     ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U gateflow -d gateflow"]
@@ -41,7 +59,16 @@ services:
       args:
         TARGET: services/access
     <<: *stop
+    environment:
+      DATABASE_URL: postgres://access:access-local-only@postgres:5432/gateflow?sslmode=disable
+      ACCESS_INTERNAL_TOKEN: *access-token
+      ACCESS_KEY_PEPPER: ${ACCESS_KEY_PEPPER:-key-pepper-local-only}
+      ACCESS_SEED_SECRET: ${ACCESS_SEED_SECRET:-seed-secret-local-only}
+      MOCK_UPSTREAM_BASE_URL: http://mock-upstream:8090
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:7b}
     ports: ["127.0.0.1:${ACCESS_PORT:-8081}:8081"]
+    healthcheck: *healthcheck
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,9 +79,15 @@ services:
       args:
         TARGET: services/metering
     <<: *stop
+    environment:
+      <<: [*internal-urls, *internal-tokens]
+      DATABASE_URL: postgres://metering:metering-local-only@postgres:5432/gateflow?sslmode=disable
     ports: ["127.0.0.1:${METERING_PORT:-8082}:8082"]
+    healthcheck: *healthcheck
     depends_on:
       postgres:
+        condition: service_healthy
+      access:
         condition: service_healthy
 
   mock-upstream:
@@ -63,7 +96,11 @@ services:
       args:
         TARGET: test/mock-upstream
     <<: *stop
+    environment:
+      MOCK_FIRST_EVENT_DELAY_MS: ${MOCK_FIRST_EVENT_DELAY_MS:-0}
+      MOCK_EVENT_INTERVAL_MS: ${MOCK_EVENT_INTERVAL_MS:-0}
     ports: ["127.0.0.1:${MOCK_UPSTREAM_PORT:-8090}:8090"]
+    healthcheck: *healthcheck
 
   gateway:
     build:
@@ -71,13 +108,18 @@ services:
       args:
         TARGET: services/gateway
     <<: *stop
+    environment:
+      <<: [*internal-urls, *internal-tokens]
+    # Lets the gateway reach an Ollama installed on the host, also on Linux.
+    extra_hosts: ["host.docker.internal:host-gateway"]
     ports: ["127.0.0.1:${GATEWAY_PORT:-8080}:8080"]
+    healthcheck: *healthcheck
     depends_on:
       redis:
         condition: service_healthy
       access:
-        condition: service_started
+        condition: service_healthy
       metering:
-        condition: service_started
+        condition: service_healthy
       mock-upstream:
-        condition: service_started
+        condition: service_healthy

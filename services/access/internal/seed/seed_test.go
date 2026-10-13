@@ -1,0 +1,297 @@
+package seed_test
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"maps"
+	"regexp"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/bibi45c/gateflow/pkg/pgtest"
+	"github.com/bibi45c/gateflow/services/access/internal/apikey"
+	"github.com/bibi45c/gateflow/services/access/internal/config"
+	"github.com/bibi45c/gateflow/services/access/internal/seed"
+	"github.com/bibi45c/gateflow/services/access/migrations"
+)
+
+var tables = []string{"api_key_channels", "api_keys", "channel_models", "channels", "price_versions", "tenants"}
+
+func testConfig() config.Seed {
+	return config.Seed{
+		KeyPepper:     []byte("test-pepper"),
+		SeedSecret:    []byte("test-seed-secret"),
+		MockBaseURL:   "http://mock-upstream:8090",
+		OllamaBaseURL: "http://host.docker.internal:11434",
+		OllamaModel:   "qwen2.5-coder:7b",
+	}
+}
+
+func migrated(t *testing.T) *pgxpool.Pool {
+	return pgtest.Migrated(t, "access", "access", migrations.FS)
+}
+
+func counts(t *testing.T, pool *pgxpool.Pool) map[string]int {
+	t.Helper()
+	got := map[string]int{}
+	for _, table := range tables {
+		var n int
+		sql := "SELECT count(*) FROM " + pgx.Identifier{"access", table}.Sanitize()
+		if err := pool.QueryRow(context.Background(), sql).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		got[table] = n
+	}
+	return got
+}
+
+// texts runs a query returning one text column.
+func texts(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) []string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), sql, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func TestDeriveKeyIsStable(t *testing.T) {
+	secret := []byte("seed-secret")
+	key := seed.DeriveKey(secret, "tenant-01")
+	if key != seed.DeriveKey([]byte("seed-secret"), "tenant-01") {
+		t.Error("the same secret and tenant gave two keys")
+	}
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte("tenant-01"))
+	if key != "gf_"+base64.RawURLEncoding.EncodeToString(mac.Sum(nil)) {
+		t.Error("key is not gf_ + base64url(HMAC-SHA256(secret, tenant))")
+	}
+	if !regexp.MustCompile(`^gf_[A-Za-z0-9_-]{43}$`).MatchString(key) {
+		t.Error("key is not gf_ and 43 base64url characters")
+	}
+	if key == seed.DeriveKey(secret, "tenant-02") || key == seed.DeriveKey([]byte("other-secret"), "tenant-01") {
+		t.Error("another tenant or secret gave the same key")
+	}
+}
+
+func TestRunTwiceChangesNothing(t *testing.T) {
+	pool := migrated(t)
+	ctx := context.Background()
+	cfg := testConfig()
+	first, err := seed.Run(ctx, pool, cfg, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterFirst := counts(t, pool)
+	want := map[string]int{"tenants": 11, "api_keys": 11, "api_key_channels": 22, "channels": 2,
+		"channel_models": 2, "price_versions": 1}
+	if !maps.Equal(afterFirst, want) {
+		t.Errorf("rows after the first run = %v, want %v", afterFirst, want)
+	}
+	second, err := seed.Run(ctx, pool, cfg, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterSecond := counts(t, pool); !maps.Equal(afterSecond, afterFirst) {
+		t.Errorf("rows after the second run = %v, want %v", afterSecond, afterFirst)
+	}
+	if !slices.Equal(first, second) {
+		t.Error("the second run returned other keys")
+	}
+	if len(first) != 11 || first[0].TenantID != "tenant-00" || first[10].TenantID != "tenant-10" {
+		t.Errorf("seeded %d tenants, want tenant-00 to tenant-10", len(first))
+	}
+}
+
+func TestRunStoresKeysAsSpecified(t *testing.T) {
+	pool := migrated(t)
+	ctx := context.Background()
+	cfg := testConfig()
+	keys, err := seed.Run(ctx, pool, cfg, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range keys {
+		var tenantName, priceVersion, channels string
+		var stored []byte
+		if err := pool.QueryRow(ctx, `SELECT t.name, a.key_hmac, a.price_version_id,
+				(SELECT string_agg(channel_id, ' ' ORDER BY channel_id) FROM access.api_key_channels WHERE key_id = a.id)
+			FROM access.api_keys AS a JOIN access.tenants AS t ON t.id = a.tenant_id
+			WHERE a.id = $1 AND a.revoked_at IS NULL`, "key-"+k.TenantID).
+			Scan(&tenantName, &stored, &priceVersion, &channels); err != nil {
+			t.Fatalf("key of %s: %v", k.TenantID, err)
+		}
+		if tenantName != k.TenantID || priceVersion != seed.PriceVersionID || channels != "mock ollama" {
+			t.Errorf("%s: name %q, price version %q, channels %q", k.TenantID, tenantName, priceVersion, channels)
+		}
+		if !hmac.Equal(stored, apikey.HMAC(cfg.KeyPepper, k.Key)) {
+			t.Errorf("%s: key_hmac is not HMAC-SHA256(pepper, key)", k.TenantID)
+		}
+	}
+	var input, output int64
+	if err := pool.QueryRow(ctx, `SELECT input_micro_per_token, output_micro_per_token
+		FROM access.price_versions WHERE id = $1`, seed.PriceVersionID).Scan(&input, &output); err != nil {
+		t.Fatal(err)
+	}
+	if input != 3 || output != 15 {
+		t.Errorf("%s prices = %d and %d, want 3 and 15", seed.PriceVersionID, input, output)
+	}
+}
+
+func TestRunReplacesChannelSettings(t *testing.T) {
+	pool := migrated(t)
+	ctx := context.Background()
+	cfg := testConfig()
+	if _, err := seed.Run(ctx, pool, cfg, 2); err != nil {
+		t.Fatal(err)
+	}
+	cfg.OllamaModel = "llama3.2:3b"
+	cfg.OllamaBaseURL = "http://ollama:11434"
+	if _, err := seed.Run(ctx, pool, cfg, 2); err != nil {
+		t.Fatal(err)
+	}
+	models := "SELECT model_pattern FROM access.channel_models WHERE channel_id = $1 ORDER BY model_pattern"
+	if got := texts(t, pool, models, "ollama"); !slices.Equal(got, []string{"llama3.2:3b"}) {
+		t.Errorf("ollama models = %v, want only the new OLLAMA_MODEL", got)
+	}
+	if got := texts(t, pool, models, "mock"); !slices.Equal(got, []string{"mock-*"}) {
+		t.Errorf("mock models = %v", got)
+	}
+	urls := texts(t, pool, "SELECT id || ' ' || base_url || ' ' || protocol FROM access.channels ORDER BY id")
+	want := []string{"mock http://mock-upstream:8090 anthropic-messages", "ollama http://ollama:11434 anthropic-messages"}
+	if !slices.Equal(urls, want) {
+		t.Errorf("channels = %v, want %v", urls, want)
+	}
+}
+
+func TestRunRefusesBadChannelSettings(t *testing.T) {
+	pool := migrated(t)
+	cases := []struct {
+		name, value string
+		set         func(*config.Seed, string)
+	}{
+		{config.EnvMockBaseURL, "http://mock-upstream:8090/", func(c *config.Seed, v string) { c.MockBaseURL = v }},
+		{config.EnvMockBaseURL, "ftp://mock-upstream", func(c *config.Seed, v string) { c.MockBaseURL = v }},
+		{config.EnvMockBaseURL, "", func(c *config.Seed, v string) { c.MockBaseURL = v }},
+		{config.EnvOllamaBaseURL, "http://user:secret-pass@ollama:11434", func(c *config.Seed, v string) { c.OllamaBaseURL = v }},
+		{config.EnvOllamaBaseURL, "http://ollama:11434/v1", func(c *config.Seed, v string) { c.OllamaBaseURL = v }},
+		{config.EnvOllamaBaseURL, "http://ollama?x=1", func(c *config.Seed, v string) { c.OllamaBaseURL = v }},
+		{config.EnvOllamaModel, "", func(c *config.Seed, v string) { c.OllamaModel = v }},
+		{config.EnvOllamaModel, "qwen*:7b", func(c *config.Seed, v string) { c.OllamaModel = v }},
+	}
+	for _, c := range cases {
+		cfg := testConfig()
+		c.set(&cfg, c.value)
+		_, err := seed.Run(context.Background(), pool, cfg, 2)
+		if err == nil {
+			t.Errorf("%s=%q accepted", c.name, c.value)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.name) {
+			t.Errorf("%s=%q: error %q does not name the variable", c.name, c.value, err)
+		}
+		if c.value != "" && strings.Contains(err.Error(), c.value) {
+			t.Errorf("%s=%q: error shows the value", c.name, c.value)
+		}
+	}
+	for table, n := range counts(t, pool) {
+		if n != 0 {
+			t.Errorf("%s has %d rows after refused runs", table, n)
+		}
+	}
+}
+
+func TestRunIsOneTransaction(t *testing.T) {
+	pool := migrated(t)
+	ctx := context.Background()
+	cfg := testConfig()
+	// Another key already holds tenant-05's HMAC, so inserting the seeded keys fails.
+	taken := apikey.HMAC(cfg.KeyPepper, seed.DeriveKey(cfg.SeedSecret, "tenant-05"))
+	for _, sql := range []string{
+		"INSERT INTO access.tenants (id, name) VALUES ('other', 'other')",
+		"INSERT INTO access.price_versions (id, input_micro_per_token, output_micro_per_token) VALUES ('pv-other', 1, 1)",
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO access.api_keys (id, tenant_id, key_hmac, price_version_id)
+		VALUES ('key-other', 'other', $1, 'pv-other')`, taken); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.Run(ctx, pool, cfg, 10); err == nil {
+		t.Fatal("seed succeeded despite a duplicate key HMAC")
+	}
+	want := map[string]int{"tenants": 1, "api_keys": 1, "api_key_channels": 0, "channels": 0,
+		"channel_models": 0, "price_versions": 1}
+	if got := counts(t, pool); !maps.Equal(got, want) {
+		t.Errorf("rows after the failed run = %v, want only the rows from before it %v", got, want)
+	}
+}
+
+func TestRunRefusesKeysFromAnotherPepper(t *testing.T) {
+	pool := migrated(t)
+	ctx := context.Background()
+	cfg := testConfig()
+	if _, err := seed.Run(ctx, pool, cfg, 2); err != nil {
+		t.Fatal(err)
+	}
+	cfg.KeyPepper = []byte("another-pepper")
+	_, err := seed.Run(ctx, pool, cfg, 2)
+	if err == nil || !strings.Contains(err.Error(), config.EnvKeyPepper) {
+		t.Fatalf("err = %v, want one naming %s", err, config.EnvKeyPepper)
+	}
+	if strings.Contains(err.Error(), "another-pepper") || strings.Contains(err.Error(), "test-pepper") {
+		t.Error("error shows a pepper")
+	}
+}
+
+// No row in any table of the schema holds a key, as text or as bytes, nor the HMAC
+// the key is made of.
+func TestNoTableHoldsAKey(t *testing.T) {
+	pool := migrated(t)
+	ctx := context.Background()
+	cfg := testConfig()
+	keys, err := seed.Run(ctx, pool, cfg, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var secrets, stored []string
+	for _, k := range keys {
+		raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(k.Key, "gf_"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		secrets = append(secrets, k.Key, hex.EncodeToString([]byte(k.Key)), hex.EncodeToString(raw))
+		stored = append(stored, hex.EncodeToString(apikey.HMAC(cfg.KeyPepper, k.Key)))
+	}
+	matches := func(table string, needles []string) int {
+		var n int
+		sql := "SELECT count(*) FROM " + pgx.Identifier{"access", table}.Sanitize() +
+			" AS r, unnest($1::text[]) AS needle WHERE strpos(r::text, needle) > 0"
+		if err := pool.QueryRow(ctx, sql, needles).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	// The search sees bytea columns: each stored HMAC is found once.
+	if n := matches("api_keys", stored); n != len(keys) {
+		t.Fatalf("found %d stored HMACs, want %d", n, len(keys))
+	}
+	for _, table := range texts(t, pool, "SELECT tablename FROM pg_tables WHERE schemaname = 'access'") {
+		if n := matches(table, secrets); n != 0 {
+			t.Errorf("%s: %d rows hold a key", table, n)
+		}
+	}
+}
