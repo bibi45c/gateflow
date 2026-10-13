@@ -29,6 +29,15 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `POSTGRES_PASSWORD` | postgres | `gateflow-local-only` | Password of the `gateflow` superuser |
 | `*_PORT` | compose | 8080, 8081, 8082, 8090, 5432, 6379; 11434 for `OLLAMA_PORT` | Host ports, bound to localhost only |
 
+## Seed services
+
+`seed-access` and `seed-metering` run once on every `up`, after `access` and
+`metering` are healthy, and create the test tenants `tenant-00` to `tenant-10`, their
+keys, the `mock` and `ollama` channels and the wallets (`tenant-00` has no balance);
+the gateway starts after them, and a repeated `up` changes nothing.
+Each tenant's key, valid only for this local stack, is in the seed log:
+`docker compose -p <name> -f deploy/compose/compose.yaml logs seed-access`.
+
 ## Ollama profile
 
 The `ollama` service is optional and starts only with `--profile ollama`. It is for

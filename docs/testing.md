@@ -8,6 +8,7 @@
 | Go checks | `go vet ./...`, then `go test ./...`, then `go build ./...` | Yes: CI jobs `Go (ubuntu-latest)`, `Go (macos-latest)` and `Go (windows-latest)` |
 | Go integration tests | With `GATEFLOW_TEST_POSTGRES_URL` set to a Postgres superuser URL, `go test -count=1 ./...` | Yes: CI job `Go integration (ubuntu-latest)` |
 | Compose smoke test | `docker compose -p <worktree-name> -f deploy/compose/compose.yaml up --build --detach`, then open `http://localhost:<port>/healthz` for ports 8080, 8081, 8082 and 8090, then `docker compose -p <worktree-name> -f deploy/compose/compose.yaml down --volumes` | Yes: CI job `Compose smoke test` |
+| End-to-end test | With the compose stack up, `python -m unittest discover -s test/e2e -v`, then `python test/e2e/smoke.py --project <worktree-name>` | Yes: CI job `Compose smoke test` |
 
 A required check must pass in CI on the head; a local run is supporting evidence.
 
@@ -22,10 +23,18 @@ A required check must pass in CI on the head; a local run is supporting evidence
   database and drops it afterwards, and never reads `DATABASE_URL`. To run them
   locally, start the compose `postgres` service (`up --detach postgres`) and use
   `postgres://gateflow:gateflow-local-only@localhost:<POSTGRES_PORT>/gateflow?sslmode=disable`.
-- **The compose smoke test** needs Docker. It builds every image and checks that each
-  process answers its health endpoint. Use a project name per worktree (`-p`), so
-  one worktree never reuses another's containers, and change host ports with the
-  `*_PORT` variables when two stacks run at once.
+- **The compose smoke test** needs Docker. It builds every image, seeds the test
+  tenants and wallets, and checks that each process answers its health endpoint. Use
+  a project name per worktree (`-p`), so one worktree never reuses another's
+  containers, and change host ports with the `*_PORT` variables when two stacks run
+  at once.
+- **The end-to-end test** needs the compose stack started as above, and Python 3.13
+  or newer with only the standard library. It sends requests through the gateway on
+  `GATEWAY_PORT` (default 8080) with the seeded keys, which it derives from
+  `ACCESS_SEED_SECRET`, checks each status, stream and error body, and reads the
+  metering ledger with `psql` in the `postgres` container. Pass the stack's project
+  name as `--project`. Each check prints a PASS or FAIL line. Its unit tests in
+  `test/e2e` need neither Docker nor the network.
 
 Add a check here, with its exact command and the CI job that runs it, in the same PR
 that adds its configuration. No configured check means no automated evidence; report
