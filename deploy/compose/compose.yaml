@@ -59,7 +59,7 @@ services:
       args:
         TARGET: services/access
     <<: *stop
-    environment:
+    environment: &access-environment
       DATABASE_URL: postgres://access:access-local-only@postgres:5432/gateflow?sslmode=disable
       ACCESS_INTERNAL_TOKEN: *access-token
       ACCESS_KEY_PEPPER: ${ACCESS_KEY_PEPPER:-key-pepper-local-only}
@@ -79,7 +79,7 @@ services:
       args:
         TARGET: services/metering
     <<: *stop
-    environment:
+    environment: &metering-environment
       <<: [*internal-urls, *internal-tokens]
       DATABASE_URL: postgres://metering:metering-local-only@postgres:5432/gateflow?sslmode=disable
     ports: ["127.0.0.1:${METERING_PORT:-8082}:8082"]
@@ -89,6 +89,35 @@ services:
         condition: service_healthy
       access:
         condition: service_healthy
+
+  # One-shot seeds of the test tenants, keys, channels and wallets that the gateway
+  # needs. They run on every `up` and change nothing when the data is already there.
+  # seed-access prints each tenant's key to its log; test/e2e/smoke.py derives them.
+  seed-access:
+    build:
+      <<: *service-build
+      args:
+        TARGET: services/access
+    command: ["seed", "--tenants", "10"]
+    restart: "no"
+    environment: *access-environment
+    depends_on:
+      access:
+        condition: service_healthy
+
+  seed-metering:
+    build:
+      <<: *service-build
+      args:
+        TARGET: services/metering
+    command: ["seed"]
+    restart: "no"
+    environment: *metering-environment
+    depends_on:
+      metering:
+        condition: service_healthy
+      seed-access:
+        condition: service_completed_successfully
 
   mock-upstream:
     build:
@@ -123,6 +152,8 @@ services:
         condition: service_healthy
       mock-upstream:
         condition: service_healthy
+      seed-metering:
+        condition: service_completed_successfully
 
   # Optional: starts only with `--profile ollama`, for people who do not install
   # Ollama on the host. It runs on the CPU. See docs/clients/opencode.md.
