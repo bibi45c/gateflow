@@ -22,7 +22,7 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `ACCESS_SEED_SECRET` | access seed | `seed-secret-local-only` | Derives the seeded tenants' gateway keys |
 | `MOCK_UPSTREAM_BASE_URL` | access seed | `http://mock-upstream:8090` | Base URL of the mock upstream channel |
 | `OLLAMA_BASE_URL` | access seed | `http://host.docker.internal:11434` | Base URL of the Ollama channel; the default reaches Ollama on the host |
-| `OLLAMA_MODEL` | access seed | `qwen2.5-coder:7b` | Model the Ollama channel serves |
+| `OLLAMA_MODEL` | access seed | `qwen3:8b` | Model the Ollama channel serves |
 | `OLLAMA_CONTEXT_LENGTH` | ollama, with the `ollama` profile only | `64000` | Context the Ollama container asks for; Ollama caps it at the model's maximum |
 | `MOCK_FIRST_EVENT_DELAY_MS` | mock-upstream | `0` | Delay before the first stream event |
 | `MOCK_EVENT_INTERVAL_MS` | mock-upstream | `0` | Delay between stream events |

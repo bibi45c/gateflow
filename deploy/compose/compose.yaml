@@ -66,7 +66,7 @@ services:
       ACCESS_SEED_SECRET: ${ACCESS_SEED_SECRET:-seed-secret-local-only}
       MOCK_UPSTREAM_BASE_URL: http://mock-upstream:8090
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:7b}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
     ports: ["127.0.0.1:${ACCESS_PORT:-8081}:8081"]
     healthcheck: *healthcheck
     depends_on:

@@ -348,8 +348,9 @@ docker compose -f deploy/compose/compose.yaml --profile ollama up --detach ollam
   an Ollama on the host, `http://host.docker.internal:11434`. To use the container,
   put `OLLAMA_BASE_URL=http://ollama:11434` in `deploy/compose/.env`. Write it without
   `/v1`: the gateway adds the path, and `/v1` belongs only in the client's `baseURL`.
-  Set `OLLAMA_MODEL` there to the model you pulled. Every variable of the stack is
-  listed in [deploy/compose/README.md](../../deploy/compose/README.md).
+  `OLLAMA_MODEL` defaults to `qwen3:8b`, the model of this guide; set it there if you
+  pull another one. Every variable of the stack is listed in
+  [deploy/compose/README.md](../../deploy/compose/README.md).
 
 ## Troubleshooting
 
