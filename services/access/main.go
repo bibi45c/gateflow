@@ -10,10 +10,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
 
 	"github.com/bibi45c/gateflow/pkg/server"
 	"github.com/bibi45c/gateflow/services/access/internal/config"
+	"github.com/bibi45c/gateflow/services/access/internal/httpapi"
 	"github.com/bibi45c/gateflow/services/access/internal/seed"
 	"github.com/bibi45c/gateflow/services/access/internal/store"
 )
@@ -38,7 +41,10 @@ func main() {
 	pool, err := store.Open(context.Background(), cfg.DatabaseURL)
 	exitOn(err)
 	defer pool.Close()
-	server.Main("access", ":8081", nil)
+	server.Main("access", ":8081", func(mux *http.ServeMux) {
+		// server.Main has set the default logger by the time it registers routes.
+		httpapi.New(store.New(pool), cfg.KeyPepper, cfg.InternalToken, slog.Default()).Register(mux)
+	})
 }
 
 func exitOn(err error) {
