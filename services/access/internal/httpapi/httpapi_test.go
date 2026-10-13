@@ -243,23 +243,38 @@ func TestVerifyRejectsBadRequests(t *testing.T) {
 	const secret = "gf_secret-input-value"
 	padding := strings.Repeat("a", MaxBodyBytes)
 	bodies := map[string]string{
-		"empty body":          "",
-		"malformed JSON":      `{"key":"` + secret + `","model":`,
-		"not an object":       `["` + secret + `","mock-fast"]`,
-		"null":                `null`,
-		"string":              `"` + secret + `"`,
-		"missing key":         `{"model":"mock-fast"}`,
-		"missing model":       `{"key":"` + secret + `"}`,
-		"empty key":           `{"key":"","model":"mock-fast"}`,
-		"empty model":         `{"key":"` + secret + `","model":""}`,
-		"null key":            `{"key":null,"model":"mock-fast"}`,
-		"null model":          `{"key":"` + secret + `","model":null}`,
-		"number key":          `{"key":12345,"model":"mock-fast"}`,
-		"number model":        `{"key":"` + secret + `","model":7}`,
-		"object model":        `{"key":"` + secret + `","model":{"name":"mock-fast"}}`,
-		"array key":           `{"key":["` + secret + `"],"model":"mock-fast"}`,
-		"trailing data":       verifyBody(secret, "mock-fast") + `{}`,
-		"larger than the cap": `{"key":"` + secret + `","model":"mock-fast","padding":"` + padding + `"}`,
+		"empty body":                "",
+		"malformed JSON":            `{"key":"` + secret + `","model":`,
+		"not an object":             `["` + secret + `","mock-fast"]`,
+		"empty array":               `[]`,
+		"null":                      `null`,
+		"string":                    `"` + secret + `"`,
+		"number":                    `1`,
+		"empty object":              `{}`,
+		"missing key":               `{"model":"mock-fast"}`,
+		"missing model":             `{"key":"` + secret + `"}`,
+		"empty key":                 `{"key":"","model":"mock-fast"}`,
+		"empty model":               `{"key":"` + secret + `","model":""}`,
+		"null key":                  `{"key":null,"model":"mock-fast"}`,
+		"null model":                `{"key":"` + secret + `","model":null}`,
+		"number key":                `{"key":12345,"model":"mock-fast"}`,
+		"number model":              `{"key":"` + secret + `","model":7}`,
+		"object key":                `{"key":{"value":"` + secret + `"},"model":"mock-fast"}`,
+		"object model":              `{"key":"` + secret + `","model":{"name":"mock-fast"}}`,
+		"array key":                 `{"key":["` + secret + `"],"model":"mock-fast"}`,
+		"array model":               `{"key":"` + secret + `","model":["mock-fast"]}`,
+		"boolean key":               `{"key":true,"model":"mock-fast"}`,
+		"boolean model":             `{"key":"` + secret + `","model":false}`,
+		"unknown member":            `{"key":"` + secret + `","model":"mock-fast","extra":1}`,
+		"upper-case key name":       `{"KEY":"` + secret + `","model":"mock-fast"}`,
+		"capitalised model name":    `{"key":"` + secret + `","Model":"mock-fast"}`,
+		"duplicate key":             `{"key":"` + secret + `","key":"gf_other-key","model":"mock-fast"}`,
+		"duplicate model":           `{"key":"` + secret + `","model":"mock-fast","model":"mock-fast"}`,
+		"case-variant duplicate":    `{"key":"` + secret + `","Key":"gf_other-key","model":"mock-fast"}`,
+		"trailing object":           verifyBody(secret, "mock-fast") + `{}`,
+		"trailing text":             verifyBody(secret, "mock-fast") + `x`,
+		"key larger than the cap":   `{"key":"` + secret + padding + `","model":"mock-fast"}`,
+		"model larger than the cap": `{"key":"` + secret + `","model":"mock-fast` + padding + `"}`,
 	}
 	for name, body := range bodies {
 		t.Run(name, func(t *testing.T) {
@@ -285,6 +300,18 @@ func TestVerifyAcceptsABodyAtTheCap(t *testing.T) {
 	body += strings.Repeat(" ", MaxBodyBytes-len(body))
 	if got := call(handler, "POST", "/internal/v1/keys/verify", body, authorized()); got.Code != http.StatusOK {
 		t.Errorf("body of exactly %d bytes: status %d, want 200", MaxBodyBytes, got.Code)
+	}
+}
+
+func TestVerifyAcceptsTheMembersInEitherOrder(t *testing.T) {
+	fake := &fakeStore{}
+	handler, _ := newTestServer(fake, testToken)
+	body := `{"model":"mock-fast","key":"` + testKey + `"}`
+	if got := call(handler, "POST", "/internal/v1/keys/verify", body, authorized()); got.Code != http.StatusOK {
+		t.Errorf("model before key: status %d, want 200", got.Code)
+	}
+	if !bytes.Equal(fake.gotHMAC, apikey.HMAC([]byte(testPepper), testKey)) || fake.gotModel != "mock-fast" {
+		t.Error("the store was not asked for HMAC(pepper, key) and the model")
 	}
 }
 

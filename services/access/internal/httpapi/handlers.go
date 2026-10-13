@@ -68,12 +68,30 @@ func (a *API) verifyKey(w http.ResponseWriter, r *http.Request) {
 }
 
 // decodeVerifyRequest reads {key, model} from a body of at most MaxBodyBytes. It
-// reports false unless the body is one JSON object in which both are non-empty
-// strings.
+// reports false unless the body is one JSON object whose only members are key and
+// model, each once, by exactly those names, and both non-empty strings.
 func decodeVerifyRequest(w http.ResponseWriter, r *http.Request) (verifyRequest, bool) {
 	var request verifyRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
-	if err := decoder.Decode(&request); err != nil {
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return request, false
+	}
+	targets := map[string]**string{"key": &request.Key, "model": &request.Model}
+	seen := make(map[string]bool, len(targets))
+	for decoder.More() {
+		token, err := decoder.Token()
+		name, isName := token.(string)
+		// Names match exactly: JSON Schema names are case-sensitive.
+		target, known := targets[name]
+		if err != nil || !isName || !known || seen[name] {
+			return request, false
+		}
+		seen[name] = true
+		if err := decoder.Decode(target); err != nil {
+			return request, false
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
 		return request, false
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
