@@ -15,11 +15,15 @@ var errEventTooLarge = errors.New("relay: upstream event is larger than 1 MiB")
 // errNoMessageStop reports a stream that ended without message_stop.
 var errNoMessageStop = errors.New("relay: upstream stream ended without message_stop")
 
+// errErrorBeforeOutput reports a stream whose first event is an error event. It
+// never holds the event's content.
+var errErrorBeforeOutput = errors.New("relay: upstream stream began with an error event")
+
 // relayStream relays a 2xx event stream one event at a time, flushing after each, so
 // that the client has every event before the next one is read. The response starts
-// with the first whole event, so a failure before it still gets a 502. The stream
-// ends after message_stop, or after an upstream error event, which is relayed
-// unchanged.
+// with the first whole event, so a failure before it still gets a 502, and so does
+// an upstream error event that comes first. The stream ends after message_stop, or
+// after a later upstream error event, which is relayed unchanged.
 func (x *exchange) relayStream(resp *http.Response) {
 	events := newEventReader(resp.Body, maxEventBytes)
 	started := false
@@ -29,12 +33,16 @@ func (x *exchange) relayStream(resp *http.Response) {
 			x.endStream(err, started)
 			return
 		}
+		eventType := event.Type()
+		if !started && eventType == anthropic.EventError {
+			x.endStream(errErrorBeforeOutput, started)
+			return
+		}
 		if !started {
 			copyHeader(x.w.Header(), resp.Header, "Content-Type")
 			x.w.WriteHeader(resp.StatusCode)
 			started = true
 		}
-		eventType := event.Type()
 		x.usage.observe(eventType, event.Data)
 		if eventType == anthropic.EventMessageStop {
 			x.completed = true
@@ -49,9 +57,10 @@ func (x *exchange) relayStream(resp *http.Response) {
 	}
 }
 
-// endStream handles a stream that stopped before message_stop. The gateway answers an
-// upstream failure with a 502 before any output, and with its own error event after
-// it. An unfinished last event is dropped: its bytes would run into that error event.
+// endStream handles a stream that failed or stopped before message_stop. The gateway
+// answers an upstream failure with a 502 before any output, and with its own error
+// event after it. An unfinished last event is dropped: its bytes would run into that
+// error event.
 func (x *exchange) endStream(err error, started bool) {
 	if errors.Is(err, io.EOF) {
 		err = errNoMessageStop

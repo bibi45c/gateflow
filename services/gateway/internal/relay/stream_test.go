@@ -250,6 +250,43 @@ func TestUpstreamErrorEventIsRelayedUnchanged(t *testing.T) {
 	checkResult(t, gw.admission.result(t), OutcomeInterrupted, count(20), nil)
 }
 
+// An upstream error event that comes before any output is a failure before output:
+// the client gets the gateway's 502, and the event's content reaches neither the
+// client nor the logs.
+func TestUpstreamErrorEventBeforeOutputGets502(t *testing.T) {
+	const canary = "error-event-canary-6e2b"
+	channel := startUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		startStream(w)
+		sendEvents(w, event(`{"type":"error","error":{"type":"overloaded_error","message":"`+canary+`"}}`),
+			messageStart(`{"input_tokens":20,"output_tokens":1}`), messageStop())
+	})
+	gw := startGateway(t, channel)
+
+	resp := gw.post(t, context.Background(), messagesBody("mock-small", true), nil)
+	body := readAllBody(t, resp)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", resp.StatusCode)
+	}
+	if want := errorJSON(t, anthropic.ErrorTypeAPI, upstreamFailedMessage); string(body) != want {
+		t.Errorf("body = %s, want %s", body, want)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("content-type = %q, want application/json", ct)
+	}
+	if strings.Contains(string(body), canary) {
+		t.Error("the response holds the upstream error event")
+	}
+	checkResult(t, gw.admission.result(t), OutcomeInterrupted, nil, nil)
+
+	gw.Close() // waits for the handler to report and log
+	if n := gw.admission.reportCount(); n != 1 {
+		t.Errorf("reported %d times, want 1", n)
+	}
+	if logs := gw.logs.String(); strings.Contains(logs, canary) {
+		t.Errorf("the logs hold the upstream error event:\n%s", logs)
+	}
+}
+
 // Any other failure after the stream started gets the gateway's own error event.
 func TestStreamFailureAfterOutputSendsErrorEvent(t *testing.T) {
 	start := messageStart(`{"input_tokens":20,"output_tokens":1}`)
