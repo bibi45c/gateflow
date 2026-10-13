@@ -19,12 +19,13 @@ import (
 // Timeout bounds one price lookup, so a slow access never holds up a reserve for long.
 const Timeout = time.Second
 
-// ErrUnavailable means access gave no usable answer in time: it timed out, could not
-// be reached, or failed. The caller may retry.
+// ErrUnavailable means access gave no answer in time or failed: it timed out, could not
+// be reached, or answered with a 5xx. The caller may retry.
 var ErrUnavailable = errors.New("access is unavailable")
 
-// ErrRejected means access answered, but the lookup cannot succeed as asked: the price
-// version is unknown, the internal token was refused, or the price is not a valid one.
+// ErrRejected means access answered, but the lookup cannot succeed as asked: any other
+// status, such as 404 for an unknown price version or 401 for a refused internal
+// token, or an answer that is not a valid price version.
 var ErrRejected = errors.New("access rejected the price lookup")
 
 // Client looks up price versions and remembers them. A price version never changes,
@@ -86,13 +87,13 @@ func (c *Client) fetch(ctx context.Context, id, requestID string) (billing.Price
 	}
 	defer response.Body.Close()
 
-	switch response.StatusCode {
-	case http.StatusOK:
+	switch status := response.StatusCode; {
+	case status == http.StatusOK:
 		return decode(response.Body, id)
-	case http.StatusNotFound, http.StatusUnauthorized:
-		return billing.Prices{}, fmt.Errorf("%w: status %d", ErrRejected, response.StatusCode)
+	case status >= 500:
+		return billing.Prices{}, fmt.Errorf("%w: status %d", ErrUnavailable, status)
 	default:
-		return billing.Prices{}, fmt.Errorf("%w: status %d", ErrUnavailable, response.StatusCode)
+		return billing.Prices{}, fmt.Errorf("%w: status %d", ErrRejected, status)
 	}
 }
 

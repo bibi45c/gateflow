@@ -50,15 +50,20 @@ func (q settleRequest) settlement() (Settlement, bool) {
 }
 
 func (h *Handler) settle(w http.ResponseWriter, r *http.Request) {
-	reservationID := r.PathValue("reservation_id")
 	var request settleRequest
-	if !validID(&reservationID) || !decodeBody(w, r, &request) {
+	if !decodeBody(w, r, &request) {
 		writeError(w, r, codeInvalidRequest)
 		return
 	}
 	settlement, ok := request.settlement()
 	if !ok {
 		writeError(w, r, codeInvalidRequest)
+		return
+	}
+	reservationID := r.PathValue("reservation_id")
+	if len(reservationID) > maxIDBytes {
+		// No reservation has an id this long, so the database is not asked.
+		writeError(w, r, codeReservationNotFound)
 		return
 	}
 	settled, err := h.store.Settle(r.Context(), reservationID, settlement)

@@ -33,10 +33,11 @@ type reserveResponse struct {
 	Status        string `json:"status"`
 }
 
-// decodeBody reads one JSON object into v. Unknown fields are ignored, so a newer
-// caller can add one; anything after the object is an error.
+// decodeBody reads one JSON object into v. A field the request schema does not have
+// is an error, and so is anything after the object.
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(v); err != nil {
 		return false
 	}
@@ -52,7 +53,7 @@ func validID(id *string) bool {
 // still without prices, maximum cost or id.
 func (q reserveRequest) reservation() (Reservation, bool) {
 	if !validID(q.CallID) || !validID(q.TenantID) || !validID(q.PriceVersionID) ||
-		q.AttemptID == nil || *q.AttemptID < math.MinInt32 || *q.AttemptID > math.MaxInt32 ||
+		q.AttemptID == nil || *q.AttemptID < 1 || *q.AttemptID > math.MaxInt32 ||
 		q.MaxInputTokens == nil || *q.MaxInputTokens < 0 ||
 		q.MaxOutputTokens == nil || *q.MaxOutputTokens < 0 {
 		return Reservation{}, false

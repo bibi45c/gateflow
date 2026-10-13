@@ -86,8 +86,8 @@ func New(store Store, prices PriceSource, token string) *Handler {
 
 // Register adds the two operations to mux.
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /internal/v1/reservations", h.authorized(h.reserve))
-	mux.HandleFunc("POST /internal/v1/reservations/{reservation_id}/settle", h.authorized(h.settle))
+	mux.HandleFunc("POST /internal/v1/reservations", identified(h.authorized(h.reserve)))
+	mux.HandleFunc("POST /internal/v1/reservations/{reservation_id}/settle", identified(h.authorized(h.settle)))
 }
 
 // authorized runs next only for a request with the internal bearer token. Both sides

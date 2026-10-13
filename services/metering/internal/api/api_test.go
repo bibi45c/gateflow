@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -102,7 +103,7 @@ func TestReserveReplayReturnsTheRecordWithoutPriceOrBalance(t *testing.T) {
 
 	// Key order and whitespace differ; the content is the same.
 	reordered := `{ "max_output_tokens": 20, "max_input_tokens": 100, "price_version_id": "pv-1",
-		"tenant_id": "tenant-01", "attempt_id": 1, "call_id": "req_1", "extra": true }`
+		"tenant_id": "tenant-01", "attempt_id": 1, "call_id": "req_1" }`
 	got := s.post(reservePath, reordered)
 	if got.status != http.StatusOK || got.body["reservation_id"] != id || got.body["max_cost"] != float64(300) {
 		t.Errorf("replay: got %d %v", got.status, got.body)
@@ -186,7 +187,10 @@ func TestReserveRejectsMalformedRequestsBeforeAnyWork(t *testing.T) {
 		"numeric tenant":      edit(`"tenant-01"`, `7`),
 		"missing attempt":     edit(`"attempt_id":1,`, ``),
 		"fractional attempt":  edit(`"attempt_id":1`, `"attempt_id":1.5`),
+		"attempt zero":        edit(`"attempt_id":1`, `"attempt_id":0`),
+		"negative attempt":    edit(`"attempt_id":1`, `"attempt_id":-1`),
 		"attempt too large":   edit(`"attempt_id":1`, `"attempt_id":2147483648`),
+		"unknown field":       edit(`"call_id"`, `"extra":true,"call_id"`),
 		"null price version":  edit(`"pv-1"`, `null`),
 		"negative max input":  edit(`"max_input_tokens":100`, `"max_input_tokens":-1`),
 		"missing max output":  edit(`,"max_output_tokens":20`, ``),
@@ -298,13 +302,15 @@ func TestSettleRejectsMalformedRequests(t *testing.T) {
 		"fractional count":   `{"input_tokens":60.5,"output_tokens":10,"outcome":"completed"}`,
 		"count as a string":  `{"input_tokens":"60","output_tokens":10,"outcome":"completed"}`,
 		"count beyond int64": `{"input_tokens":9223372036854775808,"output_tokens":10,"outcome":"completed"}`,
+		"unknown field":      `{"input_tokens":60,"output_tokens":10,"outcome":"completed","extra":true}`,
 		"not json":           `outcome=completed`,
 	} {
 		if got := s.post(settlePath(id), body); got.status != http.StatusBadRequest || got.errorCode() != "invalid_request" {
 			t.Errorf("%s: got %d %v", name, got.status, got.body)
 		}
 	}
-	if got := s.post(settlePath(strings.Repeat("a", 201)), `{"input_tokens":1,"output_tokens":1,"outcome":"completed"}`); got.errorCode() != "invalid_request" {
+	// The path takes any id; one longer than metering gives out is simply unknown.
+	if got := s.post(settlePath(strings.Repeat("a", 201)), `{"input_tokens":1,"output_tokens":1,"outcome":"completed"}`); got.status != http.StatusNotFound || got.errorCode() != "reservation_not_found" {
 		t.Errorf("long reservation id: got %d %v", got.status, got.body)
 	}
 	if s.store.available["tenant-01"] != 700 {
@@ -351,12 +357,17 @@ func TestEveryCallNeedsTheInternalToken(t *testing.T) {
 	}
 }
 
+// generatedID is the form of an id metering makes up itself: "req_" and a version 4 UUID.
+var generatedID = regexp.MustCompile(`^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
 func TestErrorBodyIsFixedAndEchoesOnlyAPlainRequestID(t *testing.T) {
 	s := newService(map[string]int64{"tenant-01": 1000})
 	send := func(requestID string) (*httptest.ResponseRecorder, map[string]map[string]string) {
 		request := httptest.NewRequest(http.MethodPost, reservePath, strings.NewReader(`{"call_id":"<script>secret</script>"}`))
 		request.Header.Set("Authorization", "Bearer "+token)
-		request.Header.Set("X-Request-Id", requestID)
+		if requestID != "" {
+			request.Header.Set("X-Request-Id", requestID)
+		}
 		recorder := httptest.NewRecorder()
 		s.mux.ServeHTTP(recorder, request)
 		var body map[string]map[string]string
@@ -370,17 +381,48 @@ func TestErrorBodyIsFixedAndEchoesOnlyAPlainRequestID(t *testing.T) {
 	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
 		t.Errorf("content type: got %q", got)
 	}
-	want := map[string]string{"code": "invalid_request", "message": "The request body or path is not valid.", "request_id": "req_3f2a-9"}
+	want := map[string]string{"code": "invalid_request", "message": "The request body is invalid.", "request_id": "req_3f2a-9"}
 	if len(body) != 1 || fmt.Sprint(body["error"]) != fmt.Sprint(want) {
 		t.Errorf("body: got %v, want error %v", body, want)
 	}
 	if strings.Contains(recorder.Body.String(), "secret") {
 		t.Error("the error body repeats request input")
 	}
-	for _, unsafe := range []string{"req 1", `req"1`, "req\n1", strings.Repeat("a", 129), "<b>"} {
-		if _, body := send(unsafe); body["error"]["request_id"] != "" {
-			t.Errorf("request id %q was echoed as %q", unsafe, body["error"]["request_id"])
+	// Without a usable id, metering makes one up instead of repeating the header.
+	for _, unusable := range []string{"", "req 1", `req"1`, "req\n1", strings.Repeat("a", 129), "<b>"} {
+		if _, body := send(unusable); !generatedID.MatchString(body["error"]["request_id"]) {
+			t.Errorf("request id %q: the error body has %q, want a generated id", unusable, body["error"]["request_id"])
 		}
+	}
+}
+
+func TestRequestWithoutAnIDUsesOneGeneratedIDThroughout(t *testing.T) {
+	s := newService(map[string]int64{"tenant-01": 1000})
+	s.prices.err = accessclient.ErrUnavailable
+	send := func() string {
+		request := httptest.NewRequest(http.MethodPost, reservePath, strings.NewReader(fixtureReserve))
+		request.Header.Set("Authorization", "Bearer "+token)
+		recorder := httptest.NewRecorder()
+		s.mux.ServeHTTP(recorder, request)
+		var body map[string]map[string]string
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status: got %d %v", recorder.Code, body)
+		}
+		return body["error"]["request_id"]
+	}
+
+	first := send()
+	if !generatedID.MatchString(first) {
+		t.Errorf("request id in the error body: got %q, want a generated id", first)
+	}
+	if s.prices.lastID != first {
+		t.Errorf("request id passed to access: got %q, want the %q of the error body", s.prices.lastID, first)
+	}
+	if second := send(); second == first {
+		t.Errorf("two requests got the same generated id %q", first)
 	}
 }
 

@@ -82,8 +82,11 @@ func TestPriceVersionSortsFailures(t *testing.T) {
 	}{
 		{"unknown price version", http.StatusNotFound, `{"error":{"code":"price_version_not_found"}}`, ErrRejected},
 		{"token refused", http.StatusUnauthorized, `{"error":{"code":"unauthorized"}}`, ErrRejected},
+		{"another 4xx", http.StatusBadRequest, `{"error":{"code":"invalid_request"}}`, ErrRejected},
+		{"a status access never sends", http.StatusNoContent, ``, ErrRejected},
 		{"access database down", http.StatusServiceUnavailable, `{"error":{"code":"dependency_unavailable"}}`, ErrUnavailable},
 		{"access failed", http.StatusInternalServerError, `{"error":{"code":"internal_error"}}`, ErrUnavailable},
+		{"a proxy in front of access failed", http.StatusBadGateway, `<html>`, ErrUnavailable},
 		{"not json", http.StatusOK, `<html>`, ErrRejected},
 		{"another id", http.StatusOK, `{"id":"pv-2","input_micro_per_token":2,"output_micro_per_token":5}`, ErrRejected},
 		{"missing price", http.StatusOK, `{"id":"pv-1","input_micro_per_token":2}`, ErrRejected},
