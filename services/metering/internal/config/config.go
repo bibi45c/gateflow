@@ -9,6 +9,7 @@ import (
 // The environment variables the service reads.
 const (
 	EnvDatabaseURL           = "DATABASE_URL"
+	EnvAccessURL             = "ACCESS_URL"
 	EnvAccessInternalToken   = "ACCESS_INTERNAL_TOKEN"
 	EnvMeteringInternalToken = "METERING_INTERNAL_TOKEN"
 )
@@ -17,6 +18,8 @@ const (
 type Config struct {
 	// DatabaseURL connects as the metering role.
 	DatabaseURL string
+	// AccessURL is the base URL of the access service, which holds the price versions.
+	AccessURL string
 	// AccessInternalToken is the bearer token this service sends to access.
 	AccessInternalToken string
 	// MeteringInternalToken is the bearer token this service accepts from callers.
@@ -26,11 +29,12 @@ type Config struct {
 // Load reads the settings through getenv, such as os.Getenv. It fails when any of
 // them is empty, naming every missing variable but never a value.
 func Load(getenv func(string) string) (Config, error) {
-	if err := require(getenv, EnvDatabaseURL, EnvAccessInternalToken, EnvMeteringInternalToken); err != nil {
+	if err := require(getenv, EnvDatabaseURL, EnvAccessURL, EnvAccessInternalToken, EnvMeteringInternalToken); err != nil {
 		return Config{}, err
 	}
 	return Config{
 		DatabaseURL:           getenv(EnvDatabaseURL),
+		AccessURL:             getenv(EnvAccessURL),
 		AccessInternalToken:   getenv(EnvAccessInternalToken),
 		MeteringInternalToken: getenv(EnvMeteringInternalToken),
 	}, nil

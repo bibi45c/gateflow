@@ -1,8 +1,9 @@
 // Command metering is the quota and metering service: it owns wallets,
 // reservations, settlements and the ledger, and answers usage queries.
 //
-// At startup it requires DATABASE_URL, ACCESS_INTERNAL_TOKEN and
-// METERING_INTERNAL_TOKEN, and applies its migrations before serving. Run as
+// At startup it requires DATABASE_URL, ACCESS_URL, ACCESS_INTERNAL_TOKEN and
+// METERING_INTERNAL_TOKEN, and applies its migrations before serving the reserve
+// and settle operations under /internal/v1. Run as
 // `metering seed [--balance N] [--tenants N]`, it instead creates the missing test
 // wallets and exits.
 package main
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/bibi45c/gateflow/pkg/server"
+	"github.com/bibi45c/gateflow/services/metering/internal/accessclient"
+	"github.com/bibi45c/gateflow/services/metering/internal/api"
 	"github.com/bibi45c/gateflow/services/metering/internal/config"
 	"github.com/bibi45c/gateflow/services/metering/internal/store"
 )
@@ -42,7 +45,9 @@ func main() {
 	pool, err := store.Open(context.Background(), cfg.DatabaseURL)
 	exitOnError(err)
 	defer pool.Close()
-	server.Main(name, defaultAddr, nil)
+	prices := accessclient.New(cfg.AccessURL, cfg.AccessInternalToken)
+	handler := api.New(store.NewReservations(pool), prices, cfg.MeteringInternalToken)
+	server.Main(name, defaultAddr, handler.Register)
 }
 
 // seed runs the seed command with the arguments after "seed".
