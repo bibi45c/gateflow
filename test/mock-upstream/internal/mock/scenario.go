@@ -19,6 +19,8 @@ const (
 	textAnswer        = "Hello from the mock upstream. This answer is the same every time."
 	codingAnswer      = "I changed add in calc.py to return a + b, and the tests now pass."
 	overloadedMessage = "Overloaded"
+	// codingNoToolsAnswer is what mock-coding says to a request without tools.
+	codingNoToolsAnswer = "Mock coding session"
 	// longAnswer has many words, so that the failure scenarios cut it mid-stream.
 	longAnswer = "This is a long answer from the mock upstream. It streams one word at a " +
 		"time, so that a client can be cut off in the middle of it. Every run sends " +
@@ -135,7 +137,9 @@ func codingReply(req *request) (reply, *apiError) {
 			blocks: []block{{text: codingAnswer}}}, nil
 	}
 	if len(req.tools) == 0 {
-		return reply{}, invalidRequest("tools: mock-coding needs tools to call")
+		// A client sends side requests without tools, such as one for a session title.
+		return reply{id: messageID(req.model, step), model: req.model, stopReason: stopEndTurn,
+			blocks: []block{{text: codingNoToolsAnswer}}}, nil
 	}
 	current := codingSteps[step]
 	chosen := pickTool(req.tools, current.kind)
