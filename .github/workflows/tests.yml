@@ -46,6 +46,37 @@ jobs:
       - run: go test ./...
       - run: go build ./...
 
+  integration:
+    name: Go integration (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # A throwaway CI superuser; pkg/pgtest creates and drops one database per test.
+      GATEFLOW_TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Run every test against Postgres, failing if any database test skipped
+        shell: bash
+        run: |
+          go test -count=1 -v ./... | tee "$RUNNER_TEMP/go-test.log"
+          if grep -F "set GATEFLOW_TEST_POSTGRES_URL" "$RUNNER_TEMP/go-test.log"; then exit 1; fi
+
   compose:
     name: Compose smoke test
     runs-on: ubuntu-latest
