@@ -97,6 +97,8 @@ This file holds only what every session needs. Each detailed rule lives in one p
   write their own client in their `internal/` packages.
 - Services call each other only through their HTTP APIs. The `archtest` package fails
   the tests when a package imports another module other than `pkg/`.
+- Keep Go files under about 500 lines and functions under about 60; see
+  [Code size](.github/CONTRIBUTING.md#code-size).
 
 ## Cross-platform
 

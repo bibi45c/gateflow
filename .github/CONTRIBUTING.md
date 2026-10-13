@@ -320,6 +320,17 @@ merge gates follow [docs/testing.md](../docs/testing.md).
 - Never relax repository protections or rulesets, and never use admin bypass. These
   rules do not enable any protection; check the repository settings.
 
+## Code size
+
+Small files and functions are easier for people and agents to read, review and
+change safely. These are guidelines, not CI checks.
+
+- Organize files by responsibility, for example one type and its methods, or one
+  group of related handlers.
+- Keep a Go file under about 500 lines and a function under about 60 lines. When code
+  grows past that, split it by responsibility, or say in the PR why it stays whole.
+- Generated code and table-driven test data may be longer.
+
 ## Cross-platform
 
 The team uses macOS and Windows; CI also runs Linux. Everything committed must work
