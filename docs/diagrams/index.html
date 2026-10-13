@@ -1,0 +1,1329 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GateFlow Diagrams</title>
+<style>
+:root{--bg:#fbfbfa;--fg:#1d1f21;--muted:#5b6168;--border:#d9dcdf;--surface:#f2f3f4;--accent:#1f5fae;--on-accent:#ffffff;--planned:#8a5a00;--proposed:#6b3fa0;color-scheme:light}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#16181b;--fg:#e4e6e8;--muted:#a2a8af;--border:#33373c;--surface:#1f2226;--accent:#7fb0ef;--on-accent:#16181b;--planned:#e0b05a;--proposed:#c3a4ec;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16181b;--fg:#e4e6e8;--muted:#a2a8af;--border:#33373c;--surface:#1f2226;--accent:#7fb0ef;--on-accent:#16181b;--planned:#e0b05a;--proposed:#c3a4ec;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;line-height:1.6;font-size:16px}
+.wrap{position:relative;max-width:1000px;margin:0 auto;padding-inline:max(16px,4vw);padding-block:0 48px}
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:10;background:var(--bg);border-bottom:1px solid var(--border)}
+.bar-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-block:10px 6px}
+.bar-title{font-weight:600;font-size:1.05rem}
+.switch{display:flex;gap:4px}
+.switch button{font:inherit;font-size:.9rem;padding:2px 10px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--fg);cursor:pointer}
+.switch button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.switch button:focus-visible,.navrow a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.navrow{display:flex;flex-wrap:wrap;gap:2px 14px;padding-block:0 8px;font-size:.86rem}
+.navrow a{text-decoration:none;white-space:nowrap}
+.navrow a:hover{text-decoration:underline}
+.navrow .part{color:var(--muted);white-space:nowrap}
+@media (max-width:700px){.navrow{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch}}
+.nav-off{display:none}
+.lang-off{position:absolute;left:-10000px;top:0;width:100%;visibility:hidden;pointer-events:none}
+h1{font-size:1.6rem;margin:1.2rem 0 .4rem}
+h2.part{font-size:1.3rem;margin:2.6rem 0 .2rem;color:var(--muted)}
+h3{font-size:1.12rem;margin:1.8rem 0 .4rem;padding-top:.6rem;border-top:1px solid var(--border)}
+section{scroll-margin-top:7.5rem}
+p{margin:.4rem 0 .8rem}
+.muted{color:var(--muted);font-size:.92rem}
+a{color:var(--accent)}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:.88em;background:var(--surface);padding:0 .25em;border-radius:3px}
+.legend{border:1px solid var(--border);background:var(--surface);padding:10px 14px;border-radius:4px;margin:1rem 0}
+.legend ul{margin:.3rem 0;padding-left:1.2rem}
+.tag{display:inline-block;font-size:.8rem;padding:0 .45em;border:1px solid currentColor;border-radius:3px;margin-right:.3em}
+.tag.planned{color:var(--planned);border-style:dashed}
+.tag.proposed{color:var(--proposed);border-style:dotted}
+.diagram{overflow-x:auto;border:1px solid var(--border);border-radius:4px;padding:12px;background:var(--bg)}
+pre.mermaid{margin:0;white-space:pre;font-size:.82rem;background:transparent;text-align:center}
+.tablebox{overflow-x:auto;margin-top:12px}
+table{border-collapse:collapse;font-size:.9rem;min-width:520px}
+th,td{border:1px solid var(--border);padding:4px 8px;text-align:left;vertical-align:top}
+th{background:var(--surface)}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="topbar">
+  <div class="bar-row">
+    <span class="bar-title"><span data-lang="zh">GateFlow 图解</span><span data-lang="en" class="nav-off">GateFlow Diagrams</span></span>
+    <div class="switch" role="group" aria-label="Language / 语言">
+      <button type="button" data-set="zh" aria-pressed="true">中文</button>
+      <button type="button" data-set="en" aria-pressed="false">English</button>
+    </div>
+  </div>
+  <nav class="navrow" data-lang="zh" aria-label="图表目录">
+    <span class="part">A 流程</span><a href="#zh-1">1 工作流</a><a href="#zh-2">2 Issue 状态</a><a href="#zh-3">3 CI</a>
+    <span class="part">B 架构</span><a href="#zh-4">4 逻辑架构</a><a href="#zh-5a">5a 本地部署</a><a href="#zh-5b">5b 云部署</a>
+    <span class="part">C 请求</span><a href="#zh-6">6 请求时序</a><a href="#zh-7a">7a outcome</a><a href="#zh-7b">7b 计费</a><a href="#zh-8">8 预留</a>
+    <span class="part">D 数据</span><a href="#zh-9a">9a ER access</a><a href="#zh-9b">9b ER accounting</a>
+    <span class="part">E 计划</span><a href="#zh-10">10 依赖</a><a href="#zh-11">11 时间线</a><a href="#zh-12">12 门禁</a>
+  </nav>
+  <nav class="navrow nav-off" data-lang="en" aria-label="Diagram index">
+    <span class="part">A Process</span><a href="#en-1">1 Workflow</a><a href="#en-2">2 Issue states</a><a href="#en-3">3 CI</a>
+    <span class="part">B Architecture</span><a href="#en-4">4 Logical</a><a href="#en-5a">5a Local deploy</a><a href="#en-5b">5b Cloud deploy</a>
+    <span class="part">C Request</span><a href="#en-6">6 Request sequence</a><a href="#en-7a">7a Outcome</a><a href="#en-7b">7b Charging</a><a href="#en-8">8 Reservation</a>
+    <span class="part">D Data</span><a href="#en-9a">9a ER access</a><a href="#en-9b">9b ER accounting</a>
+    <span class="part">E Plan</span><a href="#en-10">10 Dependencies</a><a href="#en-11">11 Timeline</a><a href="#en-12">12 Gate</a>
+  </nav>
+</div>
+
+<!-- ===================== 中文 ===================== -->
+<main class="lang-block" data-lang="zh" lang="zh-CN" aria-hidden="false">
+
+<h1>GateFlow 图解</h1>
+<p>本页用图表概括 GateFlow 仓库（产品名 FlowGate）的团队工作流、架构、部署、S1 请求与计费规则、数据库设计、依赖与时间线，便于负责人和团队快速了解项目全貌。内容依据 2026 年 10 月 12 日 <code>main</code> 提交 <code>7dbdd4e</code>，以及当日的开放 issue 和 PR。</p>
+<p class="muted">阅读顺序：A 团队流程 → B 架构与部署 → C 一次 S1 请求与计费 → D 数据库 → E 计划与门禁。每张图都沿一个方向阅读（从上到下或从左到右），虚线箭头表示回退、计划或提案。</p>
+
+<div class="legend">
+<strong>图例</strong>
+<ul>
+<li><span class="tag planned">计划中</span>写在可行性计划或 issue 里，但尚未实现（例如 S3 云环境、Redis 限流）。</li>
+<li><span class="tag proposed">提案</span>写在尚未合并的 PR 或尚未批准的设计修订里，可能还会改（例如 PR #33、#18 修订 3、#26/#27 的表设计）。</li>
+<li>未标注的内容已在 <code>main</code> 上，或是已生效的规则。图中的虚线框和虚线箭头表示“计划中”“提案”或回退。</li>
+</ul>
+</div>
+
+<h2 class="part">A 团队流程</h2>
+
+<section id="zh-1">
+<h3>1. 团队工作流泳道图</h3>
+<p>一个 issue 从创建到 Done 的流程，每个角色一条泳道，按计划、实现、审阅、合并、验收五个阶段自上而下。来源：<code>.github/CONTRIBUTING.md</code>、<code>AGENTS.md</code>、<code>.agents/skills/*/SKILL.md</code>。按 CONTRIBUTING，issue 的 owner 就是它唯一的 assignee，计划批准也由该 owner 给出。“中文审阅文档”是团队惯例（见 PR #33 正文），规则文件中没有写。</p>
+<div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant O as Owner（bibi45c）
+  participant A as Assignee（人或 agent）
+  participant C as Coordinator agent
+  participant B as GitHub 机器人与 CI
+  participant I as Integrator（bibi45c）
+  rect rgba(128,128,128,0.08)
+    Note over O,I: 计划
+    O->>B: 用 issue 表单创建 [type][area] 标题
+    B-->>O: Issue format check 发格式提醒
+    O->>O: 设 milestone，加 blocked-by
+    O->>A: 指派唯一 assignee，加 state:ready
+    opt 受控变更
+      A->>O: 起草计划，含验收与恢复
+      O-->>A: 未编辑的批准评论，注明 issue 版本
+    end
+  end
+  rect rgba(128,128,128,0.04)
+    Note over O,I: 实现
+    C->>C: fetch，建 worktree 与分支 type/slug
+    C-->>A: worktree 就绪，加 state:in-progress
+    A->>A: 在自己的 worktree 实现
+    A->>A: commit type(scope): change，Refs #35;n
+    A->>A: gateflow-verify，按 head 与 base 记证据
+    opt 改了文档
+      A->>O: 文档改动
+      O-->>A: 中文审阅（团队惯例）
+    end
+    A->>C: 按 PR 模板写正文（Delivery、Acceptance phase）
+  end
+  rect rgba(128,128,128,0.08)
+    Note over O,I: 审阅
+    C->>B: push，开 draft PR
+    B-->>C: 必需检查 Tests、Go、Compose
+    C->>I: 证据齐全，标 ready，加 state:in-review
+  end
+  rect rgba(128,128,128,0.04)
+    Note over O,I: 合并
+    alt 条件不满足（非最新、检查失败或 changes requested）
+      I-->>A: 退回，回到实现
+    else 条件满足
+      I->>B: squash merge --match-head-commit
+      I->>I: 读回状态，更新标签
+    end
+  end
+  rect rgba(128,128,128,0.08)
+    Note over O,I: 验收
+    I->>O: state:awaiting-acceptance 或关闭
+    O->>O: 合并后验收，记录证据并关闭
+    O->>C: 批准清理
+    C->>C: 删除 worktree 与本地分支
+  end
+</pre></div>
+</section>
+
+<section id="zh-2">
+<h3>2. Issue 状态机</h3>
+<p>状态由 owner 或 coordinator 用 <code>state:*</code> 标签设置，主线自上而下。Done 指“以 completed 关闭，且所有约定验收都已记录”；Not planned 和 Duplicate 不算 Done，转入时须记录原因与替代 issue。验收失败时用 revert PR 或开 bug issue 阻塞 Done。来源：CONTRIBUTING.md 的 Issues 一节和 <code>gh label list</code>。</p>
+<div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  state "进行中的 issue" as open {
+    state "新建（未 Ready）" as new
+    state "state:ready" as ready
+    state "state:in-progress" as prog
+    state "state:in-review" as rev
+    [*] --> new : 用表单创建
+    new --> ready : 字段齐全、唯一 owner<br/>受控变更已批准
+    ready --> prog : 指派写入者
+    prog --> rev : 可审阅 PR 存在
+    rev --> prog : 要求修改<br/>或部分 PR 合并
+  }
+  state "state:awaiting-acceptance" as acc
+  state "Done（completed 关闭）" as done
+  state "Not planned 或 Duplicate" as np
+  [*] --> open
+  open --> np : 记录原因
+  open --> acc : in-review 合并<br/>验收未完成
+  open --> done : in-review 合并<br/>验收齐全
+  acc --> done : 验收记录后关闭
+  acc --> acc : 验收失败
+  done --> [*]
+  np --> [*]
+</pre></div>
+</section>
+
+<section id="zh-3">
+<h3>3. CI 流水线</h3>
+<p>从左到右：触发条件 → 工作流与 job → <code>main</code> 必需检查。必需检查以 <code>docs/testing.md</code> 为准（分支保护设置未能读取）；<code>Go integration</code> 来自 PR #33 <span class="tag proposed">提案</span>，合并后由 owner 加为必需检查。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  T1["push 到 main<br/>或 pull_request"]
+  subgraph TW["tests.yml（Tests）"]
+    subgraph REQJ["当前必需"]
+      direction TB
+      J1["Tests ×3 OS<br/>python -m unittest"]
+      J2["Go ×3 OS<br/>gofmt（仅 Linux）<br/>vet、test、build"]
+      J4["Compose smoke test<br/>up --build<br/>探测 4 个 /healthz"]
+    end
+    J3["Go integration<br/>ubuntu-latest<br/>postgres:17，禁止跳过"]
+  end
+  RQ["main 必需检查<br/>docs/testing.md"]
+  T2["issues opened / edited<br/>label created / edited / deleted<br/>（仅 area: 标签全量复查）<br/>workflow_dispatch"]
+  subgraph IW["issue-check.yml（Issue format check）"]
+    K1["check_issue.py<br/>更新格式提醒评论"]
+  end
+  T1 --> TW
+  REQJ --> RQ
+  J3 -.->|"PR #33 合并后添加"| RQ
+  T2 --> IW
+  classDef proposed stroke-dasharray:2 2
+  class J3 proposed
+</pre></div>
+</section>
+
+<h2 class="part">B 架构与部署</h2>
+
+<section id="zh-4">
+<h3>4. 逻辑架构</h3>
+<p>S1 的服务分层，自上而下：客户端、网关层（模型上游在网关右侧）、内部服务、数据存储。各内部调用使用的令牌见下表。gateway 不直接访问数据库；两个 schema 在 Postgres 17 的数据库 <code>gateflow</code> 中。来源：<code>docs/feasibility-plan.md</code>、<code>docs/proposal/proposal-v1.1.md</code>、<code>compose.yaml</code>、PR #33 <span class="tag proposed">提案</span>、#18 修订 3 草稿 <span class="tag proposed">提案</span>。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+  subgraph L1["客户端"]
+    direction LR
+    OC["OpenCode<br/>Anthropic provider"]
+    CC["Claude Code<br/>（计划，UC3）"]
+  end
+  subgraph L2["网关层"]
+    direction LR
+    GW["gateway :8080<br/>验 key、预留<br/>SSE 转发"]
+    subgraph UP["模型上游"]
+      direction TB
+      MU["mock-upstream :8090<br/>容量与故障测试"]
+      OL["本地 Ollama :11434<br/>真实模型功能测试"]
+    end
+    GW -->|"POST /v1/messages<br/>无凭据"| UP
+  end
+  subgraph L3["内部服务"]
+    direction LR
+    ME["metering :8082<br/>钱包、预留<br/>结算、账本"]
+    AC["access :8081<br/>租户、key<br/>渠道、价格版本"]
+    ME -->|"查价格版本"| AC
+  end
+  subgraph L4["数据存储"]
+    direction LR
+    SM[("schema accounting<br/>角色 metering 拥有")]
+    SA[("schema access<br/>角色 access 拥有")]
+    RD[("Redis<br/>限流与缓存（计划）")]
+  end
+  L1 -->|"POST /v1/messages<br/>gateway key"| L2
+  L2 -->|"验 key、预留、结算<br/>Bearer 内部令牌"| L3
+  L3 -->|"各自只访问<br/>自己的 schema"| L4
+  L2 -.->|"计划"| RD
+  classDef planned stroke-dasharray:5 5
+  class CC,RD planned
+</pre></div>
+<div class="tablebox"><table>
+<thead><tr><th>调用方 → 被调方</th><th>接口</th><th>认证</th></tr></thead>
+<tbody>
+<tr><td>客户端 → gateway</td><td><code>POST /v1/messages</code></td><td>gateway key</td></tr>
+<tr><td>gateway → access</td><td><code>POST /internal/v1/keys/verify</code></td><td><code>Bearer ACCESS_INTERNAL_TOKEN</code></td></tr>
+<tr><td>gateway → metering</td><td><code>POST /internal/v1/reservations</code> 与 settle</td><td><code>Bearer METERING_INTERNAL_TOKEN</code></td></tr>
+<tr><td>metering → access</td><td><code>GET /internal/v1/price-versions/{id}</code></td><td><code>Bearer ACCESS_INTERNAL_TOKEN</code></td></tr>
+<tr><td>gateway → mock-upstream、Ollama</td><td><code>POST /v1/messages</code></td><td>无：<code>credential_env</code> 为空，不向上游发凭据</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="zh-5a">
+<h3>5a. 物理部署：本地 compose 栈</h3>
+<p>本地容器、仅绑定 localhost 的端口，以及基于健康检查的启动顺序：自上而下，箭头表示下游等上游 healthy 后才启动（<code>service_healthy</code>）。初始化 SQL 挂载和全部 <code>service_healthy</code> 依赖来自 PR #33 <span class="tag proposed">提案</span>；目前 <code>main</code> 上 gateway 只等待 access、metering、mock 启动（<code>service_started</code>）。来源：<code>deploy/compose/compose.yaml</code>、PR #33。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+  subgraph HOST["开发机 Docker（端口只绑定 127.0.0.1）"]
+    INIT["postgres-init.sql<br/>挂载为 10-roles.sql:ro"]
+    PGc[("postgres:17<br/>:5432")]
+    ACc["access<br/>:8081"]
+    MEc["metering<br/>:8082"]
+    RDc[("redis:8<br/>:6379")]
+    MUc["mock-upstream<br/>:8090"]
+    GWc["gateway<br/>:8080"]
+  end
+  OLh["宿主机 Ollama<br/>host.docker.internal:11434"]
+  INIT -.->|"新卷首次启动时执行"| PGc
+  PGc --> ACc & MEc
+  ACc -->|"PR #33"| MEc
+  MEc --> GWc
+  ACc --> GWc
+  RDc & MUc --> GWc
+  GWc -.->|"extra_hosts（PR #33）"| OLh
+  classDef proposed stroke-dasharray:2 2
+  class INIT proposed
+</pre></div>
+</section>
+
+<section id="zh-5b">
+<h3>5b. 物理部署：S3 云环境 <span class="tag planned">计划中</span></h3>
+<p>上方一行是请求路径（从左到右），下方是构建与发布路径。GitHub Actions 在 main 合并或 <code>v*</code> tag 时构建镜像并推送到 GHCR，部署到 EKS；gateway 用 1、2、4 个副本对比并由 KEDA 自动扩缩；数据库用 RDS PostgreSQL，缓存用 ElastiCache Redis，VPC 跨两个可用区。全部尚未创建；<code>terraform apply</code> 需要门禁通过且 owner 批准花费。来源：#21、#30、<code>docs/feasibility-plan.md</code>。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  USR["客户端"]
+  subgraph AWS["AWS（计划，#30，未 apply）"]
+    subgraph VPC["VPC，跨两个可用区"]
+      ALB["ALB ingress"]
+      subgraph EKS["EKS 托管节点组"]
+        KE["KEDA<br/>Prometheus<br/>活跃请求指标"]
+        GWp["gateway Pod<br/>1 / 2 / 4 副本"]
+        SVp["access、metering<br/>mock-upstream Pod"]
+      end
+      subgraph PRIV["私有子网"]
+        RDS[("RDS<br/>PostgreSQL")]
+        EC[("ElastiCache<br/>Redis")]
+      end
+    end
+  end
+  subgraph GH["GitHub（计划，#21）"]
+    GA["GitHub Actions<br/>main 合并或 v* tag"]
+    GR[("GHCR<br/>ghcr.io/bibi45c/gateflow-*<br/>tag 为 commit SHA")]
+  end
+  USR --> ALB --> GWp --> SVp --> RDS
+  GWp --> EC
+  KE -.->|"扩缩"| GWp
+  GA --> GR
+  GR -->|"匿名拉取镜像"| EKS
+  classDef planned stroke-dasharray:5 5
+  class USR,ALB,KE,GWp,SVp,RDS,EC,GA,GR planned
+</pre></div>
+</section>
+
+<h2 class="part">C 一次 S1 请求与计费</h2>
+
+<section id="zh-6">
+<h3>6. S1 请求时序：一次 <code>POST /v1/messages</code> <span class="tag proposed">提案</span></h3>
+<p>五个阶段自上而下：检查请求、验 key 与渠道、预留（失败重试一次）、转发 SSE 并采集 usage、用新的 context 结算。alt 分支中的错误响应会结束本次调用。依据 #18 的修订 3 草稿（<code>.local/review-18/final-18-v2.md</code>），该修订尚未批准。</p>
+<div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as 客户端 OpenCode
+  participant G as gateway
+  participant A as access
+  participant M as metering
+  participant U as 上游 mock 或 Ollama
+  rect rgba(128,128,128,0.08)
+    Note over C,U: 1 检查请求
+    C->>G: POST /v1/messages（gateway key）
+    Note over G: 依次检查 体积不超过 2 MiB、key 存在、JSON、model、max_tokens 1 到 32768
+    alt 检查失败
+      G-->>C: 413 request_too_large / 401 authentication_error / 400 invalid_request_error
+    end
+  end
+  rect rgba(128,128,128,0.04)
+    Note over C,U: 2 验 key 与渠道
+    G->>A: POST /keys/verify {key, model}，超时 2 s
+    alt invalid_key
+      A-->>G: 401 invalid_key
+      G-->>C: 401 authentication_error
+    else model_not_allowed
+      A-->>G: 403 model_not_allowed
+      G-->>C: 403 permission_error
+    else 超时或不可达
+      G-->>C: 503 api_error
+    end
+    A-->>G: 200 tenant_id、price_version_id、channel
+    Note over G: 渠道检查 base_url 与 credential_env
+    opt 渠道配置错误
+      G-->>C: 500 api_error，不做预留
+    end
+  end
+  rect rgba(128,128,128,0.08)
+    Note over C,U: 3 预留
+    G->>M: POST /reservations {call_id, attempt_id 1, max_input_tokens, max_output_tokens}
+    M->>A: GET /price-versions/{id}（可缓存）
+    opt 超时、5xx 或连接失败
+      G->>M: 用相同 id 重试一次
+    end
+    alt insufficient_balance 或 wallet_not_found
+      M-->>G: 409 或 404
+      G-->>C: 402 billing_error
+    else 仍无预留
+      G-->>C: 503 api_error，不调用上游
+    end
+    M-->>G: 201 reservation_id、max_cost
+    opt 客户端在发往上游前离开
+      Note over G: outcome not_dispatched，直接结算
+    end
+  end
+  rect rgba(128,128,128,0.04)
+    Note over C,U: 4 转发
+    G->>U: POST /v1/messages（只转发 content-type、anthropic-version、anthropic-beta）
+    alt 上游 400 或 429
+      U-->>G: 400 或 429
+      G-->>C: 原样透传，outcome upstream_error
+    else 其他非 2xx，或首字节前失败
+      G-->>C: 502 api_error，outcome upstream_error
+    else 流式成功
+      U-->>G: message_start（input_tokens）
+      G-->>C: 逐个转发 SSE 事件，不缓冲
+      U-->>G: message_delta（output_tokens）
+      U-->>G: message_stop
+      G-->>C: message_stop，outcome completed
+    end
+    opt 客户端在 message_stop 前断开
+      Note over G: outcome client_cancelled
+    end
+    opt 流开始后出错或无 message_stop
+      G-->>C: event error 后关闭，outcome interrupted
+    end
+  end
+  rect rgba(128,128,128,0.08)
+    Note over C,U: 5 结算
+    Note over G: 新 context 结算，每次 2 s，最多重试 2 次，总计不超过 6 s
+    G->>M: POST /reservations/{id}/settle {input_tokens, output_tokens, outcome}
+    M-->>G: 200 charged、ledger_entry_id
+    opt 结算最终失败
+      Note over G: error 日志记录 call_id 与 reservation_id，占用保留到 UC6
+    end
+  end
+</pre></div>
+</section>
+
+<section id="zh-7a">
+<h3>7a. 结算 outcome 判定 <span class="tag proposed">提案</span></h3>
+<p>自上而下按顺序判定，第一条命中的规则生效。<code>not_dispatched</code> 和 <code>upstream_error</code> 计 0；其余三种按计数计费，见 7b。来源：#18 修订 3 草稿。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+  S["调用结束"] --> Q1{"已向上游<br/>发出请求？"}
+  Q1 -->|"否"| ND["not_dispatched<br/>charged = 0"]
+  Q1 -->|"是"| Q2{"收到 message_stop，<br/>或 2xx 非流式响应已读完？"}
+  Q2 -->|"是"| CO["completed<br/>按计数计费"]
+  Q2 -->|"否"| Q3{"客户端先断开？"}
+  Q3 -->|"是"| CC["client_cancelled<br/>按计数计费"]
+  Q3 -->|"否"| Q4{"上游非 2xx，或在向<br/>客户端发首字节前失败？"}
+  Q4 -->|"是"| UE["upstream_error<br/>charged = 0"]
+  Q4 -->|"否"| IN["interrupted<br/>按计数计费"]
+</pre></div>
+</section>
+
+<section id="zh-7b">
+<h3>7b. 计费计算 <span class="tag proposed">提案</span></h3>
+<p>从左到右：为 null 的计数换成对应上限，按价格版本计算，结果封顶于 <code>max_cost</code>。无论哪种 outcome，最后都写一条 ledger，并保存按发送值记录的计数。来源：#18 修订 3 草稿。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph BILL["completed、client_cancelled、interrupted"]
+    direction LR
+    R["null input 换成 max_input_tokens<br/>null output 换成 max_output_tokens"] --> P["cost = input × 输入价<br/>+ output × 输出价"] --> CAP["charged =<br/>min(max_cost, cost)"]
+  end
+  subgraph ZERO["not_dispatched、upstream_error"]
+    Z["charged = 0<br/>忽略 token 计数"]
+  end
+  CAP --> L["写一条 ledger<br/>保存按发送值的计数"]
+  Z --> L
+</pre></div>
+<p class="muted">示例参数：输入价 3、输出价 15（micro-units 每 token），<code>max_input_tokens</code> 1,000，<code>max_output_tokens</code> 100，所以 <code>max_cost</code> = 1,000 × 3 + 100 × 15 = 4,500。下表每行已重新核算。</p>
+<div class="tablebox"><table>
+<thead><tr><th>outcome</th><th>情形</th><th>input_tokens</th><th>output_tokens</th><th>计算</th><th>charged</th></tr></thead>
+<tbody>
+<tr><td><code>completed</code></td><td>正常完成</td><td class="num">800</td><td class="num">50</td><td>2,400 + 750</td><td class="num">3,150</td></tr>
+<tr><td><code>completed</code></td><td>上报值超出上限</td><td class="num">1,200</td><td class="num">100</td><td>min(4,500, 3,600 + 1,500)</td><td class="num">4,500</td></tr>
+<tr><td><code>interrupted</code></td><td><code>message_start</code> 后断流</td><td class="num">800</td><td class="num">null</td><td>2,400 + 100 × 15</td><td class="num">3,900</td></tr>
+<tr><td><code>interrupted</code></td><td>input 报 0，无 <code>message_delta</code></td><td class="num">null</td><td class="num">null</td><td>3,000 + 1,500</td><td class="num">4,500</td></tr>
+<tr><td><code>client_cancelled</code></td><td>未见 usage</td><td class="num">null</td><td class="num">null</td><td>3,000 + 1,500</td><td class="num">4,500</td></tr>
+<tr><td><code>upstream_error</code></td><td>上游 500</td><td class="num">0</td><td class="num">0</td><td>固定为 0</td><td class="num">0</td></tr>
+<tr><td><code>not_dispatched</code></td><td>发往上游前客户端离开</td><td class="num">0</td><td class="num">0</td><td>固定为 0</td><td class="num">0</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="zh-8">
+<h3>8. 预留状态机 <span class="tag proposed">提案</span></h3>
+<p>预留只会从 reserved 变为 settled 一次，靠条件更新或行锁保证。重放按 <code>(call_id, attempt_id)</code> 或 <code>reservation_id</code> 返回已记录的结果。reserve 或 settle 最终失败时留下的占用，要等 UC6（门禁之后）才回收。来源：#18 修订 3 草稿、#27。</p>
+<div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  direction LR
+  state "孤立占用（等待 UC6）" as orphaned
+  [*] --> reserved : reserve 201<br/>余额条件更新成功
+  reserved --> reserved : 相同内容重放<br/>返回 200 与记录结果
+  reserved --> settled : settle 200<br/>写一条 ledger，释放余量
+  settled --> settled : 重复 settle<br/>返回记录结果，不再扣费
+  reserved --> orphaned : 最终失败<br/>或网关崩溃
+  orphaned --> settled : UC6 恢复（计划）
+  settled --> [*]
+  note left of reserved
+    被拒绝的 reserve（409、404）不建预留、不写 ledger
+    同一 (call_id, attempt_id) 但内容不同返回 422
+    并发重复请求等待第一个完成；先查重放，再查余额
+  end note
+  note left of orphaned
+    数据库中 status 仍为 reserved
+    占用的余额直到 UC6 才释放
+  end note
+</pre></div>
+</section>
+
+<h2 class="part">D 数据库</h2>
+
+<section id="zh-9a">
+<h3>9a. 数据库 ER：schema <code>access</code> <span class="tag proposed">提案</span></h3>
+<p>按关系阅读：租户拥有 key，key 引用价格版本，key 通过 <code>api_key_channels</code> 授权到渠道，渠道列出可服务的模型。表和列取自 agneshephzibahroche 在 #26 发的计划评论（尚未实现）；<code>schema_migrations</code> 来自 PR #33 的 <code>pkg/pgmigrate</code>。计划只给出了 <code>name</code> 和 <code>base_url</code> 的列名，类型 <code>text</code> 是推测。</p>
+<div class="diagram"><pre class="mermaid">
+erDiagram
+  tenants ||--o{ api_keys : "拥有"
+  price_versions ||--o{ api_keys : "定价"
+  api_keys ||--o{ api_key_channels : "可用"
+  channels ||--o{ api_key_channels : "被授权"
+  channels ||--o{ channel_models : "服务"
+  tenants {
+    text id PK "tenant-00 至 tenant-10"
+    text name
+    timestamptz created_at
+  }
+  api_keys {
+    text id PK
+    text tenant_id FK
+    bytea key_hmac UK "HMAC-SHA256，不存原始 key"
+    text price_version_id FK
+    timestamptz revoked_at "可空"
+    timestamptz created_at
+  }
+  price_versions {
+    text id PK "如 pv-seed-1"
+    bigint input_micro_per_token
+    bigint output_micro_per_token
+    timestamptz created_at "不可变，触发器拒绝改删"
+  }
+  api_key_channels {
+    text key_id PK, FK
+    text channel_id PK, FK
+  }
+  channels {
+    text id PK
+    text protocol "anthropic-messages"
+    text base_url
+    text credential_env "mock 与 Ollama 为空"
+    timestamptz created_at
+  }
+  channel_models {
+    text channel_id PK, FK
+    text model_pattern PK "精确名或前缀加星号"
+  }
+  schema_migrations {
+    integer version PK
+    text name
+    timestamptz applied_at
+  }
+</pre></div>
+</section>
+
+<section id="zh-9b">
+<h3>9b. 数据库 ER：schema <code>accounting</code> <span class="tag proposed">提案</span></h3>
+<p>按关系阅读：钱包 → 预留 → 结算产生的 ledger。根据 #27 和 #18 修订 3 草稿推导：reservation 保存创建时的价格和上限；ledger 保存 <code>call_id</code>、<code>attempt_id</code>、按发送值记录的 token 计数（null 保持 null）、outcome 和 <code>charged</code>。<code>balance</code>、<code>held</code>、<code>status</code> 等未在来源中明确的列名为推测。两个 schema 之间没有外键，<code>tenant_id</code> 只按字符串值对应。</p>
+<div class="diagram"><pre class="mermaid">
+erDiagram
+  wallets ||--o{ reservations : "占用"
+  reservations ||--o| ledger_entries : "结算产生一条"
+  wallets ||--o{ ledger_entries : "记账"
+  wallets {
+    text tenant_id PK "与 access.tenants.id 同值"
+    bigint balance "种子 1 亿，tenant-00 为 0"
+    bigint held "当前占用，可用额不小于 0"
+    timestamptz updated_at
+  }
+  reservations {
+    text reservation_id PK
+    text call_id UK "与 attempt_id 联合唯一"
+    integer attempt_id "S1 恒为 1"
+    text tenant_id FK
+    text price_version_id
+    bigint input_micro_per_token "预留时记下"
+    bigint output_micro_per_token "预留时记下"
+    bigint max_input_tokens
+    bigint max_output_tokens
+    bigint max_cost
+    text status "reserved 或 settled"
+    timestamptz created_at
+  }
+  ledger_entries {
+    text ledger_entry_id PK
+    text reservation_id FK "每个预留恰好一条"
+    text tenant_id FK
+    text call_id
+    integer attempt_id
+    bigint input_tokens "按发送值，可空"
+    bigint output_tokens "按发送值，可空"
+    text outcome
+    bigint charged "可为 0"
+    timestamptz created_at "只增不改，更正写新行"
+  }
+  schema_migrations {
+    integer version PK
+    text name
+    timestamptz applied_at
+  }
+</pre></div>
+</section>
+
+<h2 class="part">E 计划与门禁</h2>
+
+<section id="zh-10">
+<h3>10. S1 依赖图</h3>
+<p>S1 milestone 下的 issue、阻塞关系和负责人，从左到右按阶段分列：可立即开始、被 #18 或 #24 阻塞、集成（#37）、门禁（#20）。红色一行是到门禁的关键路径（#18 → #38 → #39 → #37 → #20）；虚线是“compose 中使用”这类弱依赖。关键路径已隐含的 #18 → #39、#38 → #37 和 #25 → #20 不单独画出。#25 → #37 表示端到端测试跑在 mock 上（GitHub 上尚未登记这条 blocked-by）。#38、#39 属于父 issue #28；#36、#37 属于父 issue #19。来源：<code>gh issue list --milestone "S1 First link + gate"</code> 和各 issue 的 Dependencies 一节；GitHub 上的 blocked-by 关系未能直接读取。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph C1["可立即开始"]
+    I24["#24 schema 与迁移<br/>bibi45c · PR #33 审阅中"]
+    I18["#18 内部 API 契约<br/>bibi45c · 设计待批准"]
+    I36["#36 Ollama 配置<br/>与 OpenCode 指南<br/>liutongyaocn-web"]
+    I29["#29 S3 成本估算<br/>KaenBin"]
+  end
+  subgraph C2["被 #18 或 #24 阻塞"]
+    subgraph SVC["服务实现"]
+      I26["#26 access<br/>验 key 与价格<br/>agneshephzibahroche"]
+      I27["#27 metering<br/>预留与结算<br/>liutongyaocn-web"]
+    end
+    I38["#38 转发 /v1/messages<br/>bibi45c"]
+    I39["#39 验 key、预留、结算<br/>bibi45c"]
+    I25["#25 mock 上游<br/>KaenBin"]
+  end
+  subgraph C3["集成"]
+    I37["#37 S1 端到端冒烟<br/>KaenBin"]
+  end
+  subgraph C4["门禁"]
+    I20["#20 可行性门禁<br/>bibi45c · 10-14"]
+  end
+  I18 ==> I38 ==> I39 ==> I37 ==> I20
+  I24 --> SVC
+  I18 --> SVC
+  I26 -.->|"compose 需价格版本"| I27
+  SVC --> I37
+  I18 --> I25
+  I25 -->|"compose 中使用"| I37
+  I36 --> I37
+  I29 -->|"预算"| I20
+  classDef crit stroke:#c0392b,stroke-width:3px
+  class I18,I38,I39,I37,I20 crit
+  linkStyle 0,1,2,3 stroke:#c0392b,stroke-width:3px
+</pre></div>
+</section>
+
+<section id="zh-11">
+<h3>11. 里程碑时间线</h3>
+<p>2026 年各阶段与关键日期：汇报演示定于 10 月 21 日 09:00–09:40 SGT。S0 的开始日期未记录，所以只画成里程碑；截至 10 月 12 日，S0 还有 1 个 issue 未关闭。来源：<code>docs/feasibility-plan.md</code>、<code>gh api repos/bibi45c/gateflow/milestones</code>。</p>
+<div class="diagram"><pre class="mermaid">
+gantt
+  title GateFlow 里程碑 2026
+  dateFormat YYYY-MM-DD
+  axisFormat %m-%d
+  section 交付阶段
+  S0 骨架合并 :milestone, m0, 2026-10-12, 0d
+  S1 首条链路 :s1, 2026-10-12, 2026-10-14
+  S1 可行性门禁 :milestone, m1, 2026-10-14, 0d
+  S2 第二协议 :s2, 2026-10-14, 2026-10-16
+  S3 云与扩展 :s3, 2026-10-16, 2026-10-18
+  section 发布与演示
+  冻结、录备用演示、排练 :f1, 2026-10-19, 1d
+  打 tag v0.1.0 并排练 :milestone, m2, 2026-10-20, 0d
+  汇报演示 0900 SGT :milestone, m3, 2026-10-21, 0d
+  section 报告
+  最终报告截止 :milestone, m4, 2026-11-16, 0d
+</pre></div>
+</section>
+
+<section id="zh-12">
+<h3>12. 可行性门禁决策（#20）</h3>
+<p>10 月 14 日门禁的通过（Go）与不通过（No-go）规则，自上而下：两次 OpenCode 运行都通过才进入 S2。小模型失败应先换机器重试，并区分是模型还是网关的问题。重跑写在节点里，图中没有回头的线。来源：#20、<code>docs/feasibility-plan.md</code>。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+  R1["① OpenCode + mock-upstream<br/>mock-coding 脚本任务"] --> K1{"全部 tool call 已转发，<br/>每个请求一条已结算 ledger？"}
+  K1 -->|"是"| R2["② OpenCode + 本地 Ollama<br/>小型真实任务"]
+  K1 -->|"否"| FX1{"能在 10-14 前修复？<br/>能：修复后从 ① 重跑"}
+  R2 --> K2{"至少一个 tool call<br/>已转发并结算？"}
+  K2 -->|"是"| GO["Go：两项都通过<br/>开始 S2"]
+  K2 -->|"否，网关原因"| FX2{"能在 10-14 前修复？<br/>能：修复后从 ① 重跑"}
+  K2 -->|"否，模型原因"| RT["换更快机器或 Ollama Cloud<br/>从 ② 重跑"]
+  FX1 -->|"不能"| NG["No-go<br/>与讲师复审范围或估算"]
+  FX2 -->|"不能"| NG
+  GO --> REC["在 #20 记录<br/>会话导出、网关日志<br/>ledger 查询、版本<br/>人日与 4 天预算对比<br/>#29 预算、偏差"]
+  NG --> REC
+</pre></div>
+</section>
+
+</main>
+
+<!-- ===================== English ===================== -->
+<main class="lang-block lang-off" data-lang="en" lang="en" aria-hidden="true">
+
+<h1>GateFlow Diagrams</h1>
+<p>This page sums up the GateFlow repository (product name FlowGate) in diagrams: team workflow, architecture, deployment, S1 request and charging rules, database design, dependencies and timeline. It helps the owner and the team see the whole project quickly. It reflects <code>main</code> commit <code>7dbdd4e</code> on 12 October 2026 and the issues and PRs open that day.</p>
+<p class="muted">Reading order: A team process → B architecture and deployment → C one S1 request and its charge → D database → E plan and gate. Each diagram reads in one direction (top to bottom or left to right). Dotted arrows mean a loop back, planned or proposed.</p>
+
+<div class="legend">
+<strong>Legend</strong>
+<ul>
+<li><span class="tag planned">Planned</span>Written in the feasibility plan or an issue but not implemented yet (for example the S3 cloud environment, Redis rate limits).</li>
+<li><span class="tag proposed">Proposed</span>Written in an unmerged PR or an unapproved design revision and may still change (for example PR #33, #18 revision 3, the table design in #26/#27).</li>
+<li>Unmarked content is on <code>main</code> or is a rule in force. Dotted boxes and dotted arrows mean planned, proposed or a loop back.</li>
+</ul>
+</div>
+
+<h2 class="part">A Team process</h2>
+
+<section id="en-1">
+<h3>1. Team workflow swimlanes</h3>
+<p>How an issue goes from creation to Done, one lane per role, in five phases from top to bottom: plan, build, review, merge, accept. Sources: <code>.github/CONTRIBUTING.md</code>, <code>AGENTS.md</code>, <code>.agents/skills/*/SKILL.md</code>. Under CONTRIBUTING, an issue's owner is its sole assignee, and that owner also approves the plan. Reviewing doc changes in Chinese is a team practice (see the body of PR #33); the rule files do not state it.</p>
+<div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant O as Owner (bibi45c)
+  participant A as Assignee (person or agent)
+  participant C as Coordinator agent
+  participant B as GitHub bot and CI
+  participant I as Integrator (bibi45c)
+  rect rgba(128,128,128,0.08)
+    Note over O,I: Plan
+    O->>B: Create issue from form, [type][area] title
+    B-->>O: Issue format check posts reminder
+    O->>O: Set milestone, add blocked-by
+    O->>A: Assign sole assignee, add state:ready
+    opt Controlled change
+      A->>O: Draft plan with acceptance and recovery
+      O-->>A: Unedited approval comment citing issue version
+    end
+  end
+  rect rgba(128,128,128,0.04)
+    Note over O,I: Build
+    C->>C: Fetch, create worktree and branch type/slug
+    C-->>A: Worktree ready, add state:in-progress
+    A->>A: Implement in own worktree
+    A->>A: Commits type(scope): change, Refs #35;n
+    A->>A: gateflow-verify, evidence per head and base
+    opt Docs changed
+      A->>O: Doc changes
+      O-->>A: Reviewed in Chinese (team practice)
+    end
+    A->>C: PR body per template (Delivery, Acceptance phase)
+  end
+  rect rgba(128,128,128,0.08)
+    Note over O,I: Review
+    C->>B: Push, open draft PR
+    B-->>C: Required checks Tests, Go, Compose
+    C->>I: Evidence complete, mark ready, add state:in-review
+  end
+  rect rgba(128,128,128,0.04)
+    Note over O,I: Merge
+    alt Not mergeable (stale, failing or changes requested)
+      I-->>A: Back to build
+    else Mergeable
+      I->>B: Squash merge --match-head-commit
+      I->>I: Read back state, update labels
+    end
+  end
+  rect rgba(128,128,128,0.08)
+    Note over O,I: Accept
+    I->>O: state:awaiting-acceptance or close
+    O->>O: Post-merge acceptance, record evidence, close
+    O->>C: Approve cleanup
+    C->>C: Remove worktree and local branch
+  end
+</pre></div>
+</section>
+
+<section id="en-2">
+<h3>2. Issue state machine</h3>
+<p>The owner or coordinator sets the state with <code>state:*</code> labels; the main line runs top to bottom. Done means closed as completed with all agreed acceptance recorded; Not planned and Duplicate are not Done, and moving there requires a recorded reason and replacement issue. If acceptance fails, a revert PR or a bug issue blocks Done. Sources: the Issues section of CONTRIBUTING.md and <code>gh label list</code>.</p>
+<div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  state "Open issue" as open {
+    state "New (not Ready)" as new
+    state "state:ready" as ready
+    state "state:in-progress" as prog
+    state "state:in-review" as rev
+    [*] --> new : created from form
+    new --> ready : fields complete, one owner<br/>controlled change approved
+    ready --> prog : writer assigned
+    prog --> rev : reviewable PR exists
+    rev --> prog : changes requested<br/>or partial PR merged
+  }
+  state "state:awaiting-acceptance" as acc
+  state "Done (closed completed)" as done
+  state "Not planned or Duplicate" as np
+  [*] --> open
+  open --> np : reason recorded
+  open --> acc : merged from in-review<br/>acceptance pending
+  open --> done : merged from in-review<br/>acceptance recorded
+  acc --> done : acceptance recorded, closed
+  acc --> acc : acceptance failed
+  done --> [*]
+  np --> [*]
+</pre></div>
+</section>
+
+<section id="en-3">
+<h3>3. CI pipeline</h3>
+<p>Left to right: triggers → workflows and jobs → required checks on <code>main</code>. <code>docs/testing.md</code> defines the required checks (branch protection settings could not be read). <code>Go integration</code> comes from PR #33 <span class="tag proposed">Proposed</span>; the owner adds it as a required check after merge.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  T1["push to main<br/>or pull_request"]
+  subgraph TW["tests.yml (Tests)"]
+    subgraph REQJ["Required now"]
+      direction TB
+      J1["Tests ×3 OS<br/>python -m unittest"]
+      J2["Go ×3 OS<br/>gofmt (Linux only)<br/>vet, test, build"]
+      J4["Compose smoke test<br/>up --build<br/>probe 4 /healthz"]
+    end
+    J3["Go integration<br/>ubuntu-latest<br/>postgres:17, no skips"]
+  end
+  RQ["Required checks on main<br/>docs/testing.md"]
+  T2["issues opened / edited<br/>label created / edited / deleted<br/>(full recheck on area: labels only)<br/>workflow_dispatch"]
+  subgraph IW["issue-check.yml (Issue format check)"]
+    K1["check_issue.py<br/>updates reminder comment"]
+  end
+  T1 --> TW
+  REQJ --> RQ
+  J3 -.->|"added after PR #33 merges"| RQ
+  T2 --> IW
+  classDef proposed stroke-dasharray:2 2
+  class J3 proposed
+</pre></div>
+</section>
+
+<h2 class="part">B Architecture and deployment</h2>
+
+<section id="en-4">
+<h3>4. Logical architecture</h3>
+<p>S1 service layers from top to bottom: clients, gateway layer (model upstreams to the right of the gateway), internal services, data stores. The table below lists the token that protects each internal call. The gateway never touches the database; both schemas live in the Postgres 17 database <code>gateflow</code>. Sources: <code>docs/feasibility-plan.md</code>, <code>docs/proposal/proposal-v1.1.md</code>, <code>compose.yaml</code>, PR #33 <span class="tag proposed">Proposed</span>, #18 revision 3 draft <span class="tag proposed">Proposed</span>.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+  subgraph L1["Clients"]
+    direction LR
+    OC["OpenCode<br/>Anthropic provider"]
+    CC["Claude Code<br/>(planned, UC3)"]
+  end
+  subgraph L2["Gateway layer"]
+    direction LR
+    GW["gateway :8080<br/>verify key, reserve<br/>relay SSE"]
+    subgraph UP["Model upstreams"]
+      direction TB
+      MU["mock-upstream :8090<br/>capacity and failure tests"]
+      OL["local Ollama :11434<br/>real model tests"]
+    end
+    GW -->|"POST /v1/messages<br/>no credential"| UP
+  end
+  subgraph L3["Internal services"]
+    direction LR
+    ME["metering :8082<br/>wallets, reservations<br/>settlement, ledger"]
+    AC["access :8081<br/>tenants, keys<br/>channels, price versions"]
+    ME -->|"price version lookup"| AC
+  end
+  subgraph L4["Data stores"]
+    direction LR
+    SM[("schema accounting<br/>owned by role metering")]
+    SA[("schema access<br/>owned by role access")]
+    RD[("Redis<br/>rate limits, cache (planned)")]
+  end
+  L1 -->|"POST /v1/messages<br/>gateway key"| L2
+  L2 -->|"verify, reserve, settle<br/>Bearer internal token"| L3
+  L3 -->|"each uses<br/>only its own schema"| L4
+  L2 -.->|"planned"| RD
+  classDef planned stroke-dasharray:5 5
+  class CC,RD planned
+</pre></div>
+<div class="tablebox"><table>
+<thead><tr><th>Caller → callee</th><th>Endpoint</th><th>Authentication</th></tr></thead>
+<tbody>
+<tr><td>client → gateway</td><td><code>POST /v1/messages</code></td><td>gateway key</td></tr>
+<tr><td>gateway → access</td><td><code>POST /internal/v1/keys/verify</code></td><td><code>Bearer ACCESS_INTERNAL_TOKEN</code></td></tr>
+<tr><td>gateway → metering</td><td><code>POST /internal/v1/reservations</code> and settle</td><td><code>Bearer METERING_INTERNAL_TOKEN</code></td></tr>
+<tr><td>metering → access</td><td><code>GET /internal/v1/price-versions/{id}</code></td><td><code>Bearer ACCESS_INTERNAL_TOKEN</code></td></tr>
+<tr><td>gateway → mock-upstream, Ollama</td><td><code>POST /v1/messages</code></td><td>none: <code>credential_env</code> is empty, so no credential goes upstream</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="en-5a">
+<h3>5a. Physical deployment: local compose stack</h3>
+<p>Local containers, ports bound to localhost only, and the health-based start order from top to bottom: an arrow means the lower service starts only after the upper one is healthy (<code>service_healthy</code>). The init SQL mount and all <code>service_healthy</code> dependencies come from PR #33 <span class="tag proposed">Proposed</span>; on <code>main</code> today the gateway only waits for access, metering and mock to start (<code>service_started</code>). Sources: <code>deploy/compose/compose.yaml</code>, PR #33.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+  subgraph HOST["Developer Docker (ports bound to 127.0.0.1 only)"]
+    INIT["postgres-init.sql<br/>mounted as 10-roles.sql:ro"]
+    PGc[("postgres:17<br/>:5432")]
+    ACc["access<br/>:8081"]
+    MEc["metering<br/>:8082"]
+    RDc[("redis:8<br/>:6379")]
+    MUc["mock-upstream<br/>:8090"]
+    GWc["gateway<br/>:8080"]
+  end
+  OLh["Ollama on host<br/>host.docker.internal:11434"]
+  INIT -.->|"runs on first start of a new volume"| PGc
+  PGc --> ACc & MEc
+  ACc -->|"PR #33"| MEc
+  MEc --> GWc
+  ACc --> GWc
+  RDc & MUc --> GWc
+  GWc -.->|"extra_hosts (PR #33)"| OLh
+  classDef proposed stroke-dasharray:2 2
+  class INIT proposed
+</pre></div>
+</section>
+
+<section id="en-5b">
+<h3>5b. Physical deployment: S3 cloud <span class="tag planned">Planned</span></h3>
+<p>The top row is the request path (left to right); below it is the build and release path. GitHub Actions builds images on a merge to main or a <code>v*</code> tag, pushes them to GHCR and deploys to EKS. The gateway is compared at 1, 2 and 4 replicas and autoscaled by KEDA. The database is RDS PostgreSQL, the cache ElastiCache Redis, and the VPC spans two availability zones. Nothing exists yet; <code>terraform apply</code> needs a passed gate and the owner's approval of the spend. Sources: #21, #30, <code>docs/feasibility-plan.md</code>.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  USR["Clients"]
+  subgraph AWS["AWS (planned, #30, not applied)"]
+    subgraph VPC["VPC across two AZs"]
+      ALB["ALB ingress"]
+      subgraph EKS["EKS managed node group"]
+        KE["KEDA<br/>Prometheus<br/>active requests"]
+        GWp["gateway Pods<br/>1 / 2 / 4 replicas"]
+        SVp["access, metering<br/>mock-upstream Pods"]
+      end
+      subgraph PRIV["Private subnets"]
+        RDS[("RDS<br/>PostgreSQL")]
+        EC[("ElastiCache<br/>Redis")]
+      end
+    end
+  end
+  subgraph GH["GitHub (planned, #21)"]
+    GA["GitHub Actions<br/>main merge or v* tag"]
+    GR[("GHCR<br/>ghcr.io/bibi45c/gateflow-*<br/>tagged by commit SHA")]
+  end
+  USR --> ALB --> GWp --> SVp --> RDS
+  GWp --> EC
+  KE -.->|"scales"| GWp
+  GA --> GR
+  GR -->|"anonymous image pull"| EKS
+  classDef planned stroke-dasharray:5 5
+  class USR,ALB,KE,GWp,SVp,RDS,EC,GA,GR planned
+</pre></div>
+</section>
+
+<h2 class="part">C One S1 request and its charge</h2>
+
+<section id="en-6">
+<h3>6. S1 request sequence: one <code>POST /v1/messages</code> <span class="tag proposed">Proposed</span></h3>
+<p>Five phases from top to bottom: check the request, verify the key and channel, reserve (one retry on failure), relay SSE and collect usage, settle with a fresh context. An error response in an alt branch ends the call. Based on the #18 revision 3 draft (<code>.local/review-18/final-18-v2.md</code>), which is not approved yet.</p>
+<div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as Client OpenCode
+  participant G as gateway
+  participant A as access
+  participant M as metering
+  participant U as Upstream mock or Ollama
+  rect rgba(128,128,128,0.08)
+    Note over C,U: 1 Check request
+    C->>G: POST /v1/messages (gateway key)
+    Note over G: Checks in order: body at most 2 MiB, key present, JSON, model, max_tokens 1 to 32768
+    alt Check fails
+      G-->>C: 413 request_too_large / 401 authentication_error / 400 invalid_request_error
+    end
+  end
+  rect rgba(128,128,128,0.04)
+    Note over C,U: 2 Verify key and channel
+    G->>A: POST /keys/verify {key, model}, timeout 2 s
+    alt invalid_key
+      A-->>G: 401 invalid_key
+      G-->>C: 401 authentication_error
+    else model_not_allowed
+      A-->>G: 403 model_not_allowed
+      G-->>C: 403 permission_error
+    else Timeout or unreachable
+      G-->>C: 503 api_error
+    end
+    A-->>G: 200 tenant_id, price_version_id, channel
+    Note over G: Channel check of base_url and credential_env
+    opt Channel misconfigured
+      G-->>C: 500 api_error, no reservation
+    end
+  end
+  rect rgba(128,128,128,0.08)
+    Note over C,U: 3 Reserve
+    G->>M: POST /reservations {call_id, attempt_id 1, max_input_tokens, max_output_tokens}
+    M->>A: GET /price-versions/{id} (cacheable)
+    opt Timeout, 5xx or connection failure
+      G->>M: Retry once with the same ids
+    end
+    alt insufficient_balance or wallet_not_found
+      M-->>G: 409 or 404
+      G-->>C: 402 billing_error
+    else Still no reservation
+      G-->>C: 503 api_error, upstream not called
+    end
+    M-->>G: 201 reservation_id, max_cost
+    opt Client leaves before dispatch
+      Note over G: outcome not_dispatched, settle directly
+    end
+  end
+  rect rgba(128,128,128,0.04)
+    Note over C,U: 4 Relay
+    G->>U: POST /v1/messages (forwards only content-type, anthropic-version, anthropic-beta)
+    alt Upstream 400 or 429
+      U-->>G: 400 or 429
+      G-->>C: Passed through as is, outcome upstream_error
+    else Other non-2xx, or failure before first byte
+      G-->>C: 502 api_error, outcome upstream_error
+    else Streaming succeeds
+      U-->>G: message_start (input_tokens)
+      G-->>C: Relay each SSE event, no buffering
+      U-->>G: message_delta (output_tokens)
+      U-->>G: message_stop
+      G-->>C: message_stop, outcome completed
+    end
+    opt Client disconnects before message_stop
+      Note over G: outcome client_cancelled
+    end
+    opt Error after stream start or no message_stop
+      G-->>C: event error then close, outcome interrupted
+    end
+  end
+  rect rgba(128,128,128,0.08)
+    Note over C,U: 5 Settle
+    Note over G: Fresh context, 2 s per try, at most 2 retries, 6 s total at most
+    G->>M: POST /reservations/{id}/settle {input_tokens, output_tokens, outcome}
+    M-->>G: 200 charged, ledger_entry_id
+    opt Settlement finally fails
+      Note over G: error log with call_id and reservation_id, hold stays until UC6
+    end
+  end
+</pre></div>
+</section>
+
+<section id="en-7a">
+<h3>7a. Settlement outcome <span class="tag proposed">Proposed</span></h3>
+<p>Rules apply top to bottom; the first match wins. <code>not_dispatched</code> and <code>upstream_error</code> charge 0; the other three charge by token counts, see 7b. Source: #18 revision 3 draft.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+  S["Call ends"] --> Q1{"Request sent<br/>upstream?"}
+  Q1 -->|"no"| ND["not_dispatched<br/>charged = 0"]
+  Q1 -->|"yes"| Q2{"message_stop received,<br/>or 2xx non-stream body read?"}
+  Q2 -->|"yes"| CO["completed<br/>charge by counts"]
+  Q2 -->|"no"| Q3{"Client left first?"}
+  Q3 -->|"yes"| CC["client_cancelled<br/>charge by counts"]
+  Q3 -->|"no"| Q4{"Upstream non-2xx, or failed<br/>before first byte to client?"}
+  Q4 -->|"yes"| UE["upstream_error<br/>charged = 0"]
+  Q4 -->|"no"| IN["interrupted<br/>charge by counts"]
+</pre></div>
+</section>
+
+<section id="en-7b">
+<h3>7b. Charge calculation <span class="tag proposed">Proposed</span></h3>
+<p>Left to right: a null count becomes its cap, the price version gives the cost, and the result is capped at <code>max_cost</code>. Every outcome ends with one ledger entry that keeps the counts as sent. Source: #18 revision 3 draft.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph BILL["completed, client_cancelled, interrupted"]
+    direction LR
+    R["null input becomes max_input_tokens<br/>null output becomes max_output_tokens"] --> P["cost = input × input price<br/>+ output × output price"] --> CAP["charged =<br/>min(max_cost, cost)"]
+  end
+  subgraph ZERO["not_dispatched, upstream_error"]
+    Z["charged = 0<br/>token counts ignored"]
+  end
+  CAP --> L["Write one ledger entry<br/>keep counts as sent"]
+  Z --> L
+</pre></div>
+<p class="muted">Example: input price 3, output price 15 (micro-units per token), <code>max_input_tokens</code> 1,000, <code>max_output_tokens</code> 100, so <code>max_cost</code> = 1,000 × 3 + 100 × 15 = 4,500. Every row below has been recalculated.</p>
+<div class="tablebox"><table>
+<thead><tr><th>outcome</th><th>Case</th><th>input_tokens</th><th>output_tokens</th><th>Calculation</th><th>charged</th></tr></thead>
+<tbody>
+<tr><td><code>completed</code></td><td>Normal completion</td><td class="num">800</td><td class="num">50</td><td>2,400 + 750</td><td class="num">3,150</td></tr>
+<tr><td><code>completed</code></td><td>Reported counts above caps</td><td class="num">1,200</td><td class="num">100</td><td>min(4,500, 3,600 + 1,500)</td><td class="num">4,500</td></tr>
+<tr><td><code>interrupted</code></td><td>Stream broke after <code>message_start</code></td><td class="num">800</td><td class="num">null</td><td>2,400 + 100 × 15</td><td class="num">3,900</td></tr>
+<tr><td><code>interrupted</code></td><td>Input reported 0, no <code>message_delta</code></td><td class="num">null</td><td class="num">null</td><td>3,000 + 1,500</td><td class="num">4,500</td></tr>
+<tr><td><code>client_cancelled</code></td><td>No usage seen</td><td class="num">null</td><td class="num">null</td><td>3,000 + 1,500</td><td class="num">4,500</td></tr>
+<tr><td><code>upstream_error</code></td><td>Upstream 500</td><td class="num">0</td><td class="num">0</td><td>Always 0</td><td class="num">0</td></tr>
+<tr><td><code>not_dispatched</code></td><td>Client left before dispatch</td><td class="num">0</td><td class="num">0</td><td>Always 0</td><td class="num">0</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="en-8">
+<h3>8. Reservation state machine <span class="tag proposed">Proposed</span></h3>
+<p>A reservation moves from reserved to settled exactly once, enforced by a conditional update or a row lock. Replays by <code>(call_id, attempt_id)</code> or <code>reservation_id</code> return the recorded result. A hold left by a final reserve or settle failure is only reclaimed by UC6 (after the gate). Sources: #18 revision 3 draft, #27.</p>
+<div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  direction LR
+  state "Orphaned hold (awaits UC6)" as orphaned
+  [*] --> reserved : reserve 201<br/>balance update succeeds
+  reserved --> reserved : identical replay<br/>200 with recorded result
+  reserved --> settled : settle 200<br/>one ledger entry, release rest
+  settled --> settled : repeat settle<br/>recorded result, no new charge
+  reserved --> orphaned : final failure<br/>or gateway crash
+  orphaned --> settled : UC6 recovery (planned)
+  settled --> [*]
+  note left of reserved
+    A rejected reserve (409, 404) creates no reservation and no ledger entry
+    Same (call_id, attempt_id) with a different body returns 422
+    Concurrent duplicates wait for the first; replay check before balance check
+  end note
+  note left of orphaned
+    status in the database is still reserved
+    held balance is released only by UC6
+  end note
+</pre></div>
+</section>
+
+<h2 class="part">D Database</h2>
+
+<section id="en-9a">
+<h3>9a. Database ER: schema <code>access</code> <span class="tag proposed">Proposed</span></h3>
+<p>Read along the relationships: a tenant owns keys, a key references a price version, a key is granted channels through <code>api_key_channels</code>, and a channel lists the models it serves. Tables and columns come from agneshephzibahroche's plan comment on #26 (not implemented yet); <code>schema_migrations</code> comes from <code>pkg/pgmigrate</code> in PR #33. The plan names <code>name</code> and <code>base_url</code> without types; <code>text</code> is a guess.</p>
+<div class="diagram"><pre class="mermaid">
+erDiagram
+  tenants ||--o{ api_keys : "owns"
+  price_versions ||--o{ api_keys : "prices"
+  api_keys ||--o{ api_key_channels : "may use"
+  channels ||--o{ api_key_channels : "granted to"
+  channels ||--o{ channel_models : "serves"
+  tenants {
+    text id PK "tenant-00 to tenant-10"
+    text name
+    timestamptz created_at
+  }
+  api_keys {
+    text id PK
+    text tenant_id FK
+    bytea key_hmac UK "HMAC-SHA256, raw key never stored"
+    text price_version_id FK
+    timestamptz revoked_at "nullable"
+    timestamptz created_at
+  }
+  price_versions {
+    text id PK "e.g. pv-seed-1"
+    bigint input_micro_per_token
+    bigint output_micro_per_token
+    timestamptz created_at "immutable, trigger rejects update and delete"
+  }
+  api_key_channels {
+    text key_id PK, FK
+    text channel_id PK, FK
+  }
+  channels {
+    text id PK
+    text protocol "anthropic-messages"
+    text base_url
+    text credential_env "empty for mock and Ollama"
+    timestamptz created_at
+  }
+  channel_models {
+    text channel_id PK, FK
+    text model_pattern PK "exact name or prefix with star"
+  }
+  schema_migrations {
+    integer version PK
+    text name
+    timestamptz applied_at
+  }
+</pre></div>
+</section>
+
+<section id="en-9b">
+<h3>9b. Database ER: schema <code>accounting</code> <span class="tag proposed">Proposed</span></h3>
+<p>Read along the relationships: wallet → reservation → the ledger entry its settlement writes. Derived from #27 and the #18 revision 3 draft: a reservation keeps the prices and caps from creation time; a ledger entry keeps <code>call_id</code>, <code>attempt_id</code>, token counts as sent (null stays null), the outcome and <code>charged</code>. Column names not stated in the sources, such as <code>balance</code>, <code>held</code> and <code>status</code>, are guesses. There is no foreign key between the two schemas; <code>tenant_id</code> matches by string value only.</p>
+<div class="diagram"><pre class="mermaid">
+erDiagram
+  wallets ||--o{ reservations : "holds"
+  reservations ||--o| ledger_entries : "settles into one"
+  wallets ||--o{ ledger_entries : "records"
+  wallets {
+    text tenant_id PK "same value as access.tenants.id"
+    bigint balance "seed 100 million, tenant-00 is 0"
+    bigint held "current holds, available never below 0"
+    timestamptz updated_at
+  }
+  reservations {
+    text reservation_id PK
+    text call_id UK "unique together with attempt_id"
+    integer attempt_id "always 1 in S1"
+    text tenant_id FK
+    text price_version_id
+    bigint input_micro_per_token "captured at reserve"
+    bigint output_micro_per_token "captured at reserve"
+    bigint max_input_tokens
+    bigint max_output_tokens
+    bigint max_cost
+    text status "reserved or settled"
+    timestamptz created_at
+  }
+  ledger_entries {
+    text ledger_entry_id PK
+    text reservation_id FK "exactly one per reservation"
+    text tenant_id FK
+    text call_id
+    integer attempt_id
+    bigint input_tokens "as sent, nullable"
+    bigint output_tokens "as sent, nullable"
+    text outcome
+    bigint charged "may be 0"
+    timestamptz created_at "append only, corrections add rows"
+  }
+  schema_migrations {
+    integer version PK
+    text name
+    timestamptz applied_at
+  }
+</pre></div>
+</section>
+
+<h2 class="part">E Plan and gate</h2>
+
+<section id="en-10">
+<h3>10. S1 dependency graph</h3>
+<p>Issues in the S1 milestone with their blockers and owners, in columns from left to right by stage: can start now, blocked by #18 or #24, integration (#37), gate (#20). The red row is the critical path to the gate (#18 → #38 → #39 → #37 → #20); dotted edges are weak dependencies such as "used in compose". The edges #18 → #39, #38 → #37 and #25 → #20 are implied by the critical path and not drawn. #25 → #37 means the end-to-end test runs against the mock (not yet recorded as blocked-by on GitHub). #38 and #39 belong to parent issue #28; #36 and #37 belong to parent issue #19. Sources: <code>gh issue list --milestone "S1 First link + gate"</code> and each issue's Dependencies section; GitHub's blocked-by relations could not be read directly.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph C1["Can start now"]
+    I24["#24 schema and migrations<br/>bibi45c · PR #33 in review"]
+    I18["#18 internal API contracts<br/>bibi45c · design awaiting approval"]
+    I36["#36 Ollama setup<br/>and OpenCode guide<br/>liutongyaocn-web"]
+    I29["#29 S3 cost estimate<br/>KaenBin"]
+  end
+  subgraph C2["Blocked by #18 or #24"]
+    subgraph SVC["Service work"]
+      I26["#26 access<br/>key verify and prices<br/>agneshephzibahroche"]
+      I27["#27 metering<br/>reserve and settle<br/>liutongyaocn-web"]
+    end
+    I38["#38 relay /v1/messages<br/>bibi45c"]
+    I39["#39 verify, reserve, settle<br/>bibi45c"]
+    I25["#25 mock upstream<br/>KaenBin"]
+  end
+  subgraph C3["Integration"]
+    I37["#37 S1 end-to-end smoke<br/>KaenBin"]
+  end
+  subgraph C4["Gate"]
+    I20["#20 feasibility gate<br/>bibi45c · 10-14"]
+  end
+  I18 ==> I38 ==> I39 ==> I37 ==> I20
+  I24 --> SVC
+  I18 --> SVC
+  I26 -.->|"compose needs price version"| I27
+  SVC --> I37
+  I18 --> I25
+  I25 -->|"used in compose"| I37
+  I36 --> I37
+  I29 -->|"budget"| I20
+  classDef crit stroke:#c0392b,stroke-width:3px
+  class I18,I38,I39,I37,I20 crit
+  linkStyle 0,1,2,3 stroke:#c0392b,stroke-width:3px
+</pre></div>
+</section>
+
+<section id="en-11">
+<h3>11. Milestone timeline</h3>
+<p>Phases and key dates in 2026; the presentation is on 21 October, 09:00–09:40 SGT. The start date of S0 is not recorded, so it is drawn as a milestone only; as of 12 October one S0 issue is still open. Sources: <code>docs/feasibility-plan.md</code>, <code>gh api repos/bibi45c/gateflow/milestones</code>.</p>
+<div class="diagram"><pre class="mermaid">
+gantt
+  title GateFlow milestones 2026
+  dateFormat YYYY-MM-DD
+  axisFormat %m-%d
+  section Delivery
+  S0 skeleton merged :milestone, m0, 2026-10-12, 0d
+  S1 first link :s1, 2026-10-12, 2026-10-14
+  S1 feasibility gate :milestone, m1, 2026-10-14, 0d
+  S2 second protocol :s2, 2026-10-14, 2026-10-16
+  S3 cloud and scaling :s3, 2026-10-16, 2026-10-18
+  section Release and demo
+  Freeze, record backup demo, rehearse :f1, 2026-10-19, 1d
+  Tag v0.1.0 and rehearse :milestone, m2, 2026-10-20, 0d
+  Presentation 0900 SGT :milestone, m3, 2026-10-21, 0d
+  section Report
+  Final report due :milestone, m4, 2026-11-16, 0d
+</pre></div>
+</section>
+
+<section id="en-12">
+<h3>12. Feasibility gate decision (#20)</h3>
+<p>Go and No-go rules for the gate on 14 October, from top to bottom: both OpenCode runs must pass before S2 starts. A small-model failure is retried on another machine first, separating model problems from gateway problems. Reruns are written inside the nodes, so no edge points back. Sources: #20, <code>docs/feasibility-plan.md</code>.</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TB
+  R1["1. OpenCode + mock-upstream<br/>mock-coding scripted task"] --> K1{"Every tool call relayed,<br/>one settled ledger per request?"}
+  K1 -->|"yes"| R2["2. OpenCode + local Ollama<br/>small real task"]
+  K1 -->|"no"| FX1{"Fixable before 10-14?<br/>If yes: fix, rerun from 1"}
+  R2 --> K2{"At least one tool call<br/>relayed and settled?"}
+  K2 -->|"yes"| GO["Go: both passed<br/>start S2"]
+  K2 -->|"no, gateway cause"| FX2{"Fixable before 10-14?<br/>If yes: fix, rerun from 1"}
+  K2 -->|"no, model cause"| RT["Faster machine or Ollama Cloud<br/>rerun from 2"]
+  FX1 -->|"no"| NG["No-go<br/>review scope or estimate<br/>with the lecturer"]
+  FX2 -->|"no"| NG
+  GO --> REC["Record in #20<br/>session export, gateway logs<br/>ledger query, versions<br/>person-days vs 4-day budget<br/>#29 budget, deviations"]
+  NG --> REC
+</pre></div>
+</section>
+
+</main>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+(function () {
+  var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({
+    startOnLoad: true,
+    securityLevel: "strict",
+    theme: dark ? "dark" : "default",
+    flowchart: { curve: "basis", nodeSpacing: 40, rankSpacing: 55 },
+    gantt: { useWidth: 960 }
+  });
+
+  var KEY = "gateflow-diagrams-lang";
+  var buttons = document.querySelectorAll(".switch button");
+
+  function apply(lang) {
+    if (lang !== "en") { lang = "zh"; }
+    document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+    var items = document.querySelectorAll("[data-lang]");
+    for (var i = 0; i < items.length; i++) {
+      var el = items[i];
+      var on = el.getAttribute("data-lang") === lang;
+      if (el.classList.contains("lang-block")) {
+        el.classList.toggle("lang-off", !on);
+        el.setAttribute("aria-hidden", on ? "false" : "true");
+      } else {
+        el.classList.toggle("nav-off", !on);
+      }
+    }
+    for (var j = 0; j < buttons.length; j++) {
+      buttons[j].setAttribute("aria-pressed", buttons[j].getAttribute("data-set") === lang ? "true" : "false");
+    }
+  }
+
+  for (var k = 0; k < buttons.length; k++) {
+    buttons[k].addEventListener("click", function () {
+      var lang = this.getAttribute("data-set");
+      apply(lang);
+      try { localStorage.setItem(KEY, lang); } catch (e) {}
+    });
+  }
+
+  var saved = null;
+  try { saved = localStorage.getItem(KEY); } catch (e) {}
+  apply(saved === "en" ? "en" : "zh");
+})();
+</script>
+</body>
+</html>
