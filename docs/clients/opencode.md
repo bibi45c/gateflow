@@ -4,8 +4,9 @@
 to a model over the Anthropic Messages API in two ways:
 
 - **Through the gateway.** OpenCode calls FlowGate with a gateway key. This is the
-  set-up the project is built for. It needs the seeded stack and the gateway relay,
-  which are not on `main` yet; the check through the gateway belongs to
+  set-up the project is built for. The gateway relay and its key check are on `main`
+  (#54, #55); it also needs the access and metering endpoints (#26, #27) and the
+  seeded stack. The check through the gateway belongs to
   [issue #37](https://github.com/bibi45c/gateflow/issues/37).
 - **Direct to Ollama.** OpenCode calls a local Ollama with no gateway in between. Run
   the [direct check](#direct-check) first. It shows whether OpenCode, Ollama and the
