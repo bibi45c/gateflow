@@ -60,6 +60,9 @@ paths:
         is logged, and no reservation is made. In S1, only the access seed command
         writes channels and price versions, and it rejects values that break these
         rules.
+
+        When several of the key's channels serve `model`, verify returns the one with
+        the lowest `id`. S1 has no routing.
       parameters:
         - $ref: '#/components/parameters/RequestId'
       requestBody:
@@ -151,9 +154,10 @@ paths:
         Prices are integers from 0 to 1,000,000 micro-units per token. Access
         enforces this when a price version is stored.
 
-        Metering calls this at reserve. It gives up after 1 s and then answers its
-        caller 503 `dependency_unavailable`; it answers 500 `internal_error` when this
-        call returns 404 or 401, or a price outside 0 to 1,000,000.
+        Metering calls this at reserve. It answers its caller 503
+        `dependency_unavailable` when this call does not answer within 1 s or returns
+        a 5xx, and 500 `internal_error` when it returns 404 or 401, or a price outside
+        0 to 1,000,000.
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - name: id
@@ -210,11 +214,12 @@ components:
     RequestId:
       name: X-Request-Id
       in: header
-      required: true
+      required: false
       description: |
         The gateway request id, `req_<uuid>`. Every internal caller sends it,
         including metering when it calls access; errors return it as
-        `error.request_id`.
+        `error.request_id`. The header is optional for access: when it is missing,
+        access generates its own id and uses it in the error body and logs.
       schema:
         type: string
       example: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34

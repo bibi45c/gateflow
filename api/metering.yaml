@@ -69,8 +69,9 @@ paths:
 
         **Price.** Metering fetches the price version from access
         (`GET /internal/v1/price-versions/{id}`) and computes the amounts itself. It
-        answers 503 `dependency_unavailable` when access does not answer within 1 s,
-        and 500 `internal_error` when access answers with 404 or 401, or with a price
+        answers 503 `dependency_unavailable` when access does not answer within 1 s
+        or answers with a 5xx, and 500 `internal_error` when access answers with 404
+        or 401, or with a price
         outside 0 to 1,000,000 micro-units per token. A replay never fetches the price
         again.
 
@@ -237,7 +238,7 @@ paths:
         '503':
           description: |
             `dependency_unavailable`: access did not answer the price lookup within
-            1 s, or the metering database is unavailable.
+            1 s or answered it with a 5xx, or the metering database is unavailable.
           content:
             application/json:
               schema:
@@ -612,10 +613,12 @@ components:
     RequestId:
       name: X-Request-Id
       in: header
-      required: true
+      required: false
       description: |
         The gateway request id, `req_<uuid>`. Metering sends the same value when it
-        calls access; errors return it as `error.request_id`.
+        calls access; errors return it as `error.request_id`. The header is optional
+        for metering: when it is missing, metering generates its own id and uses it
+        in the error body and logs.
       schema:
         type: string
       example: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4

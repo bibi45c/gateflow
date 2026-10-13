@@ -37,7 +37,7 @@ Access and metering answer every error with this body:
 | metering | 409 | `insufficient_balance` | At reserve, the wallet's available balance is below `max_cost`. |
 | metering | 422 | `idempotency_conflict` | An earlier reserve with the same (`call_id`, `attempt_id`), or an earlier settle of the same reservation, had different content. |
 | metering | 500 | `internal_error` | An unexpected failure; or, at reserve, access answered the price lookup with 404 or 401, or the price version is outside 0 to 1,000,000 micro-units per token. |
-| metering | 503 | `dependency_unavailable` | The metering database is unavailable; or, at reserve, access did not answer the price lookup within 1 s. |
+| metering | 503 | `dependency_unavailable` | The metering database is unavailable; or, at reserve, access did not answer the price lookup within 1 s or answered it with a 5xx. |
 
 ## Public errors raised by the gateway
 
