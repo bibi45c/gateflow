@@ -35,6 +35,8 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 `metering` are healthy, and create the test tenants `tenant-00` to `tenant-10`, their
 keys, the `mock` and `ollama` channels and the wallets (`tenant-00` has no balance);
 the gateway starts after them, and a repeated `up` changes nothing.
+Each tenant's key, valid only for this local stack, is in the seed log:
+`docker compose -p <name> -f deploy/compose/compose.yaml logs seed-access`.
 
 ## Ollama profile
 
