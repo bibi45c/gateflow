@@ -50,8 +50,11 @@ info:
       charge 0, although a non-2xx reply does not strictly prove the upstream did no
       work.
     - Prices are whole micro-units per token, with no separate cache or reasoning
-      token prices: cache-read and cache-creation input tokens are charged at the
-      full input price, and thinking tokens arrive inside `output_tokens`.
+      token prices. On `anthropic-messages`, cache-read and cache-creation input
+      tokens are charged at the full input price. On `openai-responses`,
+      `input_tokens_details.cached_tokens` is already part of `input_tokens`, so it
+      is charged at the full input price too. Thinking tokens arrive inside
+      `output_tokens`.
     - On Ollama, the input count in `message_start` is an estimate, so a stream that
       ends before its `message_delta` is charged on that estimate.
     - Metering trusts the gateway's `tenant_id` and `price_version_id`.
@@ -95,9 +98,10 @@ paths:
           - `anthropic-messages`: `max_tokens`, required, only as an integer from 1
             to 32,768.
           - `openai-responses`: `max_output_tokens`, optional, only as an integer
-            from 1 to 32,768. When it is absent, the bound is 32,768 and the gateway
-            writes `"max_output_tokens": 32768` into the request it sends upstream,
-            so the charge stays bounded.
+            from 1 to 32,768. An explicit `null` counts as absent. When it is
+            absent, the bound is 32,768 and the gateway writes
+            `"max_output_tokens": 32768` into the request it sends upstream, so the
+            charge stays bounded.
         - The gateway reserves with `max_input_tokens` = request body size in bytes (at
           most 2,097,152) and `max_output_tokens` = the output bound. Bytes are an
           upper bound on tokens for text and tool content, which is all S1 accepts;
@@ -329,14 +333,18 @@ paths:
         1. `not_dispatched`: no upstream request was sent, including when the
            connection to the upstream could not be opened.
         2. `completed`: the end event arrived, or a 2xx non-streaming body was read
-           in full, even if the client then left.
+           in full, even if the client then left. On `openai-responses`, a body
+           whose `status` is `incomplete` is `completed`, as on a stream; a body
+           whose `status` is `failed` is not.
         3. `client_cancelled`: the client disconnected first.
         4. `upstream_error`: the upstream answered with a non-2xx status before any
            output. Only this case is taken as proof that no tokens were used.
         5. `interrupted`: anything else, including a request that was sent but got no
            reply (connection reset or timeout), a stream that ends without its end
-           event, an upstream `event: error` after the stream started, and a
-           `response.failed` event.
+           event, an upstream `event: error` after the stream started, a
+           `response.failed` event, and a 2xx non-streaming Responses body whose
+           `status` is `failed`. That body is charged on its `usage` when it has
+           one.
 
         **Idempotency and concurrency.**
 

@@ -80,7 +80,7 @@ The gateway's own Responses `error` event carries the type in `code`.
 
 ```text
 event: error
-data: {"type": "error", "code": "api_error", "message": "Internal server error.", "param": null, "sequence_number": 12}
+data: {"type": "error", "code": "api_error", "message": "The upstream model service failed.", "param": null, "sequence_number": 12}
 ```
 
 - `/v1/responses` is stateless. The gateway keeps no response state, so it rejects

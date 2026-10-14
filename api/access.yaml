@@ -316,9 +316,9 @@ components:
             - anthropic-messages
             - openai-responses
           description: |
-            The protocol the upstream speaks. Verify returns only a channel whose
-            `protocol` equals the request's, and the gateway's channel check also
-            requires it to equal the protocol of the endpoint the client called.
+            The protocol the upstream speaks. Verify picks the channel by it (see
+            `verifyKey`), and the gateway's channel check also requires it to equal
+            the protocol of the endpoint the client called.
             Access migration `0002` widens the `CHECK` on `channels.protocol` from
             `anthropic-messages` alone to both values. It only adds a value, so
             existing rows stay valid and the previous gateway image keeps working
@@ -359,7 +359,7 @@ components:
           format: int64
           minimum: 0
           maximum: 1000000
-          description: Price of one input token, in micro-units. Cache-read and cache-creation input tokens are charged at this price too.
+          description: Price of one input token, in micro-units. Cached input tokens on both protocols are charged at this price too, a recorded S1 deviation (see `api/metering.yaml`).
         output_micro_per_token:
           type: integer
           format: int64
