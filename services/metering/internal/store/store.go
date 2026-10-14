@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bibi45c/gateflow/pkg/pgmigrate"
+	"github.com/bibi45c/gateflow/pkg/pgurl"
 	"github.com/bibi45c/gateflow/services/metering/migrations"
 )
 
@@ -24,17 +25,21 @@ const OpenTimeout = 30 * time.Second
 func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	ctx, cancel := context.WithTimeout(ctx, OpenTimeout)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, url)
+	cfg, err := pgurl.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("store: connect: %w", err)
 	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("store: connect: %w", pgurl.Redact(err, cfg.ConnConfig.Password))
+	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("store: connect: %w", err)
+		return nil, fmt.Errorf("store: connect: %w", pgurl.Redact(err, cfg.ConnConfig.Password))
 	}
 	if _, err := Migrate(ctx, pool); err != nil {
 		pool.Close()
-		return nil, err
+		return nil, pgurl.Redact(err, cfg.ConnConfig.Password)
 	}
 	return pool, nil
 }
