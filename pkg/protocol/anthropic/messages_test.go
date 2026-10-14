@@ -57,7 +57,7 @@ func TestParseRequestAbsentAndNullMembers(t *testing.T) {
 		{`{"model":null,"max_tokens":null,"stream":null}`, "", "absent", false},
 		{`{}`, "", "absent", false},
 		{" \n{\"model\":\"m\",\"stream\":true}\n ", "m", "absent", true},
-		{`{"Model":"x","MAX_TOKENS":5,"Stream":true,"model":"m"}`, "m", "absent", false},
+		{`{"Metadata":{},"METADATA":[],"model":"m","max_tokens_x":5}`, "m", "absent", false},
 		{`{"model":"m","max_tokens":9223372036854775807}`, "m", "9223372036854775807", false},
 	}
 	for _, c := range cases {
@@ -96,6 +96,40 @@ func TestParseRequestRejectsMalformedBodies(t *testing.T) {
 		`{"model":"m","messages":[secret-value]}`,
 		"{\"model\":\"m\xff\"}",
 		"\xef\xbb\xbf{\"model\":\"m\"}",
+		`{"Model":"x","MAX_TOKENS":5,"Stream":true,"model":"m"}`,
+	}
+	for _, body := range bodies {
+		_, err := ParseRequest([]byte(body))
+		if !errors.Is(err, ErrMalformed) {
+			t.Errorf("%q: got %v, want ErrMalformed", body, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "secret") {
+			t.Errorf("%q: the error quotes the input: %v", body, err)
+		}
+	}
+}
+
+// A name that equals model, max_tokens or stream only under case folding makes the
+// body malformed, before or after the exact name or alone: an upstream that matches
+// names without case could read a value the gateway did not. U+212A, the Kelvin sign,
+// folds to k and U+017F, the long s, to s.
+func TestParseRequestRejectsCaseVariants(t *testing.T) {
+	bodies := []string{
+		`{"model":"m","Model":"secret-value"}`,
+		`{"MODEL":"secret-value","model":"m","max_tokens":16}`,
+		`{"mODEL":"secret-value","max_tokens":16}`,
+		`{"model":"m","max_tokens":16,"MAX_TOKENS":120}`,
+		`{"model":"m","Max_Tokens":120,"max_tokens":16}`,
+		`{"model":"m","MAX_TOKENS":120}`,
+		"{\"model\":\"m\",\"max_tokens\":16,\"MAX\\u005fTOKENS\":120}",
+		"{\"model\":\"m\",\"max_tokens\":16,\"max_to\U0000212aens\":120}",
+		"{\"model\":\"m\",\"max_to\\u212aens\":120,\"max_tokens\":16}",
+		`{"model":"m","max_tokens":16,"stream":false,"Stream":true}`,
+		`{"model":"m","STREAM":true,"stream":false,"max_tokens":16}`,
+		`{"model":"m","max_tokens":16,"sTREAM":true}`,
+		"{\"model\":\"m\",\"max_tokens\":16,\"\U0000017ftream\":true}",
+		"{\"model\":\"m\",\"\\u017ftream\":true,\"stream\":false}",
 	}
 	for _, body := range bodies {
 		_, err := ParseRequest([]byte(body))

@@ -245,7 +245,7 @@ func TestUsageTellsZeroFromAbsent(t *testing.T) {
 			"input=absent output=absent total=7 cached=absent reasoning=absent"},
 		{"body without usage", ResponseUsage, `{"id":"resp_1","status":"completed","output":[]}`,
 			"input=absent output=absent total=absent cached=absent reasoning=absent"},
-		{"case variants are other members", ResponseUsage, `{"Usage":{"input_tokens":9},"usage":{"Input_Tokens":9,"output_tokens":1}}`,
+		{"similar names are other members", ResponseUsage, `{"usages":{"input_tokens":9},"usage":{"input_token":9,"output_tokens":1}}`,
 			"input=absent output=1 total=absent cached=absent reasoning=absent"},
 	}
 	for _, c := range cases {
@@ -280,6 +280,7 @@ func TestUsageRejectsMalformedData(t *testing.T) {
 		{"details not an object", ResponseUsage, `{"usage":{"input_tokens_details":[1]}}`},
 		{"string detail count", ResponseUsage, `{"usage":{"output_tokens_details":{"reasoning_tokens":"1"}}}`},
 		{"usage not an object", ResponseUsage, `{"usage":[1]}`},
+		{"case variants", ResponseUsage, `{"Usage":{"input_tokens":9},"usage":{"Input_Tokens":9,"output_tokens":1}}`},
 		{"truncated", EventUsage, `{"type":"response.completed","response":{"usage":{"output_tokens":1}}`},
 	}
 	for _, c := range cases {
