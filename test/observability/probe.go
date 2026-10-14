@@ -167,7 +167,9 @@ func startProbe(handler http.Handler) (string, func() error, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- server.Serve(ctx, listener, handler) }()
+	go func() {
+		done <- server.Serve(ctx, listener, handler, server.Shutdown{Timeout: server.ShutdownTimeout})
+	}()
 	stop := func() error {
 		cancel()
 		select {
