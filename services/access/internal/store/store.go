@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bibi45c/gateflow/pkg/pgmigrate"
+	"github.com/bibi45c/gateflow/pkg/pgurl"
 	"github.com/bibi45c/gateflow/services/access/migrations"
 )
 
@@ -20,21 +21,25 @@ const Schema = "access"
 const OpenTimeout = 30 * time.Second
 
 // Open connects to the database at url, applies the pending migrations and returns
-// the pool, which the caller closes.
+// the pool, which the caller closes. Errors never show the password.
 func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	ctx, cancel := context.WithTimeout(ctx, OpenTimeout)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, url)
+	cfg, err := pgurl.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("connect to the database: %w", err)
 	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("connect to the database: %w", pgurl.Redact(err, cfg.ConnConfig.Password))
+	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("connect to the database: %w", err)
+		return nil, fmt.Errorf("connect to the database: %w", pgurl.Redact(err, cfg.ConnConfig.Password))
 	}
 	if _, err := Migrate(ctx, pool); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("migrate schema %s: %w", Schema, err)
+		return nil, fmt.Errorf("migrate schema %s: %w", Schema, pgurl.Redact(err, cfg.ConnConfig.Password))
 	}
 	return pool, nil
 }
