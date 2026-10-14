@@ -13,6 +13,12 @@ const readSize = 4096
 // byteOrderMark may start a stream; the SSE rules ignore it.
 var byteOrderMark = []byte("\xef\xbb\xbf")
 
+// indexLineEnd returns the index of the first "\r" or "\n" in b, or -1. Reader
+// searches buf with it alone, so tests can swap it to count the bytes searched.
+var indexLineEnd = func(b []byte) int {
+	return bytes.IndexAny(b, "\r\n")
+}
+
 // Event is one block of a server-sent event stream: its lines up to and including
 // the blank line that ends it.
 type Event struct {
@@ -36,6 +42,7 @@ type Reader struct {
 	chunk   []byte
 	buf     []byte // read from src but not yet returned
 	scanned int    // buf[:scanned] holds whole lines of the next block, none blank
+	next    int    // buf[scanned:next] starts a line and holds no line ending
 	err     error  // the error that ended src, once it has
 	started bool   // a block was returned, so a leading byte order mark is behind
 }
@@ -64,16 +71,25 @@ func (r *Reader) Next() (Event, error) {
 
 // blockLen scans buf up to the blank line that ends the next block and returns the
 // block's length. It reports false while more input is needed, which includes a buf
-// ending in "\r" that a following "\n" would belong to.
+// ending in "\r" that a following "\n" would belong to. It searches each byte once,
+// from next, so a long line arriving over many reads costs time linear in its length;
+// only that final "\r" is searched again once more input arrives.
 func (r *Reader) blockLen() (int, bool) {
 	for {
-		rest := r.buf[r.scanned:]
-		i := bytes.IndexAny(rest, "\r\n")
-		if i < 0 || (rest[i] == '\r' && i+1 == len(rest) && r.err == nil) {
+		i := indexLineEnd(r.buf[r.next:])
+		if i < 0 {
+			r.next = len(r.buf)
 			return 0, false
 		}
-		r.scanned += i + lineEndLen(rest[i:])
-		if i == 0 {
+		end := r.next + i
+		if r.buf[end] == '\r' && end+1 == len(r.buf) && r.err == nil {
+			r.next = end
+			return 0, false
+		}
+		blank := end == r.scanned
+		r.scanned = end + lineEndLen(r.buf[end:])
+		r.next = r.scanned
+		if blank {
 			return r.scanned, true
 		}
 	}
@@ -83,7 +99,7 @@ func (r *Reader) blockLen() (int, bool) {
 // Event.
 func (r *Reader) take(n int) Event {
 	raw := bytes.Clone(r.buf[:n])
-	r.buf, r.scanned = r.buf[n:], 0
+	r.buf, r.scanned, r.next = r.buf[n:], 0, 0
 	fields := raw
 	if !r.started {
 		fields = bytes.TrimPrefix(raw, byteOrderMark)
@@ -100,7 +116,7 @@ func (r *Reader) rest() (Event, error) {
 		return Event{}, r.err
 	}
 	event := Event{Raw: bytes.Clone(r.buf)}
-	r.buf, r.scanned = nil, 0
+	r.buf, r.scanned, r.next = nil, 0, 0
 	if errors.Is(r.err, io.EOF) {
 		return event, io.ErrUnexpectedEOF
 	}
