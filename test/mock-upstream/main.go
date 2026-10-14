@@ -1,7 +1,8 @@
 // Command mock-upstream is a controllable fake model provider for load and failure
-// tests. It serves POST /v1/messages in the Anthropic Messages protocol, with a fixed
-// reply for each mock model name; package internal/mock lists the scenarios and the
-// environment variables that pace the streams.
+// tests. It serves POST /v1/messages in the Anthropic Messages protocol and POST
+// /v1/responses in the OpenAI Responses protocol, with a fixed reply for each mock
+// model name; package internal/mock lists the scenarios and the environment variables
+// that pace the streams.
 package main
 
 import (
@@ -24,4 +25,5 @@ func register(mux *http.ServeMux) {
 		os.Exit(1)
 	}
 	mux.Handle("POST /v1/messages", mock.NewHandler(timing))
+	mux.Handle("POST /v1/responses", mock.NewResponsesHandler(timing))
 }

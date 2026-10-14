@@ -268,7 +268,7 @@ func TestToolInputKeepsOnlyDeclaredStringMembers(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &def.InputSchema); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(toolInput(def)), `{"filePath":1,"path":"calc.py"}`; got != want {
+	if got, want := string(toolInput(def, "")), `{"filePath":1,"path":"calc.py"}`; got != want {
 		t.Errorf("input %s, want %s", got, want)
 	}
 	// A tool whose schema is not an object reads as having no constraints.
@@ -276,7 +276,7 @@ func TestToolInputKeepsOnlyDeclaredStringMembers(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"name":"bash","input_schema":true}`), &loose); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(toolInput(loose)),
+	if got, want := string(toolInput(loose, "")),
 		`{"command":"python -m unittest","description":"Run the tests"}`; got != want {
 		t.Errorf("input %s, want %s", got, want)
 	}
