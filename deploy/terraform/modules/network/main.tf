@@ -1,3 +1,7 @@
+locals {
+  # Preserve the default /24 layout, but never make ALB subnets smaller than /27.
+  subnet_bits = min(8, 27 - try(tonumber(split("/", var.vpc_cidr)[1]), 16))
+}
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
@@ -7,7 +11,7 @@ resource "aws_vpc" "main" {
 resource "aws_subnet" "public" {
   count                   = 2
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = cidrsubnet(var.vpc_cidr, 8, count.index)
+  cidr_block              = cidrsubnet(var.vpc_cidr, local.subnet_bits, count.index)
   availability_zone       = var.availability_zones[count.index]
   map_public_ip_on_launch = false
   tags                    = merge(var.tags, { Name = "${var.name}-public-${count.index}", "kubernetes.io/role/elb" = "1" })
@@ -15,7 +19,7 @@ resource "aws_subnet" "public" {
 resource "aws_subnet" "private" {
   count                   = 2
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = cidrsubnet(var.vpc_cidr, 8, count.index + 2)
+  cidr_block              = cidrsubnet(var.vpc_cidr, local.subnet_bits, count.index + 2)
   availability_zone       = var.availability_zones[count.index]
   map_public_ip_on_launch = false
   tags                    = merge(var.tags, { Name = "${var.name}-private-${count.index}", "kubernetes.io/role/internal-elb" = "1" })

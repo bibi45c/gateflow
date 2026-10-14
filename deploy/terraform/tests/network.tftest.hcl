@@ -47,3 +47,29 @@ run "invalid_cidr" {
   }
   expect_failures = [var.vpc_cidr]
 }
+
+run "one_az_rejected" {
+  command = plan
+  module { source = "./modules/network" }
+  variables {
+    name               = "gateflow-test"
+    availability_zones = ["ap-southeast-1a"]
+    tags               = {}
+  }
+  expect_failures = [var.availability_zones]
+}
+
+run "minimum_alb_subnets" {
+  command = apply
+  module { source = "./modules/network" }
+  variables {
+    name               = "gateflow-test"
+    vpc_cidr           = "10.40.0.0/20"
+    availability_zones = ["ap-southeast-1a", "ap-southeast-1b"]
+    tags               = {}
+  }
+  assert {
+    condition     = aws_subnet.public[0].cidr_block == "10.40.0.0/27" && aws_subnet.private[1].cidr_block == "10.40.0.96/27"
+    error_message = "The smallest allowed VPC must still produce /27 or larger ALB subnets."
+  }
+}

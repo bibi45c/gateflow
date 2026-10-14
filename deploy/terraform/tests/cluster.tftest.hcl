@@ -44,6 +44,14 @@ run "isolated_nodes" {
     condition     = aws_security_group.nodes["services"].id != aws_security_group.nodes["load-generator"].id
     error_message = "Generator and services require different security groups."
   }
+  assert {
+    condition     = jsondecode(aws_iam_role.controller.assume_role_policy).Statement[0].Condition.StringEquals["oidc.eks.ap-southeast-1.amazonaws.com/id/TEST:sub"] == "system:serviceaccount:kube-system:aws-load-balancer-controller"
+    error_message = "IRSA trust must be limited to the intended controller service account."
+  }
+  assert {
+    condition     = aws_eks_cluster.main.upgrade_policy[0].support_type == "STANDARD"
+    error_message = "Prevent automatic extended-support charges."
+  }
 }
 run "reject_public_admin" {
   command = plan
@@ -56,4 +64,18 @@ run "reject_empty_admin" {
   module { source = "./modules/cluster" }
   variables { operator_cidrs = [] }
   expect_failures = [var.operator_cidrs]
+}
+
+run "reject_old_kubernetes" {
+  command = plan
+  module { source = "./modules/cluster" }
+  variables { kubernetes_version = "1.34" }
+  expect_failures = [var.kubernetes_version]
+}
+
+run "reject_empty_principal" {
+  command = plan
+  module { source = "./modules/cluster" }
+  variables { operator_principal_arn = "" }
+  expect_failures = [var.operator_principal_arn]
 }

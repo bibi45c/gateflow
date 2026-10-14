@@ -8,7 +8,7 @@ Local validation is not evidence of AWS deployability or a spending approval.
 
 ## Local checks (no AWS credentials)
 
-Use Terraform 1.14.4 (tested), >=1.9,<2. Providers are locked in
+Use Terraform 1.14.4 (tested), >=1.10,<2 (native S3 locking requires 1.10). Providers are locked in
 [.terraform.lock.hcl](.terraform.lock.hcl). From the repository root:
 
 ```text
@@ -59,6 +59,8 @@ Default protected mode requires an explicit final snapshot name. Terraform state
 plans and local tfvars/backend files must never be committed.
 
 The VPC has two public subnets for the ALB and two private subnets for nodes/RDS.
+Derived subnets are at least /27; the default /16 VPC uses /24 subnets. Smaller
+subnets still need a Pod/IP-capacity review before use under load.
 One NAT serves both private subnets: a cost trade-off with a single-AZ egress
 failure point and possible cross-AZ charges. RDS is Single-AZ, not publicly
 accessible, and accepts 5432 only from the service-node SG. The generator has its
