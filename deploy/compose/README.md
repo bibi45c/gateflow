@@ -6,8 +6,9 @@ stop commands are at the top of that file; the checks are in
 
 ## Configuration
 
-Every service reads its settings from these variables. Compose sets all of them, so
-a service issue adds code that reads a variable, not a compose change. The defaults
+Every service reads its settings from these variables. Compose sets all of them
+except the `SHUTDOWN_*` pair, whose defaults suit it, so a service issue adds code
+that reads a variable, not a compose change. The defaults
 are local-only test values, not credentials: never reuse them outside this stack.
 Override a value in `deploy/compose/.env`, which Git ignores.
 
@@ -27,6 +28,8 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `MOCK_FIRST_EVENT_DELAY_MS` | mock-upstream | `0` | Delay before the first stream event |
 | `MOCK_EVENT_INTERVAL_MS` | mock-upstream | `0` | Delay between stream events |
 | `POSTGRES_PASSWORD` | postgres | `gateflow-local-only` | Password of the `gateflow` superuser |
+| `SHUTDOWN_DRAIN_DELAY` | every service and the mock upstream; compose leaves it unset | `0s` | Go duration a stopping process keeps serving, with `/readyz` answering 503, before it closes its listener |
+| `SHUTDOWN_TIMEOUT` | every service and the mock upstream; compose leaves it unset | `10s` | Go duration a stopping process waits for in-flight requests before it closes them; `stop_grace_period` must exceed the drain delay plus this |
 | `*_PORT` | compose | 8080, 8081, 8082, 8090, 5432, 6379; 11434 for `OLLAMA_PORT` | Host ports, bound to localhost only |
 
 ## Seed services
