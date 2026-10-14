@@ -30,6 +30,15 @@ git fetch origin
 git worktree add --no-track -b <type>/<slug> "../GateFlowWorktrees/<slug>" <base commit>
 ```
 
+**Lone writer.** If [Branches and worktrees](../../../.github/CONTRIBUTING.md#branches-and-worktrees)
+allows you to work in the main checkout, confirm that `git status --short` prints
+nothing and that no other session uses it, then:
+
+```text
+git fetch origin
+git switch -c <type>/<slug> <base commit>
+```
+
 **Resume.** Confirm that you are the only writer, that the branch and head match the
 handoff, and that the issue version and owner are unchanged (command under
 [Delegating work](../../../.github/CONTRIBUTING.md#delegating-work)). If the owner or

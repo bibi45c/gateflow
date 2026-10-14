@@ -43,8 +43,8 @@ This file holds only what every session needs. Each detailed rule lives in one p
   [Authorization](.github/CONTRIBUTING.md#authorization).
 - End every comment you post with `_Posted by an agent._`. Never post text that
   authorizes, approves, delegates or designates, from any account.
-- One writer per worktree and per branch. Work only in your assigned worktree;
-  commits and rebases of your own branch there are yours.
+- One writer per worktree and per branch. Work only in your assigned worktree or
+  checkout; commits and rebases of your own branch there are yours.
 - Shared Git operations (fetch, push, stash, branch and tag changes, config,
   `worktree prune`, `gc`) and remote writes belong to the coordinator, unless the
   owner delegated them to you directly. Neither of you may pass them on. Only the

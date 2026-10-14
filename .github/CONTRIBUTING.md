@@ -35,6 +35,8 @@ personal data. Keep drafts and local notes in `.local/`, which Git ignores.
   owner.
 - **Writer**: the single person or session allowed to change a given worktree and
   branch.
+- **Active checkout**: a checkout or worktree that has uncommitted changes, or that a
+  session or process is using.
 - **Reviewer**: reads and reports; never edits the change under review.
 - **Head / base**: the PR's latest commit, and the current tip of the branch it
   targets.
@@ -101,8 +103,9 @@ personal data. Keep drafts and local notes in `.local/`, which Git ignores.
 ## Roles and ownership
 
 - Each issue has one owner.
-- Each worktree and branch has one writer at a time. Separate writable tasks use
-  separate worktrees.
+- Each worktree and branch has one writer at a time. Writable tasks that run at the
+  same time in one clone use separate worktrees; a lone writer may use the main
+  checkout instead (see [Branches and worktrees](#branches-and-worktrees)).
 - Reviewers stay read-only.
 - Shared Git operations and remote writes belong to the coordinator. Only the
   integrator merges into `main`.
@@ -207,6 +210,14 @@ opens a bug issue that blocks Done, and records which on the issue.
   never inside the repository. Create them from the main checkout's root, which is the
   first `worktree` line that `git worktree list --porcelain` prints. Use `--porcelain`
   whenever you copy a path: plain `git worktree list` escapes non-ASCII characters.
+- Only tools that create their own worktrees, such as Claude Code's `--worktree`, may
+  keep them under `.claude/worktrees/`. List that path in `.git/info/exclude`, so it
+  never shows in `git status`; the same cleanup rules apply.
+- When you are the only writer in this clone, you may work in the main checkout
+  instead of a worktree. Start only when `git status --short` prints nothing and no
+  other session or process uses the checkout, then
+  `git switch -c <type>/<slug> <base commit>`. A second writer, such as a delegated
+  agent or a parallel session, always gets its own worktree.
 - Each worktree has its own files, index and HEAD. Objects, branches, tags, stash and
   most configuration are shared, which is why shared Git operations belong to the
   coordinator.
