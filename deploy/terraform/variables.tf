@@ -49,3 +49,28 @@ variable "node_disk_gb" {
   type    = number
   default = 20
 }
+
+variable "database_instance_class" {
+  type    = string
+  default = "db.t4g.small"
+}
+variable "database_storage_gb" {
+  type    = number
+  default = 20
+}
+variable "database_engine_version" {
+  type    = string
+  default = "17"
+}
+variable "database_deletion_protection" {
+  type    = bool
+  default = true
+}
+variable "database_skip_final_snapshot" {
+  type    = bool
+  default = false
+}
+variable "database_final_snapshot_identifier" {
+  type    = string
+  default = ""
+}

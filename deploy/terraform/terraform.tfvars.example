@@ -1,0 +1,17 @@
+# Non-secret EXAMPLE. bibi45c must replace account, role, CIDRs and AZs.
+aws_account_id = "123456789012"
+operator_principal_arn = "arn:aws:iam::123456789012:role/REPLACE_OPERATOR_ROLE"
+operator_cidrs = ["203.0.113.10/32"]
+availability_zones = ["ap-southeast-1a", "ap-southeast-1b"]
+region = "ap-southeast-1"
+environment = "s3"
+service_instance_type = "m6i.large"
+service_node_count = 3
+generator_instance_type = "c6i.xlarge"
+generator_node_count = 1
+node_disk_gb = 20
+database_instance_class = "db.t4g.small"
+database_storage_gb = 20
+# Explicit disposable experiment mode, only after evidence has been exported.
+database_deletion_protection = false
+database_skip_final_snapshot = true

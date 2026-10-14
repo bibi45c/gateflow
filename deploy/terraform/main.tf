@@ -22,3 +22,18 @@ module "cluster" {
   tags                    = local.tags
   depends_on              = [module.network]
 }
+
+module "database" {
+  source                    = "./modules/database"
+  name                      = "gateflow-${var.environment}"
+  vpc_id                    = module.network.vpc_id
+  private_subnet_ids        = module.network.private_subnet_ids
+  service_security_group_id = module.cluster.service_security_group_id
+  instance_class            = var.database_instance_class
+  allocated_storage         = var.database_storage_gb
+  engine_version            = var.database_engine_version
+  deletion_protection       = var.database_deletion_protection
+  skip_final_snapshot       = var.database_skip_final_snapshot
+  final_snapshot_identifier = var.database_final_snapshot_identifier
+  tags                      = local.tags
+}
