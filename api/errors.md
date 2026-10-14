@@ -6,7 +6,8 @@ public errors the gateway raises, and how the gateway maps internal errors to pu
 ones. The `ErrorCode` enum in [access.yaml](access.yaml) and in
 [metering.yaml](metering.yaml) lists exactly the codes this file gives for that
 service, and no file uses other codes; `tools/repo/tests/test_api_contracts.py` checks
-this.
+this. Issue #61 adds the public errors of `POST /v1/responses` for S2; the internal
+codes do not change.
 
 ## Internal errors
 
@@ -26,7 +27,7 @@ Access and metering answer every error with this body:
 | access | 400 | `invalid_request` | The verify body is not JSON or breaks the request schema. |
 | access | 401 | `unauthorized` | The internal token is missing, empty or wrong. |
 | access | 401 | `invalid_key` | The gateway key is unknown or revoked. |
-| access | 403 | `model_not_allowed` | The gateway key is valid but may not use the requested model. |
+| access | 403 | `model_not_allowed` | The gateway key is valid but none of its channels serves the requested model over the requested protocol. |
 | access | 404 | `price_version_not_found` | No price version has the requested id. |
 | access | 500 | `internal_error` | An unexpected failure. |
 | access | 503 | `dependency_unavailable` | The access database is unavailable. |
@@ -41,26 +42,49 @@ Access and metering answer every error with this body:
 
 ## Public errors raised by the gateway
 
-Public errors use the Anthropic error body, `pkg/protocol/anthropic.ErrorBody`:
+Public errors use the error body of the endpoint the client called. The status and
+type that the tables below give are the same on both endpoints.
+
+On `/v1/messages`, public errors use the Anthropic error body,
+`pkg/protocol/anthropic.ErrorBody`:
 
 ```json
 {"type": "error", "error": {"type": "api_error", "message": "Internal server error."}}
 ```
 
+On `/v1/responses`, public errors use the Responses error body. `error.type` is the
+type from the tables below; `param` and `code` are null unless a row names them:
+
+```json
+{"error": {"message": "Internal server error.", "type": "api_error", "param": null, "code": null}}
+```
+
 The gateway checks a request in this order: body size (413), gateway key present
-(401), JSON, `model` and `max_tokens` (400), verify with access, channel check,
-reserve, dispatch.
+(401), JSON and the body fields of the endpoint (400), verify with access, channel
+check, reserve, dispatch.
 
 | Situation | Status | Type |
 |---|---|---|
 | Body larger than 2 MiB | 413 | `request_too_large` |
 | Missing gateway key | 401 | `authentication_error` |
-| Malformed JSON, missing or non-string `model`, missing or out-of-range `max_tokens` (an integer from 1 to 32,768) | 400 | `invalid_request_error` |
-| Channel misconfigured (bad `base_url` or `credential_env`, or its variable unset); logged, and no reservation is made | 500 | `api_error` |
+| On `/v1/messages`: malformed JSON, missing or non-string `model`, missing or out-of-range `max_tokens` (an integer from 1 to 32,768) | 400 | `invalid_request_error` |
+| On `/v1/responses`: malformed JSON, missing or non-string `model`, or a `max_output_tokens` that breaks the bounds of reserve in [metering.yaml](metering.yaml) | 400 | `invalid_request_error` |
+| On `/v1/responses`: `previous_response_id` is present and not null | 400 | `invalid_request_error`, with `param` `"previous_response_id"` |
+| Channel misconfigured (a `protocol` other than the endpoint's, bad `base_url` or `credential_env`, or its variable unset); logged, and no reservation is made | 500 | `api_error` |
 | Upstream 400 or 429 | 400 or 429 | Passed through with the upstream's status and body |
 | Any other upstream status, or a failure before any output | 502 | `api_error` |
-| Failure after the stream has started | Already sent | An upstream `event: error` is relayed unchanged; otherwise the gateway sends `event: error` with type `api_error` and a fixed message. Then the gateway closes the stream. |
+| Failure after the stream has started | Already sent | An upstream error event is relayed unchanged: `event: error` on `/v1/messages`, and `error` or `response.failed` on `/v1/responses`. Otherwise the gateway sends its own error event with type `api_error` and a fixed message: `event: error` on `/v1/messages`, and the Responses `error` event below on `/v1/responses`. Then the gateway closes the stream. |
 
+The gateway's own Responses `error` event carries the type in `code`.
+`sequence_number` is one more than that of the last event the gateway relayed:
+
+```text
+event: error
+data: {"type": "error", "code": "api_error", "message": "The upstream model service failed.", "param": null, "sequence_number": 12}
+```
+
+- `/v1/responses` is stateless. The gateway keeps no response state, so it rejects
+  `previous_response_id` as above, and it passes `store` upstream unchanged.
 - Public 5xx messages carry no internal code or detail.
 - The response header `request-id` is `req_<uuid>`, set before the first write. The
   gateway also passes back the upstream's `content-type` and `retry-after`.

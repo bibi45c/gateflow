@@ -1,10 +1,12 @@
 openapi: 3.1.0
 info:
   title: FlowGate access internal API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     Internal API of the access service (tenants, gateway keys, channels and price
-    versions) for S1, as agreed in issue #18 revision 3.2. The gateway calls
+    versions) for S1, as agreed in issue #18 revision 3.2. Issue #61 adds a second
+    protocol for S2, `openai-responses` (`POST /v1/responses`), next to
+    `anthropic-messages` (`POST /v1/messages`). The gateway calls
     `POST /internal/v1/keys/verify`; metering calls
     `GET /internal/v1/price-versions/{id}`. Callers write their own clients under
     `services/<caller>/internal/`.
@@ -47,13 +49,15 @@ paths:
       operationId: verifyKey
       summary: Verify a gateway key for a model
       description: |
-        Checks the gateway key the client sent and whether it may use `model`, and
-        returns the tenant, the price version to charge at and the channel to call.
+        Checks the gateway key the client sent and whether it may use `model` over
+        `protocol`, and returns the tenant, the price version to charge at and the
+        channel to call.
 
         The gateway calls this after its own checks, in this order: body size (413),
-        gateway key present (401), JSON, `model` and `max_tokens` (400), then verify,
-        then the channel check, then reserve, then dispatch. It gives up on verify
-        after 2 s and then answers 503 without calling the upstream.
+        gateway key present (401), JSON and the body fields of its endpoint (400, as
+        `api/errors.md` lists them), then verify, then the channel check, then
+        reserve, then dispatch. It gives up on verify after 2 s and then answers 503
+        without calling the upstream.
 
         The gateway checks the returned channel again before it reserves (see
         `Channel`); a channel that breaks the rules gets the client 500 `api_error`,
@@ -61,8 +65,10 @@ paths:
         writes channels and price versions, and it rejects values that break these
         rules.
 
-        When several of the key's channels serve `model`, verify returns the one with
-        the lowest `id`. S1 has no routing.
+        Verify considers only the key's channels whose `protocol` equals the
+        request's `protocol` and that serve `model`. When none does, it answers 403
+        `model_not_allowed`. When several do, it returns the one with the lowest
+        `id`. There is no other routing.
       parameters:
         - $ref: '#/components/parameters/RequestId'
       requestBody:
@@ -73,10 +79,16 @@ paths:
               $ref: '#/components/schemas/VerifyRequest'
             examples:
               seeded-key:
-                summary: A seeded key asks for a mock model
+                summary: A seeded key asks for a mock model, with no `protocol`, so over Messages
                 value:
                   key: gf_example_only_not_a_real_key
                   model: mock-small
+              responses:
+                summary: A seeded key asks for a mock model over Responses
+                value:
+                  key: gf_example_only_not_a_real_key
+                  model: mock-small
+                  protocol: openai-responses
       responses:
         '200':
           description: The key is valid and may use the model.
@@ -107,6 +119,17 @@ paths:
                       protocol: anthropic-messages
                       base_url: https://api.example.com
                       credential_env: UPSTREAM_CREDENTIAL_HOSTED
+                responses-channel:
+                  summary: The seeded tenant-01 key on a mock channel that speaks Responses
+                  value:
+                    tenant_id: tenant-01
+                    key_id: key-tenant-01
+                    price_version_id: pv-seed-1
+                    channel:
+                      id: mock-responses
+                      protocol: openai-responses
+                      base_url: http://mock-upstream:8090
+                      credential_env: ''
         '400':
           $ref: '#/components/responses/InvalidRequest'
         '401':
@@ -127,7 +150,7 @@ paths:
                 unauthorized:
                   $ref: '#/components/examples/Unauthorized'
         '403':
-          description: '`model_not_allowed`: the key is valid but may not use `model`.'
+          description: '`model_not_allowed`: the key is valid but none of its channels serves `model` over `protocol`.'
           content:
             application/json:
               schema:
@@ -232,11 +255,26 @@ components:
         key:
           type: string
           minLength: 1
-          description: The gateway key the client sent. Never logged.
+          description: |
+            The gateway key the client sent, on either endpoint: the `x-api-key`
+            header, or else the `Authorization: Bearer` token, which Codex uses.
+            Never logged.
         model:
           type: string
           minLength: 1
           description: The `model` of the client's request.
+        protocol:
+          type: string
+          enum:
+            - anthropic-messages
+            - openai-responses
+          default: anthropic-messages
+          description: |
+            The protocol of the endpoint the client called: `anthropic-messages`
+            for `/v1/messages`, `openai-responses` for `/v1/responses`. A missing
+            `protocol` means `anthropic-messages`, so a gateway that does not send
+            it, such as the previous gateway image after a rollback, still gets
+            Messages channels.
     VerifyResponse:
       type: object
       required: [tenant_id, key_id, price_version_id, channel]
@@ -255,10 +293,18 @@ components:
     Channel:
       type: object
       description: |
-        The upstream the gateway sends this call to. The gateway appends
-        `/v1/messages` to `base_url`. It forwards only the `content-type`,
-        `anthropic-version` and `anthropic-beta` request headers, and never forwards
-        the client's `x-api-key` or `Authorization`, or any internal token, upstream.
+        The upstream the gateway sends this call to. By `protocol`, the gateway
+        appends a path to `base_url`, forwards only some of the client's request
+        headers, and sends the upstream credential in one header:
+
+        | `protocol` | Path | Request headers forwarded | Credential header |
+        |---|---|---|---|
+        | `anthropic-messages` | `/v1/messages` | `content-type`, `anthropic-version`, `anthropic-beta` | `x-api-key` |
+        | `openai-responses` | `/v1/responses` | `content-type` | `Authorization: Bearer` |
+
+        The gateway never forwards the client's `x-api-key` or `Authorization`, or
+        any internal token, upstream. The credential header carries only the value
+        `credential_env` names, and is not sent when `credential_env` is empty.
       required: [id, protocol, base_url, credential_env]
       properties:
         id:
@@ -266,7 +312,17 @@ components:
           description: The opaque channel id, such as `mock` or `ollama`.
         protocol:
           type: string
-          const: anthropic-messages
+          enum:
+            - anthropic-messages
+            - openai-responses
+          description: |
+            The protocol the upstream speaks. Verify picks the channel by it (see
+            `verifyKey`), and the gateway's channel check also requires it to equal
+            the protocol of the endpoint the client called.
+            Access migration `0002` widens the `CHECK` on `channels.protocol` from
+            `anthropic-messages` alone to both values. It only adds a value, so
+            existing rows stay valid and the previous gateway image keeps working
+            against the new access.
         base_url:
           type: string
           pattern: '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'
@@ -280,9 +336,9 @@ components:
           description: |
             Empty, or the name of a gateway environment variable matching
             `UPSTREAM_CREDENTIAL_[A-Z0-9_]+`; never the credential itself. The
-            gateway sends the variable's value upstream as `x-api-key`. It is empty
-            for the mock and for Ollama. A bad name, or a variable that is unset, is a
-            misconfigured channel.
+            gateway sends the variable's value upstream in the credential header of
+            `protocol` (see `Channel`). It is empty for the mock and for Ollama. A
+            bad name, or a variable that is unset, is a misconfigured channel.
       if:
         required: [credential_env]
         properties:
@@ -303,7 +359,7 @@ components:
           format: int64
           minimum: 0
           maximum: 1000000
-          description: Price of one input token, in micro-units. Cache-read and cache-creation input tokens are charged at this price too.
+          description: Price of one input token, in micro-units. Cached input tokens on both protocols are charged at this price too, a recorded S1 deviation (see `api/metering.yaml`).
         output_micro_per_token:
           type: integer
           format: int64
