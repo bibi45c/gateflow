@@ -17,10 +17,11 @@ import (
 // errChannelURL reports a channel base URL that no request can be built from.
 var errChannelURL = errors.New("relay: channel base URL is not a valid URL")
 
-// newTransport returns the upstream transport: 10 s to open a connection and no
+// NewTransport returns the upstream transport: 10 s to open a connection and no
 // limit on the reply, so that a slow local model such as Ollama can still stream. It
 // uses no proxy and asks for no compression, so the bytes relayed are those sent.
-func newTransport() *http.Transport {
+// Handlers given the same transport share its connections.
+func NewTransport() *http.Transport {
 	dialer := &net.Dialer{Timeout: connectTimeout, KeepAlive: 30 * time.Second}
 	return &http.Transport{
 		DialContext:         dialer.DialContext,

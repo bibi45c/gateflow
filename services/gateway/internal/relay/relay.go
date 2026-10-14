@@ -1,10 +1,12 @@
-// Package relay serves POST /v1/messages. It checks a request in the order of issue
-// #18, asks an Admission whether it may go upstream, sends the body to the admitted
-// channel and relays the reply back event by event, without buffering. It reports the
-// usage and outcome it saw through the Admission's report function. The public errors
-// it writes are listed in api/errors.md. The endpoint's protocol gives how the relay
-// reads the request and the reply; the rest is shared, so that another endpoint only
-// adds a protocol.
+// Package relay serves POST /v1/messages (Anthropic Messages) and POST /v1/responses
+// (OpenAI Responses). It checks a request in the order of issue #18, asks an
+// Admission whether it may go upstream, sends the body to the admitted channel and
+// relays the reply back event by event, without buffering. It reports the usage and
+// outcome it saw through the Admission's report function, by the rules of
+// api/metering.yaml. The public errors it writes are listed in api/errors.md, in the
+// error body of the endpoint called. The endpoint's protocol gives how the relay reads
+// the request and the reply; the rest is shared. It converts nothing between the two
+// protocols.
 package relay
 
 import (
@@ -114,8 +116,8 @@ type Config struct {
 	// Getenv returns the value of the variable that a channel's CredentialEnv names.
 	// Nil means os.Getenv.
 	Getenv func(name string) string
-	// Transport sends upstream requests. Nil means a transport with a 10 s connect
-	// timeout and no limit on how long a reply takes.
+	// Transport sends upstream requests. Nil means a transport of the handler's own,
+	// from NewTransport.
 	Transport http.RoundTripper
 }
 
@@ -133,12 +135,18 @@ func New(cfg Config, admit Admission, logger *slog.Logger) http.Handler {
 	return newHandler(messages{}, cfg, admit, logger)
 }
 
+// NewResponses returns the handler for POST /v1/responses, which works as the one New
+// returns does.
+func NewResponses(cfg Config, admit Admission, logger *slog.Logger) http.Handler {
+	return newHandler(responses{}, cfg, admit, logger)
+}
+
 func newHandler(proto protocol, cfg Config, admit Admission, logger *slog.Logger) *handler {
 	if cfg.Getenv == nil {
 		cfg.Getenv = os.Getenv
 	}
 	if cfg.Transport == nil {
-		cfg.Transport = newTransport()
+		cfg.Transport = NewTransport()
 	}
 	if logger == nil {
 		logger = slog.Default()

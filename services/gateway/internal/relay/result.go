@@ -74,14 +74,20 @@ func (u *usage) observeBody(body []byte) {
 	u.output = knownCount(reported.OutputTokens)
 }
 
-// counts returns the counts to report. An input total of 0 is unknown, because a
-// non-empty request cannot use 0 input tokens and some upstreams report 0 before the
-// real count. An output count of 0 that the upstream reported is known.
+// counts returns the counts to report, by reportedCounts.
 func (u *usage) counts() (input, output *int64) {
-	if u.input != nil && *u.input == 0 {
-		return nil, u.output
+	return reportedCounts(u.input, u.output)
+}
+
+// reportedCounts returns the counts a reply reported as the relay reports them, on
+// either protocol. An input total of 0 is unknown, because a non-empty request cannot
+// use 0 input tokens and some upstreams report 0 before the real count. An output
+// count of 0 that the upstream reported is known.
+func reportedCounts(input, output *int64) (*int64, *int64) {
+	if input != nil && *input == 0 {
+		return nil, output
 	}
-	return u.input, u.output
+	return input, output
 }
 
 // inputTotal adds the input counts that are present, or returns nil when none is, or
