@@ -16,8 +16,9 @@ section 7.2.
 | 12 October | S0 skeleton merged |
 | 14 October | S1 done; feasibility gate |
 | 16 October | S2 done |
-| 18 October | S3 done |
-| 19 October | Freeze, record fallback runs, rehearse |
+| 17 October | Cloud day: deploy, ingress streaming check, single-Pod calibration |
+| 18 October | Cloud day: replica comparison and autoscaling; S3 done |
+| 19 October | Cloud day: record the deployment and rollback; freeze, record fallback runs, rehearse |
 | 20 October | Cut the release used for the demo (tag `v0.1.0` on `main`); rehearse |
 | 21 October, 09:00–09:40 SGT | Team 1 presentation: 8-minute demo plus 2 minutes of questions, showing use cases, autoscaling, a scripted performance test and the DevOps pipeline |
 | 16 November | Final report due |
@@ -33,13 +34,19 @@ At the gate on 14 October, the team checks the S1 outcome and confirms versions,
 exclusions, test bounds and budget before the second protocol. If the test fails,
 scope or estimates are reviewed with the lecturer, as proposal section 7.1 requires.
 
+The gate record is on issue #20. Both Go rules were met on 14 October: OpenCode
+completed the `mock-coding` task and a local `qwen3:8b` task through the gateway, and
+every request settled once. After the gate, S2 is narrowed to the smallest Responses
+path, and the S3 preparation runs alongside it (see [Stages](#stages)). Proposal
+section 6.6 allows this review of the second-client target; no use case is removed.
+
 ## Decisions (11 October 2026)
 
 | Topic | Until the gate and during S2–S4 | Full proposal plan |
 |---|---|---|
 | Validation client | OpenCode (the open-source coding agent), through its Anthropic provider with a custom `baseURL`. Its runs exercise the gateway paths but are not UC3 acceptance. | UC3 acceptance: Claude Code CLI against a Claude service (section 5.2, [R8]), and Codex CLI against a native Responses upstream |
 | Model upstreams | The mock upstream for every capacity, latency, isolation, failure and error test. A local Ollama model for functional tests with a real model. Optionally, hosted free models through a protocol adapter. | Same split; hosted providers where an acceptance test needs one |
-| Environment | Local docker-compose for S0 to S2. From S3, EKS with Terraform, Helm and KEDA, using a plain RDS PostgreSQL database. | Aurora Serverless v2, Argo CD, Cognito and CloudFront (section 5.5) |
+| Environment | Local docker-compose for S0 to S2. From S3, EKS with Terraform, Helm and KEDA, using a plain RDS PostgreSQL database. Redis is not used until a feature needs it, so no ElastiCache is created. | Aurora Serverless v2, Argo CD, Cognito and CloudFront (section 5.5) |
 | Metering | Reservation and settlement in PostgreSQL transactions. Usage queries read the ledger directly. | Transactional outbox, SQS, idempotent consumers and recovery of pending reservations (UC6, sections 5.1 and 5.4) |
 | Contracts | Public protocol wire types under `pkg/protocol/`. Internal API contracts as `api/<service>.yaml`. | Same |
 | Pricing | Metering looks up the price version from access and computes the reserved and charged amounts itself; the gateway sends only token bounds and usage. | Same (section 5.3) |
@@ -84,8 +91,8 @@ scope or estimates are reviewed with the lecturer, as proposal section 7.1 requi
 |---|---|---|---|
 | S0 Skeleton | Three services and the mock upstream answer health checks. docker-compose runs the stack, and CI builds and tests on three operating systems. | — | M1 |
 | S1 First link | OpenCode calls `POST /v1/messages` through the gateway. Access verifies a seeded gateway key, metering reserves and settles a simulated cost, and the gateway relays SSE output, including tool calls, first from the mock upstream and then from a local Ollama model. | Partial: UC1 key check, UC2 seeded channel, UC4 Messages path, UC5 single channel, UC6 reserve and settle | Gateway and mock: M1. Access: M3. Metering: M2. |
-| S2 Second protocol | A client completes a coding task through `POST /v1/responses`, against the mock upstream and a local Ollama model. | Partial: UC4 Responses path | M1, M3 |
-| S3 Cloud and scaling | The stack runs on EKS and is deployed by the CI/CD pipeline. k6 load against the mock upstream compares 1, 2 and 4 gateway replicas after single-Pod calibration, one KEDA autoscaling run is recorded, and streaming through the ingress is checked. Prerequisites: a cost estimate and authorised account (section 7.3), ECR image publishing, an ALB ingress, Redis, and a Prometheus active-request metric with one dashboard. | Partial: UC9 replica comparison and autoscaling, UC10 deployment | M4, with M2 and M3 for the experiments |
+| S2 Second protocol | Codex CLI completes a coding task through `POST /v1/responses`, against the mock upstream and a local Ollama model. Only the smallest path: stateless requests, and a missing `max_output_tokens` is held and sent as 32,768. Meanwhile, the S3 preparation (images, Helm, KEDA, metrics and k6) is built and checked on a local kind cluster. | Partial: UC4 Responses path | M1, M3 |
+| S3 Cloud and scaling | The stack runs on EKS and is deployed by the CI/CD pipeline. k6 load against the mock upstream compares 1, 2 and 4 gateway replicas after single-Pod calibration, one KEDA autoscaling run is recorded, and streaming through the ingress is checked. Prerequisites: a cost estimate and authorised account (section 7.3), GHCR image publishing, an ALB ingress, and a Prometheus active-request metric with one dashboard. Cloud days are 17, 18, 19 and 21 October, and everything is destroyed at the end of each day. If the runs are incomplete on 18 October, at least one run per replica count and one autoscaling run are kept, and the rest are repeated before the final report. | Partial: UC9 replica comparison and autoscaling, UC10 deployment | M4, with M2 and M3 for the experiments |
 | S4 Reuse | Keys and usage can be managed through the API or a minimal console. A reference client, and the pi coding-agent CLI as a second client, reuse the gateway. | Partial: UC7, UC8 | M3, M2 |
 
 Owners follow the proposal's division of work and are confirmed per issue. The S3
