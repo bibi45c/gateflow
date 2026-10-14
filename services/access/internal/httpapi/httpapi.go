@@ -30,7 +30,7 @@ const QueryTimeout = 800 * time.Millisecond
 
 // Store is what the handlers need from the database; *store.Store implements it.
 type Store interface {
-	VerifyKey(ctx context.Context, keyHMAC []byte, model string) (store.VerifiedKey, error)
+	VerifyKey(ctx context.Context, keyHMAC []byte, model, protocol string) (store.VerifiedKey, error)
 	PriceVersion(ctx context.Context, id string) (store.PriceVersion, error)
 }
 

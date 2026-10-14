@@ -10,12 +10,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/bibi45c/gateflow/services/access/internal/apikey"
+	"github.com/bibi45c/gateflow/services/access/internal/channel"
 	"github.com/bibi45c/gateflow/services/access/internal/store"
 )
 
 type verifyRequest struct {
-	Key   *string `json:"key"`
-	Model *string `json:"model"`
+	Key      *string `json:"key"`
+	Model    *string `json:"model"`
+	Protocol *string `json:"protocol"`
 }
 
 type verifyResponse struct {
@@ -47,7 +49,7 @@ func (a *API) verifyKey(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), QueryTimeout)
 	defer cancel()
-	key, err := a.store.VerifyKey(ctx, apikey.HMAC(a.pepper, *request.Key), *request.Model)
+	key, err := a.store.VerifyKey(ctx, apikey.HMAC(a.pepper, *request.Key), *request.Model, *request.Protocol)
 	s := state(r)
 	s.keyID, s.tenantID = key.KeyID, key.TenantID
 	if err != nil {
@@ -67,16 +69,19 @@ func (a *API) verifyKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// decodeVerifyRequest reads {key, model} from a body of at most MaxBodyBytes. It
-// reports false unless the body is one JSON object whose only members are key and
-// model, each once, by exactly those names, and both non-empty strings.
+// decodeVerifyRequest reads {key, model, protocol} from a body of at most
+// MaxBodyBytes. It reports false unless the body is one JSON object whose only
+// members are key, model and an optional protocol, each once, by exactly those
+// names; key and model must be non-empty strings, and protocol one a channel may
+// speak. A missing protocol is anthropic-messages, so a gateway that does not send
+// it still gets Messages channels.
 func decodeVerifyRequest(w http.ResponseWriter, r *http.Request) (verifyRequest, bool) {
 	var request verifyRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
 		return request, false
 	}
-	targets := map[string]**string{"key": &request.Key, "model": &request.Model}
+	targets := map[string]**string{"key": &request.Key, "model": &request.Model, "protocol": &request.Protocol}
 	seen := make(map[string]bool, len(targets))
 	for decoder.More() {
 		token, err := decoder.Token()
@@ -98,6 +103,14 @@ func decodeVerifyRequest(w http.ResponseWriter, r *http.Request) (verifyRequest,
 		return request, false
 	}
 	if request.Key == nil || *request.Key == "" || request.Model == nil || *request.Model == "" {
+		return request, false
+	}
+	if !seen["protocol"] {
+		protocol := channel.Protocol
+		request.Protocol = &protocol
+	}
+	// A protocol sent as null is no string, so it is refused like an unknown one.
+	if request.Protocol == nil || channel.CheckProtocol(*request.Protocol) != nil {
 		return request, false
 	}
 	return request, true
