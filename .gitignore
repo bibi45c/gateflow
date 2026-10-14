@@ -17,6 +17,15 @@ coverage.out
 
 # Local drafts and data, and worktrees misplaced at the repository root
 .local/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+backend.hcl
+crash.log
+crash.*.log
 /worktrees/
 
 # Personal agent settings; shared settings are committed explicitly
