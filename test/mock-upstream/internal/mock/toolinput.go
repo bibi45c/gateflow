@@ -35,10 +35,47 @@ func (s *schema) UnmarshalJSON(data []byte) error {
 
 // openCodeInputs holds the input of each step for OpenCode's own tools, keyed by
 // tool name.
-var openCodeInputs = map[string]map[string]string{
+var openCodeInputs = map[string]map[string]any{
 	"read": {"filePath": "calc.py"},
 	"edit": {"filePath": "calc.py", "oldString": "return a - b", "newString": "return a + b"},
 	"bash": {"command": "python -m unittest", "description": "Run the tests"},
+}
+
+// codexPatch is the edit step as a patch in the format of Codex's apply_patch.
+const codexPatch = "*** Begin Patch\n*** Update File: calc.py\n@@\n-    return a - b\n" +
+	"+    return a + b\n*** End Patch\n"
+
+// codexShellPatch runs codexPatch through a shell, which Codex turns into apply_patch.
+const codexShellPatch = "apply_patch <<'EOF'\n" + codexPatch + "EOF\n"
+
+// codexTools lists, for each step kind, the Codex tools that can play it, in the
+// order pickTool tries them. Codex has no read tool; it reads and tests with a shell.
+var codexTools = map[string][]string{
+	"read": {"shell", "shell_command", "exec_command"},
+	"edit": {"apply_patch", "shell", "shell_command", "exec_command"},
+	"bash": {"shell", "shell_command", "exec_command"},
+}
+
+// codexInputs holds the input of each step for Codex's own tools, keyed by step kind
+// and then by tool name: shell takes an argument vector, shell_command and
+// exec_command a command line, and apply_patch a patch.
+var codexInputs = map[string]map[string]map[string]any{
+	"read": {
+		"shell":         {"command": []string{"bash", "-lc", "cat calc.py"}},
+		"shell_command": {"command": "cat calc.py"},
+		"exec_command":  {"cmd": "cat calc.py"},
+	},
+	"edit": {
+		"apply_patch":   {"input": codexPatch},
+		"shell":         {"command": []string{"apply_patch", codexPatch}},
+		"shell_command": {"command": codexShellPatch},
+		"exec_command":  {"cmd": codexShellPatch},
+	},
+	"bash": {
+		"shell":         {"command": []string{"bash", "-lc", "python -m unittest"}},
+		"shell_command": {"command": "python -m unittest"},
+		"exec_command":  {"cmd": "python -m unittest"},
+	},
 }
 
 // stringHints picks the value of a generated string member by the first key that
@@ -54,12 +91,16 @@ var stringHints = []struct{ key, value string }{
 
 const defaultString = "mock"
 
-// pickTool returns the tool named kind, else the first whose name contains kind,
-// else the first tool. tools must not be empty.
+// pickTool returns the tool named kind, else the first Codex tool of codexTools that
+// the request has, else the first tool whose name contains kind, else the first tool.
+// Codex comes before the partial match because Codex also has tools such as
+// read_mcp_resource. tools must not be empty.
 func pickTool(tools []tool, kind string) tool {
-	for _, t := range tools {
-		if t.Name == kind {
-			return t
+	for _, name := range append([]string{kind}, codexTools[kind]...) {
+		for _, t := range tools {
+			if t.Name == name {
+				return t
+			}
 		}
 	}
 	for _, t := range tools {
@@ -70,15 +111,20 @@ func pickTool(tools []tool, kind string) tool {
 	return tools[0]
 }
 
-// toolInput returns the JSON input of a call to t. An OpenCode tool gets its fixed
-// members where its schema declares them as strings; every required member still
-// missing gets a value of its schema's type. Keys are sorted, so the bytes are fixed.
-func toolInput(t tool) []byte {
+// toolInput returns the JSON input of a call to t for a step of the given kind, or
+// for no step when kind is "". A Codex or OpenCode tool gets its fixed members where
+// its schema declares them with their JSON type; every required member still missing
+// gets a value of its schema's type. Keys are sorted, so the bytes are fixed.
+func toolInput(t tool, kind string) []byte {
 	input := map[string]any{}
 	props := t.InputSchema.Properties
-	for name, value := range openCodeInputs[t.Name] {
+	fixed, ok := codexInputs[kind][t.Name]
+	if !ok {
+		fixed = openCodeInputs[t.Name]
+	}
+	for name, value := range fixed {
 		prop, declared := props[name]
-		if len(props) == 0 || declared && prop.allows("string") {
+		if len(props) == 0 || declared && prop.allows(jsonType(value)) {
 			input[name] = value
 		}
 	}
@@ -116,6 +162,14 @@ func (s schema) value(name string) any {
 		return object
 	}
 	return stringValue(name)
+}
+
+// jsonType returns the JSON Schema type name of a fixed input value.
+func jsonType(value any) string {
+	if _, ok := value.([]string); ok {
+		return "array"
+	}
+	return "string"
 }
 
 func stringValue(name string) string {

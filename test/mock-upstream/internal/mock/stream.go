@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/bibi45c/gateflow/pkg/protocol/anthropic"
+	"github.com/bibi45c/gateflow/pkg/protocol/sse"
 )
 
 // inputParts is how many input_json_delta events carry a tool's input.
@@ -140,11 +141,11 @@ func messageBody(rep reply, inputTokens int64) messageJSON {
 		if b.toolName == "" {
 			content = append(content, textJSON{"text", b.text})
 		} else {
-			content = append(content, toolUseJSON{"tool_use", b.toolID, b.toolName, b.input})
+			content = append(content, toolUseJSON{"tool_use", rep.toolID(), b.toolName, b.input})
 		}
 	}
 	stopReason := rep.stopReason
-	return messageJSON{ID: rep.id, Type: "message", Role: "assistant", Model: rep.model,
+	return messageJSON{ID: rep.messageID(), Type: "message", Role: "assistant", Model: rep.model,
 		Content: content, StopReason: &stopReason,
 		Usage: usageJSON{InputTokens: inputTokens, OutputTokens: rep.outputTokens()}}
 }
@@ -152,14 +153,14 @@ func messageBody(rep reply, inputTokens int64) messageJSON {
 // streamEvents returns every event of the stream of rep, from message_start to
 // message_stop.
 func streamEvents(rep reply, inputTokens int64) []event {
-	start := messageJSON{ID: rep.id, Type: "message", Role: "assistant", Model: rep.model,
+	start := messageJSON{ID: rep.messageID(), Type: "message", Role: "assistant", Model: rep.model,
 		Content: []any{}, Usage: usageJSON{InputTokens: inputTokens}}
 	events := []event{newEvent(anthropic.EventMessageStart,
 		messageStartJSON{anthropic.EventMessageStart, start})}
 	for i, b := range rep.blocks {
 		var opening any = textJSON{"text", ""}
 		if b.toolName != "" {
-			opening = toolUseJSON{"tool_use", b.toolID, b.toolName, json.RawMessage("{}")}
+			opening = toolUseJSON{"tool_use", rep.toolID(), b.toolName, json.RawMessage("{}")}
 		}
 		events = append(events, newEvent(anthropic.EventContentBlockStart,
 			blockStartJSON{anthropic.EventContentBlockStart, i, opening}))
@@ -182,9 +183,11 @@ func streamEvents(rep reply, inputTokens int64) []event {
 }
 
 // writeStream sends events as server-sent events, flushing each one, at the pace
-// timing sets. A failing scenario sends only the first K events, and never
-// message_stop, then closes the connection or sends an error event.
-func writeStream(w http.ResponseWriter, r *http.Request, events []event, timing Timing, mode failure) {
+// timing sets. A failing scenario sends only the first K events, and never the last
+// one, which ends the stream, then closes the connection or sends the protocol's
+// error event.
+func (h *Handler) writeStream(w http.ResponseWriter, r *http.Request, events []event, timing Timing,
+	mode failure) {
 	w.Header().Set("content-type", "text/event-stream")
 	w.Header().Set("cache-control", "no-cache")
 	w.WriteHeader(http.StatusOK)
@@ -194,10 +197,9 @@ func writeStream(w http.ResponseWriter, r *http.Request, events []event, timing 
 		events = events[:min(timing.FailAfterEvents, len(events)-1)]
 	}
 	if mode == failErrorEvent {
-		body := anthropic.NewErrorBody(errorTypeOverloaded, overloadedMessage)
-		events = append(events, newEvent(anthropic.EventError, body))
+		events = append(events, h.proto.errorEvent(len(events)))
 	}
-	sse := anthropic.NewWriter(w)
+	sse := sse.NewWriter(w)
 	for i, e := range events {
 		wait := timing.EventInterval
 		if i == 0 {
