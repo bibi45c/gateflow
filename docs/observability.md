@@ -20,11 +20,13 @@ The costs above are relative implementation and operation costs, not price quote
 
 See the official [Prometheus instrumentation guidance](https://prometheus.io/docs/practices/instrumentation/)
 and [OpenTelemetry overview](https://opentelemetry.io/docs/what-is-opentelemetry/).
-The prototype pins the Prometheus Go client to v1.25.0; its Go requirement is
-compatible with this repository's Go 1.27. Later integrations should keep the
-dependency pinned and verify changes. Adding the client also raises two indirect
-dependencies that pgx already brought in: `golang.org/x/sync` from v0.17.0 to v0.23.0
-and `golang.org/x/text` from v0.29.0 to v0.42.0. The database tests pass with them.
+The prototype pins the Prometheus Go client to v1.24.1, the latest patch of its
+previous minor version, rather than v1.25.0, which had no patch release yet; v1.24.1
+needs Go 1.25 or later, and this repository uses Go 1.27. Later integrations should
+keep the dependency pinned and verify changes. Adding the client also raises two
+indirect dependencies that pgx already brought in: `golang.org/x/sync` from v0.17.0 to
+v0.22.0 and `golang.org/x/text` from v0.29.0 to v0.40.0. The database tests pass with
+them.
 
 ## Implemented prototype and integration boundaries
 
