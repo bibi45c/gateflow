@@ -150,6 +150,19 @@ func TestLoadPacesEveryEventByItsInterval(t *testing.T) {
 }
 
 func TestLoadIntervalLeavesOtherScenariosAlone(t *testing.T) {
+	for model := range failureModes {
+		if got := DefaultTiming.forModel(model); got != DefaultTiming {
+			t.Errorf("%s: timing %+v", model, got)
+		}
+	}
+	for _, model := range []string{"mock-text", "mock-tool", "mock-coding"} {
+		if got := DefaultTiming.forModel(model); got != DefaultTiming {
+			t.Errorf("%s: timing %+v", model, got)
+		}
+	}
+	if got := DefaultTiming.forModel(loadModel); got.EventInterval != DefaultLoad.Interval || !got.fixedRate {
+		t.Errorf("mock-load: timing %+v", got)
+	}
 	slowLoad := Timing{Load: Load{Events: 1, Interval: 10 * time.Second, EventBytes: 1}}
 	if _, total := firstEventAfter(t, slowLoad, nil); total > 5*time.Second {
 		t.Errorf("mock-text took %v with only the load interval set", total)

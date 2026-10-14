@@ -61,16 +61,19 @@ func loadFromEnv(load *Load) error {
 		setting.set(load, n)
 	}
 	if size := int64(load.Events) * int64(load.EventBytes); size > maxLoadTextBytes {
-		return fmt.Errorf("MOCK_LOAD_EVENTS × MOCK_LOAD_EVENT_BYTES: %d bytes exceeds %d",
+		return fmt.Errorf("MOCK_LOAD_EVENTS * MOCK_LOAD_EVENT_BYTES: %d bytes exceeds %d",
 			size, maxLoadTextBytes)
 	}
 	return nil
 }
 
-// forModel returns t with mock-load's interval when model is mock-load, else t.
+// forModel returns t with mock-load's interval and a fixed rate when model is
+// mock-load, so a long stream lasts its count × interval even where timers wake up
+// late; other models get t unchanged.
 func (t Timing) forModel(model string) Timing {
 	if model == loadModel {
 		t.EventInterval = t.Load.Interval
+		t.fixedRate = true
 	}
 	return t
 }

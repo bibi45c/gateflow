@@ -60,6 +60,9 @@ type Timing struct {
 	// Load shapes the stream of mock-load, which paces its events by Load.Interval
 	// instead of EventInterval.
 	Load Load
+	// fixedRate times each event from the start of the stream; forModel sets it
+	// for mock-load only.
+	fixedRate bool
 }
 
 // DefaultTiming sends every event at once, fails after three events, and streams
