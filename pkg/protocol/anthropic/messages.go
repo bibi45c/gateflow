@@ -1,12 +1,12 @@
 package anthropic
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"unicode/utf8"
+
+	"github.com/bibi45c/gateflow/pkg/protocol/internal/jsonobj"
 )
 
 // ErrMalformed reports JSON that this package cannot read: not one JSON object, a
@@ -103,16 +103,6 @@ func ResponseUsage(body []byte) (Usage, error) {
 	return readUsage(usage)
 }
 
-// Type returns the "type" member of the event's data, or "" when the data is not a
-// JSON object with a string type, as for a comment block.
-func (e Event) Type() string {
-	var eventType string
-	if decodeMembers(e.Data, map[string]any{"type": &eventType}) != nil {
-		return ""
-	}
-	return eventType
-}
-
 func readUsage(raw json.RawMessage) (Usage, error) {
 	var usage Usage
 	if isAbsent(raw) {
@@ -147,45 +137,8 @@ func isAbsent(raw json.RawMessage) bool {
 	return len(raw) == 0 || string(raw) == "null"
 }
 
-// decodeMembers decodes each member of the JSON object in data that targets names
-// into its target, matching names exactly. A null member leaves a target unchanged,
-// except that a pointer target becomes nil. Other members are checked for syntax only.
-// A named member that appears twice is an error, so that no other reader of the same
-// bytes can see a different value.
+// decodeMembers decodes the members of the JSON object in data that targets names,
+// strictly; see jsonobj.DecodeMembers. Its errors wrap ErrMalformed.
 func decodeMembers(data []byte, targets map[string]any) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	if token, err := dec.Token(); err != nil || token != json.Delim('{') {
-		return fmt.Errorf("%w: not a JSON object", ErrMalformed)
-	}
-	seen := make(map[string]bool, len(targets))
-	for dec.More() {
-		token, err := dec.Token()
-		name, isName := token.(string)
-		if err != nil || !isName {
-			return fmt.Errorf("%w: invalid syntax", ErrMalformed)
-		}
-		target, wanted := targets[name]
-		switch {
-		case !wanted:
-			target = new(json.RawMessage)
-		case seen[name]:
-			return fmt.Errorf("%w: member %q appears twice", ErrMalformed, name)
-		default:
-			seen[name] = true
-		}
-		if err := dec.Decode(target); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if wanted && errors.As(err, &typeErr) {
-				return fmt.Errorf("%w: member %q has the wrong type", ErrMalformed, name)
-			}
-			return fmt.Errorf("%w: invalid syntax", ErrMalformed)
-		}
-	}
-	if _, err := dec.Token(); err != nil {
-		return fmt.Errorf("%w: invalid syntax", ErrMalformed)
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%w: data after the JSON object", ErrMalformed)
-	}
-	return nil
+	return jsonobj.DecodeMembers(data, targets, ErrMalformed)
 }
