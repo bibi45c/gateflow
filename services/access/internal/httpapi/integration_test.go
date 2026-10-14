@@ -52,23 +52,57 @@ func newSeeded(t *testing.T) seeded {
 }
 
 func (s seeded) verify(key, model string) *httptest.ResponseRecorder {
-	return call(s.handler, "POST", "/internal/v1/keys/verify", verifyBody(key, model), authorized())
+	return s.verifyOver(key, model, "")
+}
+
+// verifyOver calls verify naming protocol, or without protocol when it is empty.
+func (s seeded) verifyOver(key, model, protocol string) *httptest.ResponseRecorder {
+	return call(s.handler, "POST", "/internal/v1/keys/verify", verifyBodyOver(key, model, protocol), authorized())
+}
+
+// exec runs each statement on the seeded database.
+func (s seeded) exec(t *testing.T, statements ...string) {
+	t.Helper()
+	for _, sql := range statements {
+		if _, err := s.pool.Exec(context.Background(), sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// channelOf returns the channel of a 200 verify answer.
+func channelOf(t *testing.T, got *httptest.ResponseRecorder) channelResponse {
+	t.Helper()
+	var body verifyResponse
+	if err := json.Unmarshal(got.Body.Bytes(), &body); err != nil || got.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", got.Code, got.Body)
+	}
+	return body.Channel
 }
 
 func TestSeededKeyWithAnAllowedModelIsVerified(t *testing.T) {
 	s := newSeeded(t)
+	mock := channelResponse{ID: "mock", Protocol: "anthropic-messages", BaseURL: "http://mock-upstream:8090"}
+	mockResponses := channelResponse{ID: "mock-responses", Protocol: "openai-responses", BaseURL: "http://mock-upstream:8090"}
+	ollama := channelResponse{ID: "ollama", Protocol: "anthropic-messages", BaseURL: "http://host.docker.internal:11434"}
+	ollamaResponses := channelResponse{ID: "ollama-responses", Protocol: "openai-responses", BaseURL: "http://host.docker.internal:11434"}
 	tests := []struct {
-		tenant, model string
-		channel       channelResponse
+		tenant, model, protocol string
+		channel                 channelResponse
 	}{
-		{"tenant-01", "mock-fast", channelResponse{ID: "mock", Protocol: "anthropic-messages", BaseURL: "http://mock-upstream:8090"}},
-		{"tenant-10", "mock-", channelResponse{ID: "mock", Protocol: "anthropic-messages", BaseURL: "http://mock-upstream:8090"}},
-		{"tenant-00", ollamaModel, channelResponse{ID: "ollama", Protocol: "anthropic-messages", BaseURL: "http://host.docker.internal:11434"}},
+		{"tenant-01", "mock-fast", "", mock},
+		{"tenant-10", "mock-", "", mock},
+		{"tenant-00", ollamaModel, "", ollama},
+		{"tenant-01", "mock-fast", "anthropic-messages", mock},
+		{"tenant-00", ollamaModel, "anthropic-messages", ollama},
+		{"tenant-01", "mock-fast", "openai-responses", mockResponses},
+		{"tenant-10", "mock-", "openai-responses", mockResponses},
+		{"tenant-00", ollamaModel, "openai-responses", ollamaResponses},
 	}
 	for _, tt := range tests {
-		got := s.verify(s.keys[tt.tenant], tt.model)
+		got := s.verifyOver(s.keys[tt.tenant], tt.model, tt.protocol)
 		if got.Code != http.StatusOK {
-			t.Fatalf("%s, %s: status %d, want 200: %s", tt.tenant, tt.model, got.Code, got.Body)
+			t.Fatalf("%s, %s over %q: status %d, want 200: %s", tt.tenant, tt.model, tt.protocol, got.Code, got.Body)
 		}
 		var body verifyResponse
 		if err := json.Unmarshal(got.Body.Bytes(), &body); err != nil {
@@ -76,8 +110,86 @@ func TestSeededKeyWithAnAllowedModelIsVerified(t *testing.T) {
 		}
 		want := verifyResponse{TenantID: tt.tenant, KeyID: "key-" + tt.tenant, PriceVersionID: seed.PriceVersionID, Channel: tt.channel}
 		if body != want {
-			t.Errorf("%s, %s: body %+v, want %+v", tt.tenant, tt.model, body, want)
+			t.Errorf("%s, %s over %q: body %+v, want %+v", tt.tenant, tt.model, tt.protocol, body, want)
 		}
+	}
+}
+
+// A gateway that sends no protocol gets the very answer it got before Responses
+// channels existed, the same as one naming anthropic-messages.
+func TestVerifyWithoutProtocolAnswersAsMessages(t *testing.T) {
+	s := newSeeded(t)
+	for _, tenant := range []string{"tenant-00", "tenant-01", "tenant-10"} {
+		for _, model := range []string{"mock-fast", ollamaModel, "claude-not-seeded"} {
+			without := s.verify(s.keys[tenant], model)
+			named := s.verifyOver(s.keys[tenant], model, "anthropic-messages")
+			if without.Code != named.Code {
+				t.Errorf("%s, %s: status %d without protocol, %d with it", tenant, model, without.Code, named.Code)
+			}
+			if without.Code == http.StatusOK && without.Body.String() != named.Body.String() {
+				t.Errorf("%s, %s: body %s without protocol, %s with it", tenant, model, without.Body, named.Body)
+			}
+			if without.Code == http.StatusOK && channelOf(t, without).Protocol != "anthropic-messages" {
+				t.Errorf("%s, %s: no protocol gave %s", tenant, model, without.Body)
+			}
+		}
+	}
+	wantError(t, s.verify(s.keys["tenant-01"], "claude-not-seeded"), http.StatusForbidden, CodeModelNotAllowed)
+}
+
+func TestVerifyRefusesAnUnknownProtocol(t *testing.T) {
+	s := newSeeded(t)
+	key := s.keys["tenant-01"]
+	for _, body := range []string{
+		verifyBodyOver(key, "mock-fast", "openai-chat"),
+		verifyBodyOver(key, "mock-fast", "Openai-Responses"),
+		`{"key":"` + key + `","model":"mock-fast","protocol":""}`,
+		`{"key":"` + key + `","model":"mock-fast","protocol":null}`,
+	} {
+		wantError(t, call(s.handler, "POST", "/internal/v1/keys/verify", body, authorized()), http.StatusBadRequest, CodeInvalidRequest)
+	}
+}
+
+// Verify only considers the key's channels that speak the requested protocol, even
+// when one of another protocol has a lower id or is the only one serving the model.
+func TestVerifyConsidersOnlyChannelsOfTheProtocol(t *testing.T) {
+	s := newSeeded(t)
+	s.exec(t,
+		`INSERT INTO access.channels (id, protocol, base_url) VALUES
+			('a-before', 'openai-responses', 'http://before:1'), ('a-first', 'anthropic-messages', 'http://first:1'),
+			('claude-only', 'anthropic-messages', 'http://claude:1'), ('gpt-only', 'openai-responses', 'http://gpt:1')`,
+		`INSERT INTO access.channel_models (channel_id, model_pattern) VALUES
+			('a-before', 'mock-*'), ('a-first', 'mock-fast'), ('claude-only', 'claude-sonnet-5'), ('gpt-only', 'gpt-5')`,
+		`INSERT INTO access.api_key_channels (key_id, channel_id) VALUES ('key-tenant-03', 'a-before'),
+			('key-tenant-03', 'a-first'), ('key-tenant-03', 'claude-only'), ('key-tenant-03', 'gpt-only')`,
+	)
+	key := s.keys["tenant-03"]
+	tests := []struct{ model, protocol, channelID string }{
+		{"mock-fast", "", "a-first"},
+		{"mock-fast", "anthropic-messages", "a-first"},
+		{"mock-slow", "anthropic-messages", "mock"},
+		{"mock-fast", "openai-responses", "a-before"},
+		{"mock-slow", "openai-responses", "a-before"},
+		{ollamaModel, "openai-responses", "ollama-responses"},
+		{"claude-sonnet-5", "anthropic-messages", "claude-only"},
+		{"gpt-5", "openai-responses", "gpt-only"},
+	}
+	for _, tt := range tests {
+		got := channelOf(t, s.verifyOver(key, tt.model, tt.protocol))
+		want := tt.protocol
+		if want == "" {
+			want = "anthropic-messages"
+		}
+		if got.ID != tt.channelID || got.Protocol != want {
+			t.Errorf("%s over %q: channel %q over %q, want %q over %q", tt.model, tt.protocol, got.ID, got.Protocol, tt.channelID, want)
+		}
+	}
+	for _, refused := range [][2]string{{"claude-sonnet-5", "openai-responses"}, {"gpt-5", "anthropic-messages"}, {"gpt-5", ""}} {
+		wantError(t, s.verifyOver(key, refused[0], refused[1]), http.StatusForbidden, CodeModelNotAllowed)
+	}
+	// Another key does not get the channels it was not given.
+	if got := channelOf(t, s.verifyOver(s.keys["tenant-04"], "mock-fast", "openai-responses")); got.ID != "mock-responses" {
+		t.Errorf("tenant-04 got channel %q, want mock-responses", got.ID)
 	}
 }
 

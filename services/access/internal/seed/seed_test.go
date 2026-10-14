@@ -52,6 +52,12 @@ func counts(t *testing.T, pool *pgxpool.Pool) map[string]int {
 	return got
 }
 
+// channelRows lists every channel as "id protocol base_url [credential_env] models".
+const channelRows = `SELECT format('%s %s %s [%s] %s', c.id, c.protocol, c.base_url, c.credential_env,
+		(SELECT string_agg(model_pattern, ',' ORDER BY model_pattern COLLATE "C")
+			FROM access.channel_models WHERE channel_id = c.id))
+	FROM access.channels AS c ORDER BY c.id COLLATE "C"`
+
 // texts runs a query returning one text column.
 func texts(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) []string {
 	t.Helper()
@@ -94,17 +100,21 @@ func TestRunTwiceChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	afterFirst := counts(t, pool)
-	want := map[string]int{"tenants": 11, "api_keys": 11, "api_key_channels": 22, "channels": 2,
-		"channel_models": 2, "price_versions": 1}
+	want := map[string]int{"tenants": 11, "api_keys": 11, "api_key_channels": 44, "channels": 4,
+		"channel_models": 4, "price_versions": 1}
 	if !maps.Equal(afterFirst, want) {
 		t.Errorf("rows after the first run = %v, want %v", afterFirst, want)
 	}
+	channelsAfterFirst := texts(t, pool, channelRows)
 	second, err := seed.Run(ctx, pool, cfg, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if afterSecond := counts(t, pool); !maps.Equal(afterSecond, afterFirst) {
 		t.Errorf("rows after the second run = %v, want %v", afterSecond, afterFirst)
+	}
+	if got := texts(t, pool, channelRows); !slices.Equal(got, channelsAfterFirst) {
+		t.Errorf("channels after the second run = %v, want %v", got, channelsAfterFirst)
 	}
 	if !slices.Equal(first, second) {
 		t.Error("the second run returned other keys")
@@ -132,7 +142,8 @@ func TestRunStoresKeysAsSpecified(t *testing.T) {
 			Scan(&tenantName, &stored, &priceVersion, &channels); err != nil {
 			t.Fatalf("key of %s: %v", k.TenantID, err)
 		}
-		if tenantName != k.TenantID || priceVersion != seed.PriceVersionID || channels != "mock ollama" {
+		if tenantName != k.TenantID || priceVersion != seed.PriceVersionID ||
+			channels != "mock mock-responses ollama ollama-responses" {
 			t.Errorf("%s: name %q, price version %q, channels %q", k.TenantID, tenantName, priceVersion, channels)
 		}
 		if !hmac.Equal(stored, apikey.HMAC(cfg.KeyPepper, k.Key)) {
@@ -162,16 +173,76 @@ func TestRunReplacesChannelSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	models := "SELECT model_pattern FROM access.channel_models WHERE channel_id = $1 ORDER BY model_pattern"
-	if got := texts(t, pool, models, "ollama"); !slices.Equal(got, []string{"llama3.2:3b"}) {
-		t.Errorf("ollama models = %v, want only the new OLLAMA_MODEL", got)
+	for _, id := range []string{"ollama", "ollama-responses"} {
+		if got := texts(t, pool, models, id); !slices.Equal(got, []string{"llama3.2:3b"}) {
+			t.Errorf("%s models = %v, want only the new OLLAMA_MODEL", id, got)
+		}
 	}
-	if got := texts(t, pool, models, "mock"); !slices.Equal(got, []string{"mock-*"}) {
-		t.Errorf("mock models = %v", got)
+	for _, id := range []string{"mock", "mock-responses"} {
+		if got := texts(t, pool, models, id); !slices.Equal(got, []string{"mock-*"}) {
+			t.Errorf("%s models = %v", id, got)
+		}
 	}
-	urls := texts(t, pool, "SELECT id || ' ' || base_url || ' ' || protocol FROM access.channels ORDER BY id")
-	want := []string{"mock http://mock-upstream:8090 anthropic-messages", "ollama http://ollama:11434 anthropic-messages"}
-	if !slices.Equal(urls, want) {
-		t.Errorf("channels = %v, want %v", urls, want)
+	want := []string{
+		"mock anthropic-messages http://mock-upstream:8090 [] mock-*",
+		"mock-responses openai-responses http://mock-upstream:8090 [] mock-*",
+		"ollama anthropic-messages http://ollama:11434 [] llama3.2:3b",
+		"ollama-responses openai-responses http://ollama:11434 [] llama3.2:3b",
+	}
+	if got := texts(t, pool, channelRows); !slices.Equal(got, want) {
+		t.Errorf("channels = %v, want %v", got, want)
+	}
+}
+
+// A database seeded before Responses channels existed keeps its two channels exactly
+// as they were, and its keys gain the two Responses channels.
+func TestRunKeepsChannelsSeededBeforeResponses(t *testing.T) {
+	pool := migrated(t)
+	ctx := context.Background()
+	cfg := testConfig()
+	// What the previous seed wrote for tenant-00.
+	for _, sql := range []string{
+		"INSERT INTO access.price_versions (id, input_micro_per_token, output_micro_per_token) VALUES ('pv-seed-1', 3, 15)",
+		`INSERT INTO access.channels (id, protocol, base_url, credential_env) VALUES
+			('mock', 'anthropic-messages', 'http://mock-upstream:8090', ''),
+			('ollama', 'anthropic-messages', 'http://host.docker.internal:11434', '')`,
+		"INSERT INTO access.channel_models (channel_id, model_pattern) VALUES ('mock', 'mock-*'), ('ollama', 'qwen2.5-coder:7b')",
+		"INSERT INTO access.tenants (id, name) VALUES ('tenant-00', 'tenant-00')",
+	} {
+		if _, err := pool.Exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO access.api_keys (id, tenant_id, key_hmac, price_version_id)
+		VALUES ('key-tenant-00', 'tenant-00', $1, 'pv-seed-1')`,
+		apikey.HMAC(cfg.KeyPepper, seed.DeriveKey(cfg.SeedSecret, "tenant-00"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO access.api_key_channels (key_id, channel_id) VALUES
+		('key-tenant-00', 'mock'), ('key-tenant-00', 'ollama')`); err != nil {
+		t.Fatal(err)
+	}
+	// Every column, created_at too. The upsert rewrites a channel row with the same
+	// values, so the row version is not compared.
+	const previousRows = `SELECT to_jsonb(c)::text FROM access.channels AS c WHERE c.id IN ('mock', 'ollama')
+		UNION ALL SELECT to_jsonb(m)::text FROM access.channel_models AS m WHERE m.channel_id IN ('mock', 'ollama')
+		ORDER BY 1`
+	before := texts(t, pool, previousRows)
+	for range 2 {
+		if _, err := seed.Run(ctx, pool, cfg, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if after := texts(t, pool, previousRows); !slices.Equal(after, before) {
+		t.Errorf("mock and ollama rows after seeding = %v, want them unchanged %v", after, before)
+	}
+	if got := texts(t, pool, "SELECT id FROM access.channels ORDER BY id COLLATE \"C\""); !slices.Equal(got,
+		[]string{"mock", "mock-responses", "ollama", "ollama-responses"}) {
+		t.Errorf("channels = %v, want the two seeded before and their Responses twins", got)
+	}
+	keyChannels := "SELECT channel_id FROM access.api_key_channels WHERE key_id = 'key-tenant-00' ORDER BY channel_id COLLATE \"C\""
+	if got := texts(t, pool, keyChannels); !slices.Equal(got, []string{"mock", "mock-responses", "ollama", "ollama-responses"}) {
+		t.Errorf("channels of the key seeded before = %v, want all four", got)
 	}
 }
 
