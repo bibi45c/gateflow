@@ -9,6 +9,9 @@
 //	mock-500          HTTP 500 api_error
 //	mock-drop         a long text stream whose connection closes after K events
 //	mock-error-event  a long text stream that sends an error event after K events
+//	mock-load         a text stream for load tests, shaped by Load: MOCK_LOAD_EVENTS
+//	                  deltas of MOCK_LOAD_EVENT_BYTES bytes, one every
+//	                  MOCK_LOAD_INTERVAL_MS
 //
 // Usage follows two formulas: input_tokens = ceil(request body bytes / 4), and
 // output_tokens = the number of text and tool input deltas the reply streams, which a
@@ -54,10 +57,17 @@ type Timing struct {
 	// FailAfterEvents is K, the number of events mock-drop and mock-error-event
 	// send before they fail.
 	FailAfterEvents int
+	// Load shapes the stream of mock-load, which paces its events by Load.Interval
+	// instead of EventInterval.
+	Load Load
+	// fixedRate times each event from the start of the stream; forModel sets it
+	// for mock-load only.
+	fixedRate bool
 }
 
-// DefaultTiming sends every event at once and fails after three events.
-var DefaultTiming = Timing{FailAfterEvents: 3}
+// DefaultTiming sends every event at once, fails after three events, and streams
+// DefaultLoad for mock-load.
+var DefaultTiming = Timing{FailAfterEvents: 3, Load: DefaultLoad}
 
 // timingSettings lists the environment variables that set Timing, each with the
 // request header that overrides it for one request. Compose sets the first two;
@@ -78,8 +88,9 @@ var timingSettings = []struct {
 	}},
 }
 
-// TimingFromEnv returns DefaultTiming with the values set in the environment. It
-// fails when a value is not a non-negative integer.
+// TimingFromEnv returns DefaultTiming with the values set in the environment,
+// including the MOCK_LOAD_* variables of loadSettings. It fails when a value is not
+// a non-negative integer, or is out of range for Load.
 func TimingFromEnv() (Timing, error) {
 	timing := DefaultTiming
 	for _, setting := range timingSettings {
@@ -92,6 +103,9 @@ func TimingFromEnv() (Timing, error) {
 			return Timing{}, fmt.Errorf("%s: %q is not a non-negative integer", setting.env, value)
 		}
 		setting.set(&timing, n)
+	}
+	if err := loadFromEnv(&timing.Load); err != nil {
+		return Timing{}, err
 	}
 	return timing, nil
 }
@@ -165,7 +179,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	req, failure := h.readRequest(w, r)
 	if failure == nil {
 		var rep reply
-		if rep, failure = replyFor(req); failure == nil {
+		if rep, failure = replyFor(req, h.timing.Load); failure == nil {
 			h.answer(w, r, req, rep)
 			return
 		}
@@ -181,7 +195,7 @@ func (h *Handler) answer(w http.ResponseWriter, r *http.Request, req *request, r
 	failMode := failureModes[req.model]
 	if req.stream {
 		events := h.proto.streamEvents(rep, req.inputTokens())
-		h.writeStream(w, r, events, h.timing.withHeaders(r.Header), failMode)
+		h.writeStream(w, r, events, h.timing.withHeaders(r.Header).forModel(req.model), failMode)
 		return
 	}
 	switch failMode {

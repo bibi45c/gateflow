@@ -81,13 +81,15 @@ func TestTimingFromEnv(t *testing.T) {
 	t.Setenv("MOCK_FIRST_EVENT_DELAY_MS", "")
 	t.Setenv("MOCK_EVENT_INTERVAL_MS", "")
 	t.Setenv("MOCK_FAIL_AFTER_EVENTS", "")
+	clearLoadEnv(t)
 	if got, err := TimingFromEnv(); err != nil || got != DefaultTiming {
 		t.Errorf("unset: %+v, %v; want %+v", got, err, DefaultTiming)
 	}
 	t.Setenv("MOCK_FIRST_EVENT_DELAY_MS", "250")
 	t.Setenv("MOCK_EVENT_INTERVAL_MS", "20")
 	t.Setenv("MOCK_FAIL_AFTER_EVENTS", "0")
-	want := Timing{FirstEventDelay: 250 * time.Millisecond, EventInterval: 20 * time.Millisecond}
+	want := Timing{FirstEventDelay: 250 * time.Millisecond, EventInterval: 20 * time.Millisecond,
+		Load: DefaultLoad}
 	if got, err := TimingFromEnv(); err != nil || got != want {
 		t.Errorf("set: %+v, %v; want %+v", got, err, want)
 	}

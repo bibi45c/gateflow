@@ -43,7 +43,7 @@ var failureModes = map[string]failure{
 
 // scenarioNames lists the model names the mock serves, for the not-found message.
 const scenarioNames = "mock-text, mock-tool, mock-coding, mock-429, mock-500, mock-drop, " +
-	"mock-error-event"
+	"mock-error-event, mock-load"
 
 // reply is the message a scenario answers with.
 type reply struct {
@@ -63,11 +63,13 @@ type block struct {
 }
 
 // replyFor returns the reply of the scenario that req's model names, or the error
-// that the scenario answers with instead.
-func replyFor(req *request) (reply, *apiError) {
+// that the scenario answers with instead. load shapes the reply of mock-load.
+func replyFor(req *request, load Load) (reply, *apiError) {
 	switch req.model {
 	case "mock-text":
 		return textReply(req.model, textAnswer), nil
+	case loadModel:
+		return loadReply(req.model, load), nil
 	case "mock-drop", "mock-error-event":
 		return textReply(req.model, longAnswer), nil
 	case "mock-tool":

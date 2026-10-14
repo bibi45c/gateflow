@@ -183,7 +183,8 @@ func streamEvents(rep reply, inputTokens int64) []event {
 }
 
 // writeStream sends events as server-sent events, flushing each one, at the pace
-// timing sets. A failing scenario sends only the first K events, and never the last
+// timing sets. With timing.fixedRate, each wait counts from when the previous event
+// was due rather than when it was sent, so late wake-ups do not add up. A failing scenario sends only the first K events, and never the last
 // one, which ends the stream, then closes the connection or sends the protocol's
 // error event.
 func (h *Handler) writeStream(w http.ResponseWriter, r *http.Request, events []event, timing Timing,
@@ -200,10 +201,15 @@ func (h *Handler) writeStream(w http.ResponseWriter, r *http.Request, events []e
 		events = append(events, h.proto.errorEvent(len(events)))
 	}
 	sse := sse.NewWriter(w)
+	due := time.Now()
 	for i, e := range events {
 		wait := timing.EventInterval
 		if i == 0 {
 			wait = timing.FirstEventDelay
+		}
+		if timing.fixedRate {
+			due = due.Add(wait)
+			wait = time.Until(due)
 		}
 		if !sleep(r.Context(), wait) {
 			return
