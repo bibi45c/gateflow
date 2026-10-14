@@ -101,6 +101,14 @@ func TestRequestChecks(t *testing.T) {
 		{"max_tokens a string", `{"model":"m","max_tokens":"10"}`, key, false, 400, anthropic.ErrorTypeInvalidRequest},
 		{"stream not a boolean", `{"model":"m","max_tokens":1,"stream":"yes"}`, key, false, 400,
 			anthropic.ErrorTypeInvalidRequest},
+		{"max_tokens again in another case", `{"model":"m","max_tokens":16,"MAX_TOKENS":120}`, key, false, 400,
+			anthropic.ErrorTypeInvalidRequest},
+		{"max_tokens in another case first", `{"model":"m","Max_Tokens":120,"max_tokens":16}`, key, false, 400,
+			anthropic.ErrorTypeInvalidRequest},
+		{"model in another case", `{"Model":"other","model":"m","max_tokens":1}`, key, false, 400,
+			anthropic.ErrorTypeInvalidRequest},
+		{"stream with a long s", "{\"model\":\"m\",\"max_tokens\":1,\"\U0000017ftream\":true}", key, false, 400,
+			anthropic.ErrorTypeInvalidRequest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

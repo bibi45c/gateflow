@@ -8,14 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // DecodeMembers decodes each member of the JSON object in data that targets names
 // into its target, matching names exactly. A null member leaves a target unchanged,
 // except that a pointer target becomes nil. Other members are checked for syntax only.
 // A named member that appears twice is an error, so that no other reader of the same
-// bytes can see a different value. Every error wraps malformed and may name a member,
-// but never quotes the input.
+// bytes can see a different value. So is a member whose name is not a target's but
+// equals one under Unicode case folding, such as "MAX_TOKENS" for "max_tokens":
+// readers that ignore case, as Go's encoding/json does, take it for the target. Every
+// error wraps malformed and may name a member, but never quotes the input.
 func DecodeMembers(data []byte, targets map[string]any, malformed error) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	if token, err := dec.Token(); err != nil || token != json.Delim('{') {
@@ -31,6 +34,11 @@ func DecodeMembers(data []byte, targets map[string]any, malformed error) error {
 		target, wanted := targets[name]
 		switch {
 		case !wanted:
+			for other := range targets {
+				if strings.EqualFold(name, other) {
+					return caseVariant(malformed, other)
+				}
+			}
 			target = new(json.RawMessage)
 		case seen[name]:
 			return fmt.Errorf("%w: member %q appears twice", malformed, name)
@@ -65,9 +73,9 @@ type Span struct {
 
 // FindMember returns where the value of the member called name lies in the JSON
 // object in data. Like DecodeMembers, it matches names exactly, fails when the member
-// appears twice and checks the syntax of the whole object, but it does not check the
-// member's type. Only the object's own members count, not those of nested objects.
-// Every error wraps malformed.
+// appears twice or a name equals it only under case folding, and checks the syntax of
+// the whole object, but it does not check the member's type. Only the object's own
+// members count, not those of nested objects. Every error wraps malformed.
 func FindMember(data []byte, name string, malformed error) (Span, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	if token, err := dec.Token(); err != nil || token != json.Delim('{') {
@@ -82,6 +90,9 @@ func FindMember(data []byte, name string, malformed error) (Span, error) {
 		}
 		if member == name && span.Found {
 			return Span{}, fmt.Errorf("%w: member %q appears twice", malformed, name)
+		}
+		if member != name && strings.EqualFold(member, name) {
+			return Span{}, caseVariant(malformed, name)
 		}
 		// A RawMessage holds the value without the spaces around it, and the decoder
 		// stops right after the value, so the value ends at the decoder's offset.
@@ -99,6 +110,12 @@ func FindMember(data []byte, name string, malformed error) (Span, error) {
 		return Span{}, err
 	}
 	return span, nil
+}
+
+// caseVariant is the error for a member whose name equals name only under case
+// folding. It names name, not the member, so that it never quotes the input.
+func caseVariant(malformed error, name string) error {
+	return fmt.Errorf("%w: a member name differs from %q only in case", malformed, name)
 }
 
 // checkEnd reads the "}" that closes the object and checks that nothing follows it.

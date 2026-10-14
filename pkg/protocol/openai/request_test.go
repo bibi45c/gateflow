@@ -117,7 +117,7 @@ func TestParseRequestPreviousResponseID(t *testing.T) {
 		{`{"model":"m","previous_response_id":null}`, "absent"},
 		{`{"model":"m","previous_response_id":"resp_100792"}`, `"resp_100792"`},
 		{`{"model":"m","previous_response_id":""}`, `""`},
-		{`{"model":"m","Previous_Response_ID":"resp_1"}`, "absent"},
+		{`{"model":"m","previous_response":"resp_1","response_id":"resp_2"}`, "absent"},
 	}
 	for _, c := range cases {
 		req, err := ParseRequest([]byte(c.body))
@@ -143,7 +143,7 @@ func TestParseRequestAbsentAndNullMembers(t *testing.T) {
 		{`{"model":null,"stream":null,"max_output_tokens":null,"previous_response_id":null,"tools":null}`, "", false, "absent", "absent"},
 		{`{}`, "", false, "absent", "absent"},
 		{" \n{\"model\":\"m\",\"stream\":true}\n ", "m", true, "absent", "absent"},
-		{`{"Model":"x","MAX_OUTPUT_TOKENS":5,"Stream":true,"Tools":[1],"model":"m"}`, "m", false, "absent", "absent"},
+		{`{"Metadata":{},"METADATA":[],"model":"m","max_output_tokens_x":5}`, "m", false, "absent", "absent"},
 		{`{"model":"m","max_output_tokens":9223372036854775807}`, "m", false, "9223372036854775807", "absent"},
 		{`{"model":"m","text":{"max_output_tokens":"x"},"max_output_tokens":7}`, "m", false, "7", "absent"},
 		{`{"model":"m","tools":[{"type":"web_search"},{"type":"function","name":"f","parameters":{"name":5}},{}]}`,
@@ -212,6 +212,44 @@ func TestParseRequestRejectsMalformedBodies(t *testing.T) {
 	}
 }
 
+// A name that equals one of the five members only under case folding makes the body
+// malformed, before or after the exact name or alone: an upstream that matches names
+// without case, such as Ollama, reads the last of them, so it could generate past the
+// max_output_tokens the gateway read. U+212A, the Kelvin sign, folds to k and U+017F,
+// the long s, to s.
+func TestParseRequestRejectsCaseVariants(t *testing.T) {
+	bodies := []string{
+		`{"model":"m","Model":"secret-value"}`,
+		`{"MODEL":"secret-value","model":"m"}`,
+		`{"mODEL":"secret-value"}`,
+		`{"model":"m","stream":false,"Stream":true}`,
+		`{"model":"m","STREAM":true,"stream":false}`,
+		"{\"model\":\"m\",\"\\u017ftream\":true}",
+		`{"model":"m","max_output_tokens":16,"MAX_OUTPUT_TOKENS":120}`,
+		`{"model":"m","Max_Output_Tokens":120,"max_output_tokens":16}`,
+		`{"model":"m","MAX_OUTPUT_TOKENS":120}`,
+		"{\"model\":\"m\",\"max_output_tokens\":16,\"max_output_to\U0000212aens\":120}",
+		"{\"model\":\"m\",\"max_output_tokens\":16,\"max_output_token\U0000017f\":120}",
+		`{"model":"m","previous_response_id":"resp_1","PREVIOUS_RESPONSE_ID":"secret-value"}`,
+		`{"model":"m","Previous_Response_ID":"secret-value","previous_response_id":"resp_1"}`,
+		`{"model":"m","Previous_Response_ID":"resp_1"}`,
+		`{"model":"m","tools":[],"Tools":[{"type":"function","name":"secret-value"}]}`,
+		`{"model":"m","TOOLS":[],"tools":[]}`,
+		"{\"model\":\"m\",\"\\u0074OOLS\":[1]}",
+		`{"Model":"x","MAX_OUTPUT_TOKENS":5,"Stream":true,"Tools":[1],"model":"m"}`,
+	}
+	for _, body := range bodies {
+		_, err := ParseRequest([]byte(body))
+		if !errors.Is(err, ErrMalformed) {
+			t.Errorf("%q: got %v, want ErrMalformed", body, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "secret") {
+			t.Errorf("%q: the error quotes the input: %v", body, err)
+		}
+	}
+}
+
 func TestSetMaxOutputTokens(t *testing.T) {
 	cases := []struct{ name, body, want string }{
 		{"absent", `{"model":"m","stream":true}`, `{"model":"m","stream":true,"max_output_tokens":4096}`},
@@ -225,8 +263,8 @@ func TestSetMaxOutputTokens(t *testing.T) {
 		{"empty, spaced", "{ }", `{"max_output_tokens":4096 }`},
 		{"nested member", `{"text":{"max_output_tokens":1},"model":"m"}`,
 			`{"text":{"max_output_tokens":1},"model":"m","max_output_tokens":4096}`},
-		{"case variant", `{"MAX_OUTPUT_TOKENS":1}`, `{"MAX_OUTPUT_TOKENS":1,"max_output_tokens":4096}`},
-		{"escaped name", `{"max_output_tokens":null}`, `{"max_output_tokens":4096}`},
+		{"case variants of another member", `{"Metadata":1,"METADATA":2}`, `{"Metadata":1,"METADATA":2,"max_output_tokens":4096}`},
+		{"escaped name", "{\"max\\u005foutput_tokens\":null}", "{\"max\\u005foutput_tokens\":4096}"},
 	}
 	for _, c := range cases {
 		body := []byte(c.body)
@@ -283,6 +321,12 @@ func TestSetMaxOutputTokensRejectsMalformedBodies(t *testing.T) {
 		`{"model":"m",}`,
 		`{"model":[secret-value]}`,
 		`{"max_output_tokens":1,"max_output_tokens":null}`,
+		"{\"max_output_tokens\":1,\"max\\u005foutput_tokens\":2}",
+		`{"MAX_OUTPUT_TOKENS":1}`,
+		`{"max_output_tokens":16,"MAX_OUTPUT_TOKENS":120}`,
+		`{"Max_Output_Tokens":120,"max_output_tokens":16}`,
+		"{\"max_output_tokens\":16,\"max_output_to\\u212aens\":120}",
+		"{\"max_output_token\U0000017f\":120,\"max_output_tokens\":16}",
 		"{\"model\":\"m\xff\"}",
 		"\xef\xbb\xbf{\"model\":\"m\"}",
 	}
