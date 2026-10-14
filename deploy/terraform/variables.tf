@@ -23,3 +23,29 @@ variable "vpc_cidr" {
   default = "10.40.0.0/16"
 }
 
+variable "operator_principal_arn" { type = string }
+variable "operator_cidrs" { type = list(string) }
+variable "kubernetes_version" {
+  type    = string
+  default = "1.35"
+}
+variable "service_instance_type" {
+  type    = string
+  default = "m6i.large"
+}
+variable "service_node_count" {
+  type    = number
+  default = 3
+}
+variable "generator_instance_type" {
+  type    = string
+  default = "c6i.xlarge"
+}
+variable "generator_node_count" {
+  type    = number
+  default = 1
+}
+variable "node_disk_gb" {
+  type    = number
+  default = 20
+}

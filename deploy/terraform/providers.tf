@@ -6,4 +6,3 @@ provider "aws" {
 locals {
   tags = merge(var.tags, { Project = "gateflow", Environment = var.environment })
 }
-

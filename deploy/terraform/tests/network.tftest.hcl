@@ -47,4 +47,3 @@ run "invalid_cidr" {
   }
   expect_failures = [var.vpc_cidr]
 }
-

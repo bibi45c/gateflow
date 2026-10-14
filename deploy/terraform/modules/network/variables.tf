@@ -15,4 +15,3 @@ variable "availability_zones" {
   }
 }
 variable "tags" { type = map(string) }
-
