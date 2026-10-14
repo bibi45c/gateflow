@@ -14,7 +14,7 @@ func (x *exchange) result() Result {
 		// send both as 0.
 		return Result{Outcome: outcome, InputTokens: new(int64), OutputTokens: new(int64)}
 	}
-	input, output := x.usage.counts()
+	input, output := x.observer.counts()
 	return Result{Outcome: outcome, InputTokens: input, OutputTokens: output}
 }
 
@@ -34,9 +34,9 @@ func (x *exchange) outcome() string {
 	}
 }
 
-// usage collects the token counts of a reply by the usage source of #18. The input
-// total is input_tokens plus the two cache counts, from message_start, replaced by a
-// later message_delta whose input total is above 0. The output count is the
+// usage collects the token counts of a Messages reply by the usage source of #18. The
+// input total is input_tokens plus the two cache counts, from message_start, replaced
+// by a later message_delta whose input total is above 0. The output count is the
 // output_tokens of the last message_delta. A non-streaming body's usage counts the
 // same way. A negative count is never reported: a total holding one is unknown.
 type usage struct {

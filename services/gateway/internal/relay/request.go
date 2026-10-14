@@ -41,18 +41,14 @@ var (
 // gateway sends when the upstream fails.
 const upstreamFailedMessage = "The upstream model service failed."
 
-// Messages of the 400 invalid_request_error answers.
-const (
-	msgUnreadable = "The request body could not be read."
-	msgMalformed  = "The request body must be a JSON object with a string model, an integer max_tokens and a boolean stream."
-	msgModel      = "model must be a non-empty string."
-	msgMaxTokens  = "max_tokens must be an integer from 1 to 32768."
-)
+// msgUnreadable is the message of the 400 for a body that could not be read.
+const msgUnreadable = "The request body could not be read."
 
 // checkRequest reads and checks a request in the order of #18: body size, gateway key
-// present, then JSON, model and max_tokens. It fills call as it goes, so that the
-// access log has what was read even when a check fails.
-func checkRequest(w http.ResponseWriter, r *http.Request, call *Call) ([]byte, *PublicError) {
+// present, then the body members that the endpoint's protocol checks. It fills call as
+// it goes, so that the access log has what was read even when a check fails. It
+// returns the body to send upstream.
+func (h *handler) checkRequest(w http.ResponseWriter, r *http.Request, call *Call) ([]byte, *PublicError) {
 	body, perr := readBody(w, r)
 	if perr != nil {
 		return nil, perr
@@ -62,19 +58,7 @@ func checkRequest(w http.ResponseWriter, r *http.Request, call *Call) ([]byte, *
 	if call.GatewayKey == "" {
 		return nil, errMissingKey
 	}
-	req, err := anthropic.ParseRequest(body)
-	if err != nil {
-		return nil, invalidRequest(msgMalformed)
-	}
-	if req.Model == "" {
-		return nil, invalidRequest(msgModel)
-	}
-	call.Model = req.Model
-	if req.MaxTokens == nil || *req.MaxTokens < 1 || *req.MaxTokens > maxMaxTokens {
-		return nil, invalidRequest(msgMaxTokens)
-	}
-	call.MaxTokens = *req.MaxTokens
-	return body, nil
+	return h.proto.checkBody(body, call)
 }
 
 // readBody reads the request body, refusing one over maxBodyBytes. w must be the
@@ -115,9 +99,10 @@ func invalidRequest(message string) *PublicError {
 	}
 }
 
-// writeError writes e as an Anthropic error response.
-func writeError(w http.ResponseWriter, e *PublicError) {
-	body, _ := json.Marshal(anthropic.NewErrorBody(e.Type, e.Message)) // strings always encode
+// writeError writes e as an error response, in the error body of the handler's
+// protocol.
+func (h *handler) writeError(w http.ResponseWriter, e *PublicError) {
+	body, _ := json.Marshal(h.proto.errorBody(e)) // strings always encode
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(e.Status)
 	_, _ = w.Write(body)

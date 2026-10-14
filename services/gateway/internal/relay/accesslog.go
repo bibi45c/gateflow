@@ -55,7 +55,7 @@ func (h *handler) logAccess(r *http.Request, w *recorder, call *Call, start time
 	}
 	route := r.Pattern
 	if route == "" {
-		route = messagesPath
+		route = h.proto.path()
 	}
 	h.logger.Info("request",
 		"method", r.Method,
