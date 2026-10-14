@@ -1,17 +1,20 @@
-// Package mock serves a fake Anthropic Messages endpoint. The request's model name
-// picks a fixed scenario, so the same request always gets the same bytes back:
+// Package mock serves a fake Anthropic Messages endpoint and a fake OpenAI Responses
+// endpoint. The request's model name picks a fixed scenario, so the same request
+// always gets the same bytes back, in the protocol of the endpoint:
 //
 //	mock-text         one text block
-//	mock-tool         one tool_use of the first tool in the request's tools
+//	mock-tool         one call of the first tool in the request's tools
 //	mock-coding       a coding script that reads, edits and tests calc.py, then answers
 //	mock-429          HTTP 429 rate_limit_error, with retry-after: 1
 //	mock-500          HTTP 500 api_error
 //	mock-drop         a long text stream whose connection closes after K events
-//	mock-error-event  a long text stream that sends event: error after K events
+//	mock-error-event  a long text stream that sends an error event after K events
 //
 // Usage follows two formulas: input_tokens = ceil(request body bytes / 4), and
-// output_tokens = the number of content_block_delta events, which a non-streaming
-// reply counts as if it had streamed. The cache counts are always 0.
+// output_tokens = the number of text and tool input deltas the reply streams, which a
+// non-streaming reply counts as if it had streamed. The cache counts are always 0; on
+// Responses, so is reasoning_tokens, and total_tokens is the sum of the two counts.
+// A Responses request offers only its function tools to the scenarios.
 package mock
 
 import (
@@ -111,18 +114,42 @@ func parseCount(value string) (int, bool) {
 	return int(n), err == nil
 }
 
-// Handler serves POST /v1/messages.
+// Handler serves one endpoint of the mock: POST /v1/messages or POST /v1/responses.
 type Handler struct {
 	timing Timing
+	proto  protocol
 }
 
-// NewHandler returns a Handler that paces streams by timing, unless a request's
-// X-Mock-* headers override it.
+// protocol is the wire format of an endpoint: how it reads a request and writes the
+// replies and errors of the scenarios.
+type protocol interface {
+	// readRequest reads and checks a request body.
+	readRequest(body []byte) (*request, *apiError)
+	// errorBody returns the body of an error response.
+	errorBody(failure *apiError) any
+	// responseBody returns the non-streaming response body of rep.
+	responseBody(rep reply, inputTokens int64) any
+	// streamEvents returns every event of the stream of rep; the last one ends it.
+	streamEvents(rep reply, inputTokens int64) []event
+	// errorEvent returns the error event that mock-error-event sends after the first
+	// sent events.
+	errorEvent(sent int) event
+}
+
+// NewHandler returns a Handler for POST /v1/messages that paces streams by timing,
+// unless a request's X-Mock-* headers override it.
 func NewHandler(timing Timing) *Handler {
-	return &Handler{timing: timing}
+	return &Handler{timing: timing, proto: messages{}}
 }
 
-// apiError is an error the mock answers with an Anthropic error body.
+// NewResponsesHandler returns a Handler for POST /v1/responses that paces streams
+// like NewHandler.
+func NewResponsesHandler(timing Timing) *Handler {
+	return &Handler{timing: timing, proto: responses{}}
+}
+
+// apiError is an error the mock answers with an error body. The error types of the
+// two protocols have the same names.
 type apiError struct {
 	status    int
 	errorType string
@@ -133,25 +160,28 @@ func invalidRequest(message string) *apiError {
 	return &apiError{http.StatusBadRequest, anthropic.ErrorTypeInvalidRequest, message}
 }
 
-// ServeHTTP answers a Messages request with the scenario its model names.
+// ServeHTTP answers a request with the scenario its model names.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	req, failure := readRequest(w, r)
-	if failure != nil {
-		writeError(w, failure)
-		return
-	}
-	rep, failure := replyFor(req)
-	if failure != nil {
-		if failure.status == http.StatusTooManyRequests {
-			w.Header().Set("retry-after", "1")
+	req, failure := h.readRequest(w, r)
+	if failure == nil {
+		var rep reply
+		if rep, failure = replyFor(req); failure == nil {
+			h.answer(w, r, req, rep)
+			return
 		}
-		writeError(w, failure)
-		return
 	}
+	if failure.status == http.StatusTooManyRequests {
+		w.Header().Set("retry-after", "1")
+	}
+	h.writeError(w, failure)
+}
+
+// answer sends rep, or fails as the scenario of req says.
+func (h *Handler) answer(w http.ResponseWriter, r *http.Request, req *request, rep reply) {
 	failMode := failureModes[req.model]
 	if req.stream {
-		events := streamEvents(rep, req.inputTokens())
-		writeStream(w, r, events, h.timing.withHeaders(r.Header), failMode)
+		events := h.proto.streamEvents(rep, req.inputTokens())
+		h.writeStream(w, r, events, h.timing.withHeaders(r.Header), failMode)
 		return
 	}
 	switch failMode {
@@ -159,18 +189,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Close the connection before any response, as a dropped upstream would.
 		panic(http.ErrAbortHandler)
 	case failErrorEvent:
-		writeError(w, &apiError{statusOverloaded, errorTypeOverloaded, overloadedMessage})
+		h.writeError(w, &apiError{statusOverloaded, errorTypeOverloaded, overloadedMessage})
 	default:
-		writeJSON(w, http.StatusOK, messageBody(rep, req.inputTokens()))
+		writeJSON(w, http.StatusOK, h.proto.responseBody(rep, req.inputTokens()))
 	}
 }
 
-// request holds what the mock reads from a Messages request.
+// request holds what the mock reads from a request.
 type request struct {
 	model       string
 	stream      bool
 	bodyBytes   int
-	toolResults int
+	toolResults int // tool_result blocks or function_call_output items
 	tools       []tool
 }
 
@@ -179,8 +209,8 @@ func (r *request) inputTokens() int64 {
 	return int64(r.bodyBytes+3) / 4
 }
 
-// readRequest reads and checks the request body.
-func readRequest(w http.ResponseWriter, r *http.Request) (*request, *apiError) {
+// readRequest reads the request body and lets the protocol check it.
+func (h *Handler) readRequest(w http.ResponseWriter, r *http.Request) (*request, *apiError) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	var tooLarge *http.MaxBytesError
 	switch {
@@ -190,42 +220,11 @@ func readRequest(w http.ResponseWriter, r *http.Request) (*request, *apiError) {
 	case err != nil:
 		return nil, invalidRequest("could not read the request body")
 	}
-	parsed, err := anthropic.ParseRequest(body)
-	if err != nil {
-		return nil, invalidRequest("request body is not valid JSON: " + err.Error())
-	}
-	if parsed.MaxTokens == nil {
-		return nil, invalidRequest("max_tokens: field required")
-	}
-	var members struct {
-		Messages []struct {
-			Content json.RawMessage `json:"content"`
-		} `json:"messages"`
-		Tools []tool `json:"tools"`
-	}
-	if err := json.Unmarshal(body, &members); err != nil {
-		return nil, invalidRequest("messages or tools have the wrong shape")
-	}
-	req := &request{model: parsed.Model, stream: parsed.Stream, bodyBytes: len(body),
-		tools: members.Tools}
-	for _, message := range members.Messages {
-		var blocks []struct {
-			Type string `json:"type"`
-		}
-		// A content string holds no blocks, so a failed decode counts none.
-		if json.Unmarshal(message.Content, &blocks) == nil {
-			for _, block := range blocks {
-				if block.Type == "tool_result" {
-					req.toolResults++
-				}
-			}
-		}
-	}
-	return req, nil
+	return h.proto.readRequest(body)
 }
 
-func writeError(w http.ResponseWriter, failure *apiError) {
-	writeJSON(w, failure.status, anthropic.NewErrorBody(failure.errorType, failure.message))
+func (h *Handler) writeError(w http.ResponseWriter, failure *apiError) {
+	writeJSON(w, failure.status, h.proto.errorBody(failure))
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
