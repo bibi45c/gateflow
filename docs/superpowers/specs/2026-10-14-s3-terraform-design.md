@@ -25,6 +25,36 @@ Helm providers, so validation never depends on a live cluster. Pin provider
 versions and commit the dependency lock file. Keep provider/account configuration
 at the root. CI runs only fmt, backend-free init and validate, without AWS secrets.
 
+## Budget basis and review limits
+
+The authoritative budget is the lead's record on #29, not the earlier independent
+24-hour draft. Use Singapore and four eight-hour cloud days (17, 18, 19 and
+21 October): 32 resource-hours, including setup and teardown. The recorded S3
+estimate is about USD 31, or about USD 47 with a 50% margin. The lead's account
+has USD 200 credits, recorded as expiring 12 October 2027. The account holder
+confirms remaining eligible credits immediately before deploying.
+
+This design preserves three m6i.large service nodes, one c6i.xlarge generator,
+db.t4g.small Single-AZ RDS and one NAT gateway. The older #29 table includes Redis;
+the newer #30 requirement and feasibility plan explicitly remove it. No replacement
+cache service is added, and no bigger instances or additional nodes are assumed.
+Two-AZ networking does not enable the more expensive Multi-AZ database option.
+
+Matching instance sizes alone does not prove a sub-USD-50 bill. The earlier estimate
+bundles CloudWatch/EBS/transfer into about USD 3 and assumes about one ALB LCU.
+The design also introduces managed-password secret storage, database storage and
+an external state backend. bibi45c must reconcile these costs, actual ALB/network
+usage, any CPU-credit charges and resource lifetimes when reviewing the AWS plan.
+Keep those costs visible rather than treating USD 200 credits as permission to
+increase scope. If the plan exceeds the agreed budget, return to the owner before
+changing sizes or provisioning. The whole-project allowance and model API costs
+in later #29 comments are separate from the S3 experiment budget.
+
+The account holder reports that the budget alert/deny action already exists and
+will raise its threshold to USD 50 before experiments. It blocks specified new
+resource operations at the threshold but does not stop running resources. Do not
+duplicate or change it in #30; daily teardown remains essential.
+
 ## Network
 
 - Default Singapore region `ap-southeast-1`; explicit pair of AZ names provided by
@@ -54,6 +84,12 @@ at the root. CI runs only fmt, backend-free init and validate, without AWS secre
   counts and disk sizes are variables. No cluster autoscaler is installed.
 - Stable workload labels distinguish groups. A NoSchedule taint isolates the
   generator group; #73's generator requires a matching selector/toleration.
+- Three m6i.large nodes provide six raw vCPUs, less after Kubernetes/system overhead.
+  Four 1-vCPU gateway Pods leave limited room for the mock, services and monitoring.
+  #71 must verify allocatable capacity and all Pod requests before cloud experiments;
+  do not claim that the full workload fits merely because the nominal CPU sums fit.
+  If it does not fit, escalate the sizing/budget trade-off rather than silently adding
+  a node or making the generator share the gateway's compute.
 - Use explicit node/security groups and required EKS control-plane communication,
   including controller webhook traffic. The DB rule references the service group.
 - Cluster/node IAM roles have required AWS-managed EKS policies. OIDC provider
@@ -122,6 +158,8 @@ not blind rollback or destroy. Changes to these boundaries need owner review.
 
 - [Issue #30](https://github.com/bibi45c/gateflow/issues/30)
 - [Recorded budget](https://github.com/bibi45c/gateflow/issues/29#issuecomment-6146539645)
+- [Whole-project allowance](https://github.com/bibi45c/gateflow/issues/29#issuecomment-6146585183)
+- [Existing spending controls](https://github.com/bibi45c/gateflow/issues/29#issuecomment-6146682422)
 - [EKS versions](https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html)
 - [KEDA 2.20 compatibility](https://keda.sh/docs/2.20/operate/cluster/)
 - [Controller IRSA installation](https://docs.aws.amazon.com/eks/latest/userguide/lbc-helm.html)
