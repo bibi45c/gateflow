@@ -27,6 +27,9 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `OLLAMA_CONTEXT_LENGTH` | ollama, with the `ollama` profile only | `64000` | Context the Ollama container asks for; Ollama caps it at the model's maximum |
 | `MOCK_FIRST_EVENT_DELAY_MS` | mock-upstream | `0` | Delay before the first stream event |
 | `MOCK_EVENT_INTERVAL_MS` | mock-upstream | `0` | Delay between stream events |
+| `MOCK_LOAD_EVENTS` | mock-upstream | `200` | Text deltas in a `mock-load` stream |
+| `MOCK_LOAD_INTERVAL_MS` | mock-upstream | `100` | Delay between the events of a `mock-load` stream, in place of `MOCK_EVENT_INTERVAL_MS` |
+| `MOCK_LOAD_EVENT_BYTES` | mock-upstream | `256` | Bytes of text in each `mock-load` delta |
 | `POSTGRES_PASSWORD` | postgres | `gateflow-local-only` | Password of the `gateflow` superuser |
 | `SHUTDOWN_DRAIN_DELAY` | every service and the mock upstream; compose leaves it unset | `0s` | Go duration a stopping process keeps serving, with `/readyz` answering 503, before it closes its listener |
 | `SHUTDOWN_TIMEOUT` | every service and the mock upstream; compose leaves it unset | `10s` | Go duration a stopping process waits for in-flight requests before it closes them; `stop_grace_period` must exceed the drain delay plus this |
