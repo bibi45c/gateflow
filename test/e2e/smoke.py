@@ -5,12 +5,13 @@ root:
 
     python test/e2e/smoke.py [--project <compose-project>]
 
-It sends requests through the gateway on 127.0.0.1:$GATEWAY_PORT (default 8080), so
-each passes gateway, access, metering and the mock upstream, and then reads the
-metering ledger with psql inside the compose postgres container. The seeded keys are
-derived from ACCESS_SEED_SECRET (default: the compose default) exactly as
-`access seed` derives them. Each check prints one PASS or FAIL line; the exit code
-is 0 only when every check passed. Only the standard library is used.
+It sends requests through the gateway on 127.0.0.1:$GATEWAY_PORT (default 8080), to
+POST /v1/messages and then to POST /v1/responses, so each passes gateway, access,
+metering and the mock upstream, and then reads the metering ledger and reservations
+with psql inside the compose postgres container. The seeded keys are derived from
+ACCESS_SEED_SECRET (default: the compose default) exactly as `access seed` derives
+them. Each check prints one PASS or FAIL line; the exit code is 0 only when every
+check passed. Only the standard library is used.
 """
 import argparse
 import base64
@@ -33,6 +34,11 @@ HOST = "127.0.0.1"
 HTTP_TIMEOUT = 30  # seconds, for every request and for each psql call
 LEDGER_WAIT = 5  # seconds to wait for the ledger entries of the relayed calls
 MAX_BODY_BYTES = 2 << 20  # the gateway's request body limit
+MESSAGES_PATH = "/v1/messages"
+RESPONSES_PATH = "/v1/responses"
+# The output bound the gateway holds, and sends upstream, for a Responses request
+# without max_output_tokens.
+DEFAULT_OUTPUT_BOUND = 32768
 CALL_ID = re.compile(r"req_[0-9a-f-]{36}")
 # A model that matches no channel of the seeded keys: mock-* and the Ollama model.
 UNSERVED_MODEL = "e2e-unserved-model"
@@ -45,6 +51,13 @@ TOOL = {
         "required": ["city"],
     },
 }
+# TOOL as a Responses function tool.
+FUNCTION_TOOL = {"type": "function", "name": TOOL["name"], "description": TOOL["description"],
+                 "parameters": TOOL["input_schema"]}
+RESPONSES_TOOL_EVENTS = ("response.created, response.in_progress, response.output_item.added, "
+                         "response.function_call_arguments.delta..., "
+                         "response.function_call_arguments.done, response.output_item.done, "
+                         "response.completed")
 
 
 def derive_key(secret, tenant_id):
@@ -58,14 +71,57 @@ def valid_call_id(value):
     return isinstance(value, str) and CALL_ID.fullmatch(value) is not None
 
 
-def ledger_sql(call_ids):
-    """The query of the ledger entries of call_ids, one "call_id|outcome" row each."""
+def quoted_ids(call_ids):
+    """call_ids as a SQL list; raises ValueError for anything but a gateway request id."""
     for call_id in call_ids:
         if not valid_call_id(call_id):
             raise ValueError(f"not a gateway request id: {call_id!r}")
-    listed = ", ".join(f"'{call_id}'" for call_id in call_ids)
+    return ", ".join(f"'{call_id}'" for call_id in call_ids)
+
+
+def ledger_sql(call_ids):
+    """The query of the ledger entries of call_ids, one "call_id|outcome" row each."""
     return ("SELECT call_id, outcome FROM accounting.ledger_entries "
-            f"WHERE call_id IN ({listed}) ORDER BY call_id, outcome")
+            f"WHERE call_id IN ({quoted_ids(call_ids)}) ORDER BY call_id, outcome")
+
+
+def holds_sql(call_ids):
+    """The query of the reservations of call_ids, one row each: call_id, then
+    max_input_tokens, max_output_tokens, input_price, output_price and max_cost."""
+    return ("SELECT call_id, max_input_tokens, max_output_tokens, input_price, output_price, "
+            f"max_cost FROM accounting.reservations WHERE call_id IN ({quoted_ids(call_ids)}) "
+            "ORDER BY call_id")
+
+
+def parse_holds(output):
+    """Maps each call id in psql -tA output of holds_sql to its rows of five integers.
+
+    Raises ValueError on a row that is not a call id and five integers.
+    """
+    holds = {}
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        call_id, *values = line.strip().split("|")
+        if len(values) != 5:
+            raise ValueError(f"reservation row {line.strip()!r} does not have six columns")
+        holds.setdefault(call_id, []).append(tuple(int(value) for value in values))
+    return holds
+
+
+def hold_problem(rows, max_output_tokens):
+    """Why rows are not one reservation that holds max_output_tokens and costs what its
+    bounds and prices give, or None."""
+    if len(rows) != 1:
+        return f"{len(rows)} reservations, want one"
+    max_input, max_output, input_price, output_price, max_cost = rows[0]
+    if max_output != max_output_tokens:
+        return f"max_output_tokens {max_output}, want {max_output_tokens}"
+    want = max_input * input_price + max_output * output_price
+    if max_cost != want:
+        return (f"max_cost {max_cost}, want {max_input} x {input_price} + "
+                f"{max_output} x {output_price} = {want}")
+    return None
 
 
 def parse_ledger(output):
@@ -91,9 +147,9 @@ def psql_command(project, sql):
                            "psql", "-U", "gateflow", "-d", "gateflow", "-tAc", sql)
 
 
-def query_ledger(project, call_ids):
-    """Returns the ledger entries of call_ids; raises RuntimeError when psql fails."""
-    command = psql_command(project, ledger_sql(call_ids))
+def run_psql(project, sql):
+    """Returns the output of sql run by psql; raises RuntimeError when psql fails."""
+    command = psql_command(project, sql)
     try:
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
                                 errors="replace", timeout=HTTP_TIMEOUT, check=False)
@@ -101,7 +157,22 @@ def query_ledger(project, call_ids):
         raise RuntimeError(f"docker compose exec failed: {error}") from error
     if result.returncode != 0:
         raise RuntimeError(f"psql exited with {result.returncode}: {result.stderr.strip()}")
-    return parse_ledger(result.stdout)
+    return result.stdout
+
+
+def query_ledger(project, call_ids):
+    """Returns the ledger entries of call_ids; raises RuntimeError when psql fails."""
+    return parse_ledger(run_psql(project, ledger_sql(call_ids)))
+
+
+def query_holds(project, call_ids):
+    """Returns the reservations of call_ids; raises RuntimeError when psql fails or
+    answers rows that are not a call id and five integers."""
+    output = run_psql(project, holds_sql(call_ids))
+    try:
+        return parse_holds(output)
+    except ValueError as error:
+        raise RuntimeError(str(error)) from error
 
 
 def parse_sse(body):
@@ -184,6 +255,87 @@ def error_type(body):
     return value["error"].get("type")
 
 
+def as_object(value):
+    """value when it is a JSON object, else an empty one, whose members are all absent."""
+    return value if isinstance(value, dict) else {}
+
+
+def responses_tool_stream_problem(events):
+    """Why events are not one function_call response streamed in order and numbered
+    from 0, or None."""
+    names = [name for name, _ in events]
+    head = ["response.created", "response.in_progress", "response.output_item.added"]
+    tail = ["response.function_call_arguments.done", "response.output_item.done",
+            "response.completed"]
+    deltas = names[3:-3]
+    if (len(names) < 7 or names[:3] != head or names[-3:] != tail
+            or any(name != "response.function_call_arguments.delta" for name in deltas)):
+        return f"events {names}, want {RESPONSES_TOOL_EVENTS}"
+    decoded = []
+    for name, data in events:
+        try:
+            value = json.loads(data)
+        except ValueError:
+            return f"{name} data is not JSON"
+        if not isinstance(value, dict) or value.get("type") != name:
+            return f"{name} data has another type"
+        decoded.append(value)
+    numbers = [value.get("sequence_number") for value in decoded]
+    if any(type(number) is not int for number in numbers) or numbers != list(range(len(numbers))):
+        return f"sequence numbers {numbers}, want 0 to {len(numbers) - 1}"
+    item = as_object(decoded[2].get("item"))
+    if item.get("type") != "function_call":
+        return f"response.output_item.added adds a {item.get('type')!r} item, want function_call"
+    response = as_object(decoded[-1].get("response"))
+    if response.get("status") != "completed" or not isinstance(response.get("usage"), dict):
+        return "response.completed holds no completed response with usage"
+    return None
+
+
+def response_problem(body):
+    """Why body is not a completed non-streaming Responses text reply, or None."""
+    try:
+        response = json.loads(body)
+    except ValueError:
+        return "body is not JSON"
+    if not isinstance(response, dict) or response.get("object") != "response":
+        return "body is not a response"
+    if response.get("status") != "completed":
+        return f"response status is {response.get('status')!r}, want completed"
+    output = response.get("output")
+    item = as_object(output[0]) if isinstance(output, list) and output else {}
+    content = item.get("content")
+    part = as_object(content[0]) if isinstance(content, list) and content else {}
+    if (item.get("type") != "message" or item.get("role") != "assistant"
+            or part.get("type") != "output_text" or not part.get("text")):
+        return "response has no assistant output_text"
+    if not isinstance(response.get("usage"), dict):
+        return "response has no usage"
+    return None
+
+
+def responses_error_problem(body, error, param=None):
+    """Why body is not a Responses error body of type error whose param is param, or
+    None. The Responses body has error alone at the top, with param and code."""
+    try:
+        value = json.loads(body)
+    except ValueError:
+        return "body is not JSON"
+    if not isinstance(value, dict) or list(value) != ["error"] or not isinstance(value["error"], dict):
+        return f"body {body[:300]!r} is not a Responses error body"
+    detail = value["error"]
+    if detail.get("type") != error:
+        return f"error type {detail.get('type')!r}, want {error!r}"
+    if not isinstance(detail.get("message"), str) or not detail["message"]:
+        return "error has no message"
+    for member in ("param", "code"):
+        if member not in detail:
+            return f"error has no {member} member"
+    if detail["param"] != param:
+        return f"error param {detail['param']!r}, want {param!r}"
+    return None
+
+
 class Response:
     def __init__(self, status, request_id, content_type, body):
         self.status = status
@@ -192,19 +344,26 @@ class Response:
         self.body = body
 
 
-def headers_for(key):
+def headers_for(key, path=MESSAGES_PATH):
+    """The headers of a request to path. Messages carries the key in x-api-key, and
+    Responses as a bearer token, as Codex sends it."""
+    if path == RESPONSES_PATH:
+        headers = {"content-type": "application/json"}
+        if key is not None:
+            headers["authorization"] = f"Bearer {key}"
+        return headers
     headers = {"content-type": "application/json", "anthropic-version": "2023-06-01"}
     if key is not None:
         headers["x-api-key"] = key
     return headers
 
 
-def post(port, payload, key):
-    """Sends payload to POST /v1/messages and reads the whole response."""
+def post(port, payload, key, path=MESSAGES_PATH):
+    """Sends payload to POST path and reads the whole response."""
     conn = http.client.HTTPConnection(HOST, port, timeout=HTTP_TIMEOUT)
     try:
-        conn.request("POST", "/v1/messages", body=json.dumps(payload).encode("utf-8"),
-                     headers=headers_for(key))
+        conn.request("POST", path, body=json.dumps(payload).encode("utf-8"),
+                     headers=headers_for(key, path))
         response = conn.getresponse()
         return Response(response.status, response.getheader("request-id"),
                         response.getheader("content-type", ""), response.read())
@@ -212,19 +371,28 @@ def post(port, payload, key):
         conn.close()
 
 
-def post_oversized(port, key):
-    """Sends a body over the gateway's limit, stopping once the gateway answers.
+def oversized_body(path):
+    """A request body for path that is over the gateway's limit."""
+    text = "x" * MAX_BODY_BYTES
+    if path == RESPONSES_PATH:
+        payload = {"model": "mock-text", "input": text}
+    else:
+        payload = {"model": "mock-text", "max_tokens": 16,
+                   "messages": [{"role": "user", "content": text}]}
+    return json.dumps(payload).encode("utf-8")
+
+
+def post_oversized(port, key, path=MESSAGES_PATH):
+    """Sends a body over the gateway's limit to path, stopping once the gateway answers.
 
     The gateway refuses the body by its Content-Length without reading it, so sending
     all of it could end in a connection reset before the answer is read.
     """
-    text = "x" * MAX_BODY_BYTES
-    body = json.dumps({"model": "mock-text", "max_tokens": 16,
-                       "messages": [{"role": "user", "content": text}]}).encode("utf-8")
+    body = oversized_body(path)
     conn = http.client.HTTPConnection(HOST, port, timeout=HTTP_TIMEOUT)
     try:
-        conn.putrequest("POST", "/v1/messages")
-        for name, value in headers_for(key).items():
+        conn.putrequest("POST", path)
+        for name, value in headers_for(key, path).items():
             conn.putheader(name, value)
         conn.putheader("content-length", str(len(body)))
         conn.endheaders()
@@ -251,6 +419,12 @@ def text_request(model, **extra):
     return payload
 
 
+def responses_request(model, **extra):
+    payload = {"model": model, "max_output_tokens": 64, "input": "Say hello."}
+    payload.update(extra)
+    return payload
+
+
 class Run:
     """Collects the check results and the calls to look up in the ledger."""
 
@@ -258,6 +432,7 @@ class Run:
         self.failed = 0
         self.charged = []  # (check, call id, expected outcome)
         self.refused = []  # (check, call id)
+        self.holds = []  # (check, call id, max_output_tokens its reservation must hold)
 
     def report(self, name, problem):
         if problem:
@@ -266,11 +441,12 @@ class Run:
         else:
             print(f"PASS {name}", flush=True)
 
-    def call(self, name, send, status, check=None, outcome=None):
+    def call(self, name, send, status, check=None, outcome=None, hold=None):
         """Sends one request and checks its status and request id, then its body.
 
         outcome is the ledger outcome a relayed call must get; None means the call is
-        refused and must leave no ledger entry.
+        refused and must leave no ledger entry. hold is the max_output_tokens that the
+        reservation of a relayed call must hold; None leaves its reservation unchecked.
         """
         try:
             response = send()
@@ -288,6 +464,8 @@ class Run:
         if valid_call_id(response.request_id):
             if outcome:
                 self.charged.append((name, response.request_id, outcome))
+                if hold is not None:
+                    self.holds.append((name, response.request_id, hold))
             else:
                 self.refused.append((name, response.request_id))
 
@@ -296,6 +474,12 @@ def expect_error(error):
     def check(response):
         got = error_type(response.body)
         return None if got == error else f"error type {got!r}, want {error!r}"
+    return check
+
+
+def expect_responses_error(error, param=None):
+    def check(response):
+        return responses_error_problem(response.body, error, param)
     return check
 
 
@@ -310,6 +494,19 @@ def check_tool_stream(response):
 
 def check_message(response):
     return message_problem(response.body)
+
+
+def check_responses_tool_stream(response):
+    if not response.content_type.startswith("text/event-stream"):
+        return f"content-type {response.content_type!r}, want text/event-stream"
+    try:
+        return responses_tool_stream_problem(parse_sse(response.body))
+    except UnicodeDecodeError:
+        return "stream is not UTF-8"
+
+
+def check_response(response):
+    return response_problem(response.body)
 
 
 def send_requests(run, port, secret):
@@ -344,6 +541,50 @@ def send_requests(run, port, secret):
              502, expect_error("api_error"), "upstream_error")
     run.call("g. upstream 429 passes through", send(text_request("mock-429")),
              429, expect_error("rate_limit_error"), "upstream_error")
+
+
+def send_responses_requests(run, port, secret):
+    """Sends checks a to g again to POST /v1/responses, with the key as a bearer token,
+    using tenant-01 unless a check needs another key. The tool call sends no
+    max_output_tokens, as Codex does, so its reservation must hold DEFAULT_OUTPUT_BOUND.
+    """
+    key = derive_key(secret, "tenant-01")
+
+    def send(payload, gateway_key=key):
+        return lambda: post(port, payload, gateway_key, RESPONSES_PATH)
+
+    tool_call = {"model": "mock-tool", "stream": True, "store": False, "tools": [FUNCTION_TOOL],
+                 "input": [{"role": "user", "content": "What is the weather in Singapore?"}]}
+    hello = responses_request("mock-text")
+
+    run.call("a. responses: mock-tool stream relays a function_call reply", send(tool_call),
+             200, check_responses_tool_stream, "completed", hold=DEFAULT_OUTPUT_BOUND)
+    run.call("b. responses: mock-text returns a complete response", send(hello),
+             200, check_response, "completed", hold=hello["max_output_tokens"])
+    run.call("c. responses: wrong key is refused", send(hello, "gf_not-a-seeded-key"),
+             401, expect_responses_error("authentication_error"))
+    run.call("c. responses: missing key is refused", send(hello, None),
+             401, expect_responses_error("authentication_error"))
+    run.call("d. responses: model without a channel is refused",
+             send(responses_request(UNSERVED_MODEL)), 403, expect_responses_error("permission_error"))
+    run.call("e. responses: tenant-00 without balance is refused",
+             send(hello, derive_key(secret, "tenant-00")), 402, expect_responses_error("billing_error"))
+    run.call("f. responses: max_output_tokens 0 is refused",
+             send(responses_request("mock-text", max_output_tokens=0)),
+             400, expect_responses_error("invalid_request_error"))
+    run.call("f. responses: max_output_tokens over 32768 is refused",
+             send(responses_request("mock-text", max_output_tokens=DEFAULT_OUTPUT_BOUND + 1)),
+             400, expect_responses_error("invalid_request_error"))
+    run.call("f. responses: previous_response_id is refused",
+             send(responses_request("mock-text", previous_response_id="resp_e2e")),
+             400, expect_responses_error("invalid_request_error", "previous_response_id"))
+    run.call("f. responses: body over 2 MiB is refused",
+             lambda: post_oversized(port, key, RESPONSES_PATH),
+             413, expect_responses_error("request_too_large"))
+    run.call("g. responses: upstream 500 becomes 502", send(responses_request("mock-500")),
+             502, expect_responses_error("api_error"), "upstream_error")
+    run.call("g. responses: upstream 429 passes through", send(responses_request("mock-429")),
+             429, expect_responses_error("rate_limit_error"), "upstream_error")
 
 
 def check_ledger(run, project):
@@ -381,6 +622,21 @@ def check_ledger(run, project):
         run.report(f"h. ledger: {name}", problem)
 
 
+def check_holds(run, project):
+    """Checks that the reservation of each call with a hold held its output bound, and
+    was costed at it."""
+    if not run.holds:
+        return
+    rows, error = {}, None
+    try:
+        rows = query_holds(project, [call_id for _, call_id, _ in run.holds])
+    except RuntimeError as failure:
+        error = str(failure)
+    for name, call_id, max_output_tokens in run.holds:
+        problem = error or hold_problem(rows.get(call_id, []), max_output_tokens)
+        run.report(f"h. reservation: {name}", problem)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--project", help="compose project name, passed to docker compose -p")
@@ -394,7 +650,9 @@ def main(argv=None):
 
     run = Run()
     send_requests(run, port, secret)
+    send_responses_requests(run, port, secret)
     check_ledger(run, args.project)
+    check_holds(run, args.project)
     print(f"{run.failed} check(s) failed" if run.failed else "All checks passed")
     return 1 if run.failed else 0
 
