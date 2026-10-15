@@ -139,6 +139,47 @@ func TestResponsesCallIsVerifiedReservedRelayedAndSettled(t *testing.T) {
 	}
 }
 
+// The output bound reaches reserve and the upstream: a max_output_tokens that is
+// absent or null is held at 32768 and sent as 32768, and one that is set is held at
+// its value and sent unchanged. The input bound is always the client's body size.
+func TestResponsesHoldsAndSendsTheOutputBound(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, upstream string
+		hold                 int
+	}{
+		{"absent", `{"model":"mock-small","stream":true}`,
+			`{"model":"mock-small","stream":true,"max_output_tokens":32768}`, 32768},
+		{"null", `{"model":"mock-small","max_output_tokens":null,"stream":true}`,
+			`{"model":"mock-small","max_output_tokens":32768,"stream":true}`, 32768},
+		{"set", `{"model":"mock-small","max_output_tokens":200,"stream":true}`,
+			`{"model":"mock-small","max_output_tokens":200,"stream":true}`, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := start(t, setup{responses: true})
+
+			resp := h.postResponses(context.Background(), tc.body, nil)
+			readBody(t, resp)
+			h.finish()
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("status = %d, want 200", resp.StatusCode)
+			}
+			reserve := h.reserve.requests()
+			if len(reserve) != 1 {
+				t.Fatalf("%d reserve calls, want 1", len(reserve))
+			}
+			checkJSON(t, "reserve body", reserve[0].Body, fmt.Sprintf(`{"call_id":%q,"attempt_id":1,`+
+				`"tenant_id":"tenant-01","price_version_id":"pv-fixture-2-5","max_input_tokens":%d,`+
+				`"max_output_tokens":%d}`, resp.Header.Get("request-id"), len(tc.body), tc.hold))
+			if upstream := h.upstream.requests(); len(upstream) != 1 || string(upstream[0].Body) != tc.upstream {
+				t.Errorf("upstream got %v, want one request with %s", upstream, tc.upstream)
+			}
+			if n := len(h.settle.requests()); n != 1 {
+				t.Errorf("%d settle calls, want 1", n)
+			}
+		})
+	}
+}
+
 // A channel with a credential gets it as a bearer token, never in x-api-key.
 func TestResponsesCredentialChannelSendsABearerCredential(t *testing.T) {
 	h := start(t, setup{responses: true, tlsUpstream: true})
