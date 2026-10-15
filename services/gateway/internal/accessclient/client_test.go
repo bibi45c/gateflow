@@ -49,7 +49,7 @@ func TestVerifySendsKeyAndModel(t *testing.T) {
 		}
 		_, _ = io.WriteString(w, verifyExample)
 	})
-	got, err := c.Verify(context.Background(), requestID, key, "mock-small")
+	got, err := c.Verify(context.Background(), requestID, key, "mock-small", "anthropic-messages")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,13 +69,38 @@ func TestVerifySendsKeyAndModel(t *testing.T) {
 	}
 }
 
+// A verify over another protocol names it; one over anthropic-messages, the
+// contract's default, leaves it out, as TestVerifySendsKeyAndModel checks.
+func TestVerifyNamesAProtocolOtherThanMessages(t *testing.T) {
+	c := client(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		data, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(data, &body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body) != 3 || body["key"] != key || body["model"] != "mock-small" || body["protocol"] != "openai-responses" {
+			t.Errorf("body = %s", data)
+		}
+		_, _ = io.WriteString(w, `{"tenant_id":"tenant-01","key_id":"key-tenant-01","price_version_id":"pv-seed-1",`+
+			`"channel":{"id":"mock-responses","protocol":"openai-responses","base_url":"http://mock-upstream:8090",`+
+			`"credential_env":""}}`)
+	})
+	got, err := c.Verify(context.Background(), requestID, key, "mock-small", "openai-responses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Channel.ID != "mock-responses" || got.Channel.Protocol != "openai-responses" {
+		t.Errorf("channel = %+v, want the responses-channel example", got.Channel)
+	}
+}
+
 func TestVerifyReturnsTheErrorCode(t *testing.T) {
 	c := client(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = io.WriteString(w, `{"error":{"code":"model_not_allowed","message":"The key may not use this model.",`+
 			`"request_id":"`+requestID+`"}}`)
 	})
-	_, err := c.Verify(context.Background(), requestID, key, "mock-large")
+	_, err := c.Verify(context.Background(), requestID, key, "mock-large", "anthropic-messages")
 	if internalapi.Code(err) != accessclient.CodeModelNotAllowed {
 		t.Errorf("err = %v, want code model_not_allowed", err)
 	}
@@ -89,7 +114,7 @@ func TestVerifyRefusesAnAnswerWithoutTenantOrPriceVersion(t *testing.T) {
 		c := client(t, func(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, body)
 		})
-		if _, err := c.Verify(context.Background(), requestID, key, "mock-small"); !errors.Is(err, internalapi.ErrMalformed) {
+		if _, err := c.Verify(context.Background(), requestID, key, "mock-small", "anthropic-messages"); !errors.Is(err, internalapi.ErrMalformed) {
 			t.Errorf("%s: err = %v, want ErrMalformed", body, err)
 		}
 	}

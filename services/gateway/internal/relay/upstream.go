@@ -14,20 +14,14 @@ import (
 	"time"
 )
 
-// messagesPath is appended to a channel's base URL.
-const messagesPath = "/v1/messages"
-
-// forwardedHeaders are the only client headers sent upstream. The client's x-api-key
-// and Authorization, and any internal token, are never among them.
-var forwardedHeaders = []string{"Content-Type", "Anthropic-Version", "Anthropic-Beta"}
-
 // errChannelURL reports a channel base URL that no request can be built from.
 var errChannelURL = errors.New("relay: channel base URL is not a valid URL")
 
-// newTransport returns the upstream transport: 10 s to open a connection and no
+// NewTransport returns the upstream transport: 10 s to open a connection and no
 // limit on the reply, so that a slow local model such as Ollama can still stream. It
 // uses no proxy and asks for no compression, so the bytes relayed are those sent.
-func newTransport() *http.Transport {
+// Handlers given the same transport share its connections.
+func NewTransport() *http.Transport {
 	dialer := &net.Dialer{Timeout: connectTimeout, KeepAlive: 30 * time.Second}
 	return &http.Transport{
 		DialContext:         dialer.DialContext,
@@ -48,17 +42,17 @@ type exchange struct {
 	id string
 
 	dispatched    atomic.Bool // the request was written upstream, or a reply came
-	completed     bool        // message_stop arrived, or a 2xx body was read in full
+	completed     bool        // the end event arrived, or a 2xx body read in full completes the call
 	clientGone    bool        // the client disconnected before the reply was complete
 	upstreamError bool        // the upstream answered non-2xx, before any output
-	usage         usage
+	observer      observer
 }
 
 // relay sends an admitted request upstream and relays the reply. It calls
 // admitted.Report exactly once, when it returns or panics, and not with the request's
 // context, so the report also happens after the client has gone.
 func (h *handler) relay(w *recorder, r *http.Request, body []byte, id string, admitted Admitted) {
-	x := &exchange{h: h, w: w, r: r, id: id}
+	x := &exchange{h: h, w: w, r: r, id: id, observer: h.proto.newObserver()}
 	if admitted.Report != nil {
 		defer func() { admitted.Report(x.result()) }()
 	}
@@ -83,8 +77,8 @@ func (h *handler) relay(w *recorder, r *http.Request, body []byte, id string, ad
 	}
 }
 
-// send posts body unchanged to the channel, with only the forwarded headers and the
-// channel's credential. It never retries.
+// send posts body to the channel, at the endpoint's path, with only the forwarded
+// headers and the channel's credential. It never retries.
 func (x *exchange) send(ctx context.Context, body []byte, channel Channel) (*http.Response, error) {
 	trace := &httptrace.ClientTrace{
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
@@ -94,19 +88,19 @@ func (x *exchange) send(ctx context.Context, body []byte, channel Channel) (*htt
 		},
 	}
 	ctx = httptrace.WithClientTrace(ctx, trace)
-	url := channel.BaseURL + messagesPath
+	url := channel.BaseURL + x.h.proto.path()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, errChannelURL
 	}
-	for _, name := range forwardedHeaders {
+	for _, name := range x.h.proto.forwardedHeaders() {
 		for _, value := range x.r.Header.Values(name) {
 			req.Header.Add(name, value)
 		}
 	}
 	if channel.CredentialEnv != "" {
 		if credential := x.h.getenv(channel.CredentialEnv); credential != "" {
-			req.Header.Set("X-Api-Key", credential)
+			x.h.proto.setCredential(req.Header, credential)
 		}
 	}
 	resp, err := x.h.client.Do(req)
@@ -121,11 +115,11 @@ func (x *exchange) send(ctx context.Context, body []byte, channel Channel) (*htt
 func (x *exchange) failSend(err error) {
 	if errors.Is(err, errChannelURL) {
 		x.h.logger.Error("channel base URL is invalid", "request_id", x.id)
-		writeError(x.w, errInternal)
+		x.h.writeError(x.w, errInternal)
 		return
 	}
 	x.noteFailure("upstream request failed", err)
-	writeError(x.w, errUpstream)
+	x.h.writeError(x.w, errUpstream)
 }
 
 // noteFailure records an upstream call or read that failed: as the client's
@@ -147,29 +141,28 @@ func (x *exchange) relayStatus(resp *http.Response) {
 	x.h.logger.Warn("upstream answered with an error status",
 		"request_id", x.id, "status", resp.StatusCode)
 	if resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusTooManyRequests {
-		writeError(x.w, errUpstream)
+		x.h.writeError(x.w, errUpstream)
 		return
 	}
 	body, err := readAtMost(resp.Body, maxEventBytes)
 	if err != nil {
-		writeError(x.w, errUpstream)
+		x.h.writeError(x.w, errUpstream)
 		return
 	}
 	x.passBack(resp, body)
 }
 
 // relayBody passes back a 2xx non-streaming reply once it is read in full, so that a
-// failure while reading it still gets a 502. The body is one message, so it has the
-// cap of one event.
+// failure while reading it still gets a 502. The body is one message or response, so
+// it has the cap of one event.
 func (x *exchange) relayBody(resp *http.Response) {
 	body, err := readAtMost(resp.Body, maxEventBytes)
 	if err != nil {
 		x.noteFailure("reading the upstream reply failed", err)
-		writeError(x.w, errUpstream)
+		x.h.writeError(x.w, errUpstream)
 		return
 	}
-	x.completed = true
-	x.usage.observeBody(body)
+	x.completed = x.observer.body(body)
 	x.passBack(resp, body)
 }
 

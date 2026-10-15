@@ -14,7 +14,7 @@ func (x *exchange) result() Result {
 		// send both as 0.
 		return Result{Outcome: outcome, InputTokens: new(int64), OutputTokens: new(int64)}
 	}
-	input, output := x.usage.counts()
+	input, output := x.observer.counts()
 	return Result{Outcome: outcome, InputTokens: input, OutputTokens: output}
 }
 
@@ -34,9 +34,9 @@ func (x *exchange) outcome() string {
 	}
 }
 
-// usage collects the token counts of a reply by the usage source of #18. The input
-// total is input_tokens plus the two cache counts, from message_start, replaced by a
-// later message_delta whose input total is above 0. The output count is the
+// usage collects the token counts of a Messages reply by the usage source of #18. The
+// input total is input_tokens plus the two cache counts, from message_start, replaced
+// by a later message_delta whose input total is above 0. The output count is the
 // output_tokens of the last message_delta. A non-streaming body's usage counts the
 // same way. A negative count is never reported: a total holding one is unknown.
 type usage struct {
@@ -74,14 +74,20 @@ func (u *usage) observeBody(body []byte) {
 	u.output = knownCount(reported.OutputTokens)
 }
 
-// counts returns the counts to report. An input total of 0 is unknown, because a
-// non-empty request cannot use 0 input tokens and some upstreams report 0 before the
-// real count. An output count of 0 that the upstream reported is known.
+// counts returns the counts to report, by reportedCounts.
 func (u *usage) counts() (input, output *int64) {
-	if u.input != nil && *u.input == 0 {
-		return nil, u.output
+	return reportedCounts(u.input, u.output)
+}
+
+// reportedCounts returns the counts a reply reported as the relay reports them, on
+// either protocol. An input total of 0 is unknown, because a non-empty request cannot
+// use 0 input tokens and some upstreams report 0 before the real count. An output
+// count of 0 that the upstream reported is known.
+func reportedCounts(input, output *int64) (*int64, *int64) {
+	if input != nil && *input == 0 {
+		return nil, output
 	}
-	return u.input, u.output
+	return input, output
 }
 
 // inputTotal adds the input counts that are present, or returns nil when none is, or

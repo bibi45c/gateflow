@@ -51,6 +51,9 @@ func register(cfg config.Config) func(*http.ServeMux) {
 			Metering: meteringclient.New(internalapi.NewCaller(cfg.MeteringURL, cfg.MeteringInternalToken)),
 			Logger:   logger,
 		})
-		mux.Handle("POST /v1/messages", relay.New(relay.Config{}, admit, logger))
+		// The two endpoints share one upstream transport, and so its connections.
+		relayConfig := relay.Config{Transport: relay.NewTransport()}
+		mux.Handle("POST /v1/messages", relay.New(relayConfig, admit, logger))
+		mux.Handle("POST /v1/responses", relay.NewResponses(relayConfig, admit, logger))
 	}
 }

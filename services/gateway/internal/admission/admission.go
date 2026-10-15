@@ -98,7 +98,7 @@ func (a *Admission) Admit(ctx context.Context, call relay.Call) (relay.Admitted,
 	if perr != nil {
 		return relay.Admitted{}, perr
 	}
-	if err := checkChannel(verified.Channel, a.getenv); err != nil {
+	if err := checkChannel(verified.Channel, call.Protocol.String(), a.getenv); err != nil {
 		a.logger.Error("channel is misconfigured; no reservation made",
 			"request_id", call.RequestID, "channel_id", verified.Channel.ID, "reason", err.Error())
 		return relay.Admitted{}, errInternal
@@ -115,9 +115,10 @@ func (a *Admission) Admit(ctx context.Context, call relay.Call) (relay.Admitted,
 	}, nil
 }
 
-// verify asks access whether the call's key may use its model. It does not retry.
+// verify asks access whether the call's key may use its model over the protocol of
+// the endpoint called. It does not retry.
 func (a *Admission) verify(ctx context.Context, call relay.Call) (accessclient.Verified, *relay.PublicError) {
-	verified, err := a.access.Verify(ctx, call.RequestID, call.GatewayKey, call.Model)
+	verified, err := a.access.Verify(ctx, call.RequestID, call.GatewayKey, call.Model, call.Protocol.String())
 	if err == nil {
 		return verified, nil
 	}
@@ -135,8 +136,8 @@ func (a *Admission) verify(ctx context.Context, call relay.Call) (accessclient.V
 }
 
 // reserve holds the most the call can cost: the body size in bytes for input, which
-// bounds the input tokens, and max_tokens for output. It retries once, with the same
-// content, after a timeout, a 5xx or a connection error.
+// bounds the input tokens, and the call's output bound for output. It retries once,
+// with the same content, after a timeout, a 5xx or a connection error.
 func (a *Admission) reserve(ctx context.Context, call relay.Call, verified accessclient.Verified) (meteringclient.Reservation, *relay.PublicError) {
 	req := meteringclient.ReserveRequest{
 		CallID:          call.RequestID,
