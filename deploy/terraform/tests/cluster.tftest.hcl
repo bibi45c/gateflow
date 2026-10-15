@@ -33,7 +33,7 @@ run "isolated_nodes" {
     error_message = "Use the approved Kubernetes version with private API access."
   }
   assert {
-    condition     = aws_eks_node_group.workload["services"].scaling_config[0].desired_size == 3 && contains(aws_eks_node_group.workload["load-generator"].instance_types, "c6i.xlarge")
+    condition     = aws_eks_node_group.workload["services"].scaling_config[0].desired_size == 2 && contains(aws_eks_node_group.workload["services"].instance_types, "m6i.xlarge") && contains(aws_eks_node_group.workload["load-generator"].instance_types, "c6i.xlarge")
     error_message = "Preserve the budgeted node groups."
   }
   assert {

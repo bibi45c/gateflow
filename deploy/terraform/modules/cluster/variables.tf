@@ -26,11 +26,11 @@ variable "operator_cidrs" {
 }
 variable "service_instance_type" {
   type    = string
-  default = "m6i.large"
+  default = "m6i.xlarge"
 }
 variable "service_node_count" {
   type    = number
-  default = 3
+  default = 2
   validation {
     condition     = var.service_node_count >= 1 && floor(var.service_node_count) == var.service_node_count
     error_message = "Node counts must be positive integers."
