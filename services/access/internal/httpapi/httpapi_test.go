@@ -30,19 +30,20 @@ var generatedRequestID = regexp.MustCompile(`^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a
 
 // fakeStore answers from its fields and records what it was asked.
 type fakeStore struct {
-	key      store.VerifiedKey
-	version  store.PriceVersion
-	err      error
-	panics   bool
-	calls    int
-	gotHMAC  []byte
-	gotModel string
-	gotID    string
+	key         store.VerifiedKey
+	version     store.PriceVersion
+	err         error
+	panics      bool
+	calls       int
+	gotHMAC     []byte
+	gotModel    string
+	gotProtocol string
+	gotID       string
 }
 
-func (f *fakeStore) VerifyKey(_ context.Context, keyHMAC []byte, model string) (store.VerifiedKey, error) {
+func (f *fakeStore) VerifyKey(_ context.Context, keyHMAC []byte, model, protocol string) (store.VerifiedKey, error) {
 	f.calls++
-	f.gotHMAC, f.gotModel = keyHMAC, model
+	f.gotHMAC, f.gotModel, f.gotProtocol = keyHMAC, model, protocol
 	if f.panics {
 		panic("fake store panic")
 	}
@@ -61,7 +62,7 @@ func newTestServer(s Store, token string) (http.Handler, *bytes.Buffer) {
 	logs := &bytes.Buffer{}
 	mux := http.NewServeMux()
 	mux.Handle("GET /healthz", health.Handler("access"))
-	New(s, []byte(testPepper), token, slog.New(slog.NewJSONHandler(logs, nil))).Register(mux)
+	New(s, []byte(testPepper), token, slog.New(slog.NewJSONHandler(logs, nil)), nil).Register(mux)
 	return mux, logs
 }
 
@@ -276,6 +277,13 @@ func TestVerifyRejectsBadRequests(t *testing.T) {
 		"key larger than the cap":   `{"key":"` + secret + padding + `","model":"mock-fast"}`,
 		"model larger than the cap": `{"key":"` + secret + `","model":"mock-fast` + padding + `"}`,
 	}
+	wantBadRequests(t, secret, bodies)
+}
+
+// wantBadRequests checks that each body gets 400 invalid_request without the store
+// being called, and that neither the response nor the log shows secret.
+func wantBadRequests(t *testing.T, secret string, bodies map[string]string) {
+	t.Helper()
 	for name, body := range bodies {
 		t.Run(name, func(t *testing.T) {
 			fake := &fakeStore{}
@@ -312,6 +320,13 @@ func TestVerifyAcceptsTheMembersInEitherOrder(t *testing.T) {
 	}
 	if !bytes.Equal(fake.gotHMAC, apikey.HMAC([]byte(testPepper), testKey)) || fake.gotModel != "mock-fast" {
 		t.Error("the store was not asked for HMAC(pepper, key) and the model")
+	}
+	body = `{"protocol":"openai-responses","model":"mock-fast","key":"` + testKey + `"}`
+	if got := call(handler, "POST", "/internal/v1/keys/verify", body, authorized()); got.Code != http.StatusOK {
+		t.Errorf("protocol first: status %d, want 200", got.Code)
+	}
+	if fake.gotModel != "mock-fast" || fake.gotProtocol != "openai-responses" {
+		t.Errorf("the store was asked for %q over %q", fake.gotModel, fake.gotProtocol)
 	}
 }
 

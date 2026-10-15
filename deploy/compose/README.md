@@ -7,8 +7,9 @@ stop commands are at the top of that file; the checks are in
 ## Configuration
 
 Every service reads its settings from these variables. Compose sets all of them
-except the `SHUTDOWN_*` pair, whose defaults suit it, so a service issue adds code
-that reads a variable, not a compose change. The defaults
+except the `SHUTDOWN_*` pair, `MODEL_ALIASES` and `UPSTREAM_MAX_IDLE_CONNS`, whose
+defaults suit it, so a service issue adds code that reads a variable, not a compose
+change. The defaults
 are local-only test values, not credentials: never reuse them outside this stack.
 Override a value in `deploy/compose/.env`, which Git ignores.
 
@@ -19,6 +20,8 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `METERING_URL` | gateway | `http://metering:8082` | Internal base URL of metering |
 | `ACCESS_INTERNAL_TOKEN` | access (accepts); gateway, metering (send) | `access-token-local-only` | Bearer token for calls to access |
 | `METERING_INTERNAL_TOKEN` | metering (accepts); gateway (sends) | `metering-token-local-only` | Bearer token for calls to metering |
+| `MODEL_ALIASES` | gateway; compose leaves it unset | The mock scenarios (`mock-text` … `mock-load`), `qwen3:8b`, `qwen2.5-coder:7b` | Comma-separated model names, at most 16, that request log lines show as they are; any other model is logged as `other`. A model is never a metric label |
+| `UPSTREAM_MAX_IDLE_CONNS` | gateway; compose leaves it unset | `256` | Idle upstream connections the gateway keeps, in all and to each upstream host, for 90 s, so a load test reuses connections instead of opening one per call |
 | `ACCESS_KEY_PEPPER` | access | `key-pepper-local-only` | Secret mixed into the stored HMAC of each gateway key |
 | `ACCESS_SEED_SECRET` | access seed | `seed-secret-local-only` | Derives the seeded tenants' gateway keys |
 | `MOCK_UPSTREAM_BASE_URL` | access seed | `http://mock-upstream:8090` | Base URL of the mock upstream channel |
@@ -27,10 +30,22 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `OLLAMA_CONTEXT_LENGTH` | ollama, with the `ollama` profile only | `64000` | Context the Ollama container asks for; Ollama caps it at the model's maximum |
 | `MOCK_FIRST_EVENT_DELAY_MS` | mock-upstream | `0` | Delay before the first stream event |
 | `MOCK_EVENT_INTERVAL_MS` | mock-upstream | `0` | Delay between stream events |
+| `MOCK_LOAD_EVENTS` | mock-upstream | `200` | Text deltas in a `mock-load` stream |
+| `MOCK_LOAD_INTERVAL_MS` | mock-upstream | `100` | Delay between the events of a `mock-load` stream, in place of `MOCK_EVENT_INTERVAL_MS` |
+| `MOCK_LOAD_EVENT_BYTES` | mock-upstream | `256` | Bytes of text in each `mock-load` delta |
 | `POSTGRES_PASSWORD` | postgres | `gateflow-local-only` | Password of the `gateflow` superuser |
 | `SHUTDOWN_DRAIN_DELAY` | every service and the mock upstream; compose leaves it unset | `0s` | Go duration a stopping process keeps serving, with `/readyz` answering 503, before it closes its listener |
 | `SHUTDOWN_TIMEOUT` | every service and the mock upstream; compose leaves it unset | `10s` | Go duration a stopping process waits for in-flight requests before it closes them; `stop_grace_period` must exceed the drain delay plus this |
 | `*_PORT` | compose | 8080, 8081, 8082, 8090, 5432, 6379; 11434 for `OLLAMA_PORT` | Host ports, bound to localhost only |
+
+## Metrics
+
+The gateway, access and metering each serve Prometheus metrics on `GET /metrics`,
+beside `/healthz` on their own port and without a token;
+[docs/observability.md](../../docs/observability.md#interim-logging-on-main) lists
+what they hold. They are for scrapes inside the stack or the cluster: an ingress must
+route only `/v1/messages` and `/v1/responses` to the gateway, and never `/metrics`.
+Compose runs no Prometheus yet.
 
 ## Seed services
 

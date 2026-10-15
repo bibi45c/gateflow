@@ -2,10 +2,10 @@ package relay
 
 import (
 	"net/http"
-	"time"
 )
 
-// recorder keeps the status and byte count of a response for the access log.
+// recorder keeps the status and byte count of a response, which the request's
+// observation reports. The observability helper wraps no writer, so the relay counts.
 type recorder struct {
 	http.ResponseWriter
 	status int
@@ -43,28 +43,4 @@ func (r *recorder) writeEvent(raw []byte) error {
 
 func (r *recorder) flush() error {
 	return http.NewResponseController(r.ResponseWriter).Flush()
-}
-
-// logAccess writes the access log line of a request. It records the method, route,
-// status, duration, model, byte counts and request id, and never a body, a key, a
-// credential or an upstream error body. This logging is interim, until issue #13.
-func (h *handler) logAccess(r *http.Request, w *recorder, call *Call, start time.Time) {
-	status := w.status
-	if status == 0 {
-		status = http.StatusOK
-	}
-	route := r.Pattern
-	if route == "" {
-		route = messagesPath
-	}
-	h.logger.Info("request",
-		"method", r.Method,
-		"route", route,
-		"status", status,
-		"duration_ms", time.Since(start).Milliseconds(),
-		"model", call.Model,
-		"request_bytes", call.BodyBytes,
-		"response_bytes", w.bytes,
-		"request_id", call.RequestID,
-	)
 }

@@ -35,9 +35,10 @@ type Key struct {
 }
 
 type seedChannel struct {
-	id      string
-	baseURL string
-	models  []string
+	id       string
+	protocol string
+	baseURL  string
+	models   []string
 }
 
 // DeriveKey returns the gateway key of tenantID: gf_ followed by
@@ -51,8 +52,8 @@ func DeriveKey(secret []byte, tenantID string) string {
 
 // Run seeds tenant-00 to tenant-<tenants> in one transaction and returns their keys.
 // tenant-00 is the tenant that metering leaves without balance. Each tenant gets one
-// key that may use the mock and ollama channels at price version pv-seed-1; only the
-// key's HMAC is stored.
+// key that may use the mock and ollama channels, over Messages and over Responses, at
+// price version pv-seed-1; only the key's HMAC is stored.
 //
 // Tenants, keys and the price version are inserted only when absent. The channels
 // and their models are replaced by the current settings, so a changed base URL or
@@ -105,9 +106,14 @@ func seedChannels(cfg config.Seed) ([]seedChannel, error) {
 			return nil, fmt.Errorf("%s %w", c.name, err)
 		}
 	}
+	// Each Responses channel serves what its Messages twin serves, and its id sorts
+	// after the twin's. The previous access image ignores the protocol and takes the
+	// lowest matching id, so it still gets the Messages channel.
 	return []seedChannel{
-		{id: "mock", baseURL: cfg.MockBaseURL, models: []string{mockModels}},
-		{id: "ollama", baseURL: cfg.OllamaBaseURL, models: []string{cfg.OllamaModel}},
+		{id: "mock", protocol: channel.Protocol, baseURL: cfg.MockBaseURL, models: []string{mockModels}},
+		{id: "mock-responses", protocol: channel.ProtocolResponses, baseURL: cfg.MockBaseURL, models: []string{mockModels}},
+		{id: "ollama", protocol: channel.Protocol, baseURL: cfg.OllamaBaseURL, models: []string{cfg.OllamaModel}},
+		{id: "ollama-responses", protocol: channel.ProtocolResponses, baseURL: cfg.OllamaBaseURL, models: []string{cfg.OllamaModel}},
 	}, nil
 }
 
@@ -118,7 +124,7 @@ func upsertChannels(ctx context.Context, tx pgx.Tx, channels []seedChannel) erro
 			VALUES ($1, $2, $3, '')
 			ON CONFLICT (id) DO UPDATE SET protocol = excluded.protocol, base_url = excluded.base_url,
 				credential_env = excluded.credential_env`,
-			c.id, channel.Protocol, c.baseURL); err != nil {
+			c.id, c.protocol, c.baseURL); err != nil {
 			return fmt.Errorf("seed channel %s: %w", c.id, err)
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM access.channel_models

@@ -17,7 +17,10 @@ ROOT = Path(__file__).resolve().parents[2]
 REPO = "bibi45c/gateflow"
 FORMS = ROOT / ".github" / "ISSUE_TEMPLATE"
 MARKER = "<!-- gateflow-issue-format:v1 -->"
+# A duplicate reminder is edited to point at the canonical one; it no longer starts with MARKER.
+SUPERSEDED = "<!-- gateflow-issue-format:superseded -->"
 BOT = "github-actions[bot]"
+ATTEMPTS = 3
 TITLE = re.compile(r"^\[([a-z]+)\]\[([a-z][a-z0-9-]*)\] (\S.*)$")
 EMPTY = {"", "no response", "todo", "tbd", "fill this in", "fill here"}
 AREA_LABEL = "area:"
@@ -181,29 +184,65 @@ def repo_areas(repo, call=api):
     return issue_areas(label["name"] for label in every_page(call, f"repos/{repo}/labels"))
 
 
+def reminders(call, path):
+    """This workflow's current reminders on an issue, oldest first; user comments never match."""
+    return sorted((item for item in every_page(call, f"{path}/comments")
+                   if item["user"]["login"] == BOT and item["user"]["type"] == "Bot"
+                   and item.get("body", "").startswith(MARKER)), key=lambda item: item["id"])
+
+
+def superseded_body(repo, number, canonical):
+    link = canonical.get("html_url") or f"https://github.com/{repo}/issues/{number}#issuecomment-{canonical['id']}"
+    return "\n".join([SUPERSEDED, f"Superseded by {link}, which holds the current format check."])
+
+
+def changed(current, issue):
+    return (current["title"], current.get("body"), current["state"]) != (issue["title"], issue.get("body"), issue["state"])
+
+
 def check_remote(repo, number, call=api, forms=FORMS, areas=None):
+    """Keep one reminder per issue: the oldest bot reminder is updated and any later ones superseded.
+
+    Full and single-issue runs can overlap; both may create a reminder, and an older run may
+    write feedback for a version that was edited meanwhile. Every run that writes therefore
+    recounts after creating and rechecks the issue afterwards, so the last writer leaves
+    one reminder for the current version.
+    """
     path = f"repos/{repo}/issues/{number}"
-    issue = call(path)
-    if "pull_request" in issue or issue["state"] != "open":
-        return {"issue": number, "action": "skipped"}
-    errors = validate(issue["title"], issue.get("body"), areas or repo_areas(repo, call), forms)
-    body = comment_body(issue, errors)
-    existing = next((item for item in every_page(call, f"{path}/comments")
-                     if item["user"]["login"] == BOT and item["user"]["type"] == "Bot"
-                     and item.get("body", "").startswith(MARKER)), None)
-    current = call(path)
-    if (current["title"], current.get("body"), current["state"]) != (issue["title"], issue.get("body"), issue["state"]):
-        raise RuntimeError("Issue changed during checking; retry the current version")
-    if existing and existing["body"] == body:
-        action, comment = "unchanged", existing
-    elif existing:
-        action = "updated"
-        comment = call(f"repos/{repo}/issues/comments/{existing['id']}", {"body": body}, "PATCH")
-    else:
-        action = "created"
-        comment = call(f"{path}/comments", {"body": body}, "POST")
-    return {"issue": number, "result": "needs-info" if errors else "passed",
-            "action": action, "comment_id": comment["id"], "missing": len(errors)}
+    for _ in range(ATTEMPTS):
+        issue = call(path)
+        if "pull_request" in issue or issue["state"] != "open":
+            return {"issue": number, "action": "skipped"}
+        areas = areas or repo_areas(repo, call)
+        errors = validate(issue["title"], issue.get("body"), areas, forms)
+        body = comment_body(issue, errors)
+        found = reminders(call, path)
+        if changed(call(path), issue):
+            raise RuntimeError("Issue changed during checking; retry the current version")
+        action, wrote = "unchanged", False
+        if not found:
+            created = call(f"{path}/comments", {"body": body}, "POST")
+            wrote = True
+            # Another run may have created one at the same time; the oldest one is canonical.
+            found = reminders(call, path)
+            if all(item["id"] != created["id"] for item in found):
+                found = sorted(found + [created], key=lambda item: item["id"])
+            if found[0]["id"] == created["id"]:
+                action = "created"
+        canonical, duplicates = found[0], found[1:]
+        if canonical["body"] != body:
+            call(f"repos/{repo}/issues/comments/{canonical['id']}", {"body": body}, "PATCH")
+            action, wrote = "updated", True
+        for item in duplicates:
+            call(f"repos/{repo}/issues/comments/{item['id']}",
+                 {"body": superseded_body(repo, number, canonical)}, "PATCH")
+            wrote = True
+        result = {"issue": number, "result": "needs-info" if errors else "passed", "action": action,
+                  "comment_id": canonical["id"], "superseded": [item["id"] for item in duplicates],
+                  "missing": len(errors)}
+        if not wrote or not changed(call(path), issue):
+            return result
+    raise RuntimeError("Issue kept changing while its reminder was written; retry the current version")
 
 
 def check_all(repo, call=api, forms=FORMS):

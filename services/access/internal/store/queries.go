@@ -15,7 +15,8 @@ import (
 var (
 	// ErrInvalidKey means no key has the HMAC, or the key is revoked.
 	ErrInvalidKey = errors.New("store: key is unknown or revoked")
-	// ErrModelNotAllowed means none of the key's channels serves the model.
+	// ErrModelNotAllowed means none of the key's channels serves the model over the
+	// protocol.
 	ErrModelNotAllowed = errors.New("store: key has no channel for the model")
 	// ErrPriceVersionNotFound means no price version has the id.
 	ErrPriceVersionNotFound = errors.New("store: price version not found")
@@ -57,11 +58,12 @@ func New(pool *pgxpool.Pool) *Store {
 }
 
 // VerifyKey finds the key stored under keyHMAC and the channel it may use for
-// model. It returns ErrInvalidKey when there is no such key or it is revoked, and
-// ErrModelNotAllowed when none of the key's channels has a pattern matching model;
-// when several do, the lowest channel id wins. Whenever the key was found, the
-// result carries its TenantID and KeyID, also next to an error.
-func (s *Store) VerifyKey(ctx context.Context, keyHMAC []byte, model string) (VerifiedKey, error) {
+// model over protocol. Only the key's channels that speak protocol count. It returns
+// ErrInvalidKey when there is no such key or it is revoked, and ErrModelNotAllowed
+// when none of those channels has a pattern matching model; when several do, the
+// lowest channel id wins. Whenever the key was found, the result carries its
+// TenantID and KeyID, also next to an error.
+func (s *Store) VerifyKey(ctx context.Context, keyHMAC []byte, model, protocol string) (VerifiedKey, error) {
 	var (
 		key     VerifiedKey
 		revoked bool
@@ -82,8 +84,8 @@ func (s *Store) VerifyKey(ctx context.Context, keyHMAC []byte, model string) (Ve
 		FROM access.api_key_channels AS kc
 		JOIN access.channels AS c ON c.id = kc.channel_id
 		JOIN access.channel_models AS m ON m.channel_id = c.id
-		WHERE kc.key_id = $1
-		ORDER BY c.id COLLATE "C", m.model_pattern COLLATE "C"`, key.KeyID)
+		WHERE kc.key_id = $1 AND c.protocol = $2
+		ORDER BY c.id COLLATE "C", m.model_pattern COLLATE "C"`, key.KeyID, protocol)
 	if err != nil {
 		return key, unavailable(err)
 	}
