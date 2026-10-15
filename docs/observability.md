@@ -63,33 +63,50 @@ reservation or capacity evidence.
 
 ## Interim logging on main
 
-The S1 services merged before this decision, so each one logs requests in its own
-way. This is the state of `main` on 13 October 2026, at `b951ff0`:
+The S1 services merged before this decision, each logging requests in its own way
+(`main` on 13 October 2026, at `b951ff0`). Issue #69 adopted the helper in all three,
+so none of those interim lines is left as it was. Each service has one registry and
+serves `GET /metrics` on its existing server, beside `/healthz`:
 
-| Service | What it logs today | Missing against this note |
+| Service | Request line | Metrics, under these route templates |
 |---|---|---|
-| gateway | One `request` line per call, marked in the code as interim until #13: method, route, status, duration_ms, model, request_bytes, response_bytes, request_id. A recorder around the ResponseWriter counts the status and the bytes | A result, a tenant and the time to first output; `model` is the requested name, not a configured alias; no metrics |
-| access | One `request` line per call: request_id, method, route, status, duration_ms, and key_id and tenant_id once a key is verified | A result; no metrics |
-| metering | Failures only: `metering request failed` with operation, code, request_id and err | A line for a call that succeeds; no metrics |
+| gateway | The helper's `request` line, which replaced the relay's interim access log: method, route, status, result, duration_ms, request_bytes, response_bytes, tenant_slot, model, request_id, and first_output_ms once model output was flushed | The four `gateflow_http_*` families and the three gateway signals, under `/v1/messages` and `/v1/responses` |
+| access | Its own `request` line, as before, with result added: request_id, method, route, status, result, duration_ms, and key_id and tenant_id once a key is verified. The helper writes no second line | The four `gateflow_http_*` families, under `/internal/v1/keys/verify`, `/internal/v1/price-versions/{id}` and `/internal/v1/` for any other path |
+| metering | The helper's `request` line for every call, one that succeeds included; the `metering request failed` line with the cause stays | The four `gateflow_http_*` families, under `/internal/v1/reservations` and `/internal/v1/reservations/{reservation_id}/settle` |
 
-The helper was written before these lines existed. It now follows them, so that a
-service which adopts it gains fields and metrics without renaming anything:
+The helper's line kept the interim names, so the gateway and metering gained fields
+without renaming anything. What differs from the interim lines:
 
-- **Line and field names.** The helper writes one `request` line, like the services,
-  with the same names for method, route, status, duration_ms, model, request_bytes,
-  response_bytes and request_id. It used to write `request_finished` and
-  `http_status`.
-- **Result names.** For an admitted call the gateway reports the five outcomes of
-  issue #18, and the helper's results for an admitted call are those five under the
-  same names; see [Results](#results). It used to say `success` for `completed` and
-  had no `not_dispatched`. A test reads the outcome list of
-  [the metering contract](../api/metering.yaml) and fails when the two differ.
-- **Byte counts.** The gateway counts response bytes in its recorder; the helper wraps
-  nothing and takes counts from its caller. The two fit as they are: the gateway
-  passes its recorder's counts to `Finish`.
-- **Model.** The gateway logs the model name the client asked for. The helper logs a
-  configured alias, or `other`, so that client input never becomes a log value it
-  did not expect. This difference stays.
+- **Line and field names.** One `request` line with the same names for method, route,
+  status, duration_ms, model, request_bytes, response_bytes and request_id, and the
+  added result, tenant_slot and first_output_ms.
+- **Values.** route is the configured template without the method, such as
+  `/v1/messages` rather than `POST /v1/messages`, because a helper template starts
+  with `/`. duration_ms has a fraction. A request_id appears only in the `req_<uuid>`
+  form. model is an alias from the gateway's `MODEL_ALIASES`, by default the mock
+  scenarios and the Ollama models, or `other`; never the requested name.
+- **Result names.** An admitted gateway call reports the five outcomes of issue #18
+  under the same names; see [Results](#results). A test reads the outcome list of
+  [the metering contract](../api/metering.yaml) and fails when the two differ. A
+  gateway refusal maps by its status: 400 and 413 `invalid_request`, 401
+  `authentication_denied`, 402 `insufficient_balance`, 403 `permission_denied`, 503
+  `dependency_error`, 500 `internal_error`. Access and metering map their error codes:
+  `unauthorized` and `invalid_key` to `authentication_denied`, `model_not_allowed` to
+  `permission_denied`, `insufficient_balance` and `wallet_not_found` to
+  `insufficient_balance`, `dependency_unavailable` to `dependency_error`,
+  `internal_error` to `internal_error`, and the other codes and an unknown path to
+  `invalid_request`; a 2xx answer, a metering replay included, is `completed`.
+- **Byte counts.** Each service counts bytes in its own writer and passes them to
+  `Finish`; the helper wraps nothing.
+- **Timing.** The gateway begins observation once the body is read and checked,
+  because the helper takes the model alias at `Begin`. That is still before the key
+  is verified or any internal call is made, but the duration excludes reading the
+  body. Access and metering begin as a call arrives.
+- **Demand and first output.** The gateway has no capacity limit yet, so a call whose
+  cost metering holds is eligible and admitted at once, and a refused call is
+  neither. First output is the first `content_block_delta` on Messages, or
+  `response.*.delta` on Responses, written and flushed; a non-streaming reply has
+  none. The verified tenant's slot is set once access verifies the key.
 
 ## Results
 
@@ -284,10 +301,13 @@ tested where a CGO/race toolchain is available; report unavailable checks explic
 
 ## Recovery and remaining work
 
-The prototype is not enabled in any service main and stores no business data.
-Keep helper/probe changes reviewable separately. Follow-up issues must name owners
-and scope for each service, collectors, dashboard and KEDA guards. Do not copy private
-business code into pkg or change shared contracts while instrumenting.
+Issue #69 enabled the helper in the gateway, access and metering mains; it stores no
+business data. `/metrics` is for scrapes inside the cluster: the ingress (#71) must
+expose only `/v1/messages` and `/v1/responses`, never `/metrics`. Prometheus in
+Compose is left to #72 and #74. Keep helper/probe changes reviewable separately.
+Follow-up issues must name owners and scope for the planned metric families, the
+dashboard and KEDA guards. Do not copy private business code into pkg or change
+shared contracts while instrumenting.
 
 When later reverting live telemetry, agree safe fixed replicas before removing
 signals; never feed KEDA a false zero or turn off financial/admission protection.

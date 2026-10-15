@@ -38,6 +38,15 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `SHUTDOWN_TIMEOUT` | every service and the mock upstream; compose leaves it unset | `10s` | Go duration a stopping process waits for in-flight requests before it closes them; `stop_grace_period` must exceed the drain delay plus this |
 | `*_PORT` | compose | 8080, 8081, 8082, 8090, 5432, 6379; 11434 for `OLLAMA_PORT` | Host ports, bound to localhost only |
 
+## Metrics
+
+The gateway, access and metering each serve Prometheus metrics on `GET /metrics`,
+beside `/healthz` on their own port and without a token;
+[docs/observability.md](../../docs/observability.md#interim-logging-on-main) lists
+what they hold. They are for scrapes inside the stack or the cluster: an ingress must
+route only `/v1/messages` and `/v1/responses` to the gateway, and never `/metrics`.
+Compose runs no Prometheus yet.
+
 ## Seed services
 
 `seed-access` and `seed-metering` run once on every `up`, after `access` and
