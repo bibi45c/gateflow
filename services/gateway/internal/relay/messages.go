@@ -36,6 +36,13 @@ func (messages) setCredential(header http.Header, credential string) {
 	header.Set("X-Api-Key", credential)
 }
 
+// modelOutput is true for content_block_delta, the first piece of a text, tool input
+// or thinking block. message_start, ping, a block's start and stop, message_delta and
+// message_stop are not model output.
+func (messages) modelOutput(eventType string) bool {
+	return eventType == anthropic.EventContentBlockDelta
+}
+
 // checkBody checks the JSON, model and max_tokens, in the order of #18.
 func (messages) checkBody(body []byte, call *Call) ([]byte, *PublicError) {
 	req, err := anthropic.ParseRequest(body)

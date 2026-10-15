@@ -6,7 +6,8 @@
 // api/metering.yaml. The public errors it writes are listed in api/errors.md, in the
 // error body of the endpoint called. The endpoint's protocol gives how the relay reads
 // the request and the reply; the rest is shared. It converts nothing between the two
-// protocols.
+// protocols. It reports each request's result, demand and first output to the
+// observability helper, which writes the request's log line.
 package relay
 
 import (
@@ -16,6 +17,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/bibi45c/gateflow/pkg/observability"
 )
 
 // Bounds from issue #18. They are S1 constants, not configuration.
@@ -84,6 +87,9 @@ type Call struct {
 	// max_output_tokens, or 32768 when the request has none.
 	MaxTokens int64
 	BodyBytes int64 // len(body); #39 reserves with max_input_tokens = BodyBytes
+	// Observation is the request's observation, on which Admit sets the verified
+	// tenant. Nil observes nothing; its methods are then no-ops.
+	Observation *observability.Request
 }
 
 // Admitted is a request that may go upstream.
@@ -119,18 +125,23 @@ type Config struct {
 	// Transport sends upstream requests. Nil means a transport of the handler's own,
 	// from NewTransport.
 	Transport http.RoundTripper
+	// Observer times and counts every request and writes its request log line. It
+	// must come from NewObserver, which knows the endpoints' routes. Nil observes
+	// nothing.
+	Observer *observability.Observer
 }
 
 type handler struct {
-	proto  protocol
-	getenv func(string) string
-	client *http.Client
-	admit  Admission
-	logger *slog.Logger
+	proto    protocol
+	getenv   func(string) string
+	client   *http.Client
+	admit    Admission
+	logger   *slog.Logger
+	observer *observability.Observer
 }
 
 // New returns the handler for POST /v1/messages. Every response carries a request-id
-// header, and every request gets one access log line on logger.
+// header, and cfg.Observer observes every request. logger gets the failures.
 func New(cfg Config, admit Admission, logger *slog.Logger) http.Handler {
 	return newHandler(messages{}, cfg, admit, logger)
 }
@@ -146,7 +157,7 @@ func newHandler(proto protocol, cfg Config, admit Admission, logger *slog.Logger
 		cfg.Getenv = os.Getenv
 	}
 	if cfg.Transport == nil {
-		cfg.Transport = NewTransport()
+		cfg.Transport = NewTransport(DefaultMaxIdleConns)
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -156,30 +167,39 @@ func newHandler(proto protocol, cfg Config, admit Admission, logger *slog.Logger
 		getenv: cfg.Getenv,
 		// A redirect is relayed as an upstream status, so the body and credential
 		// never go to another address.
-		client: &http.Client{Transport: cfg.Transport, CheckRedirect: noRedirect},
-		admit:  admit,
-		logger: logger,
+		client:   &http.Client{Transport: cfg.Transport, CheckRedirect: noRedirect},
+		admit:    admit,
+		logger:   logger,
+		observer: cfg.Observer,
 	}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
 	call := Call{RequestID: newRequestID(), Protocol: h.proto.id()}
 	w.Header().Set("request-id", call.RequestID)
 	rec := &recorder{ResponseWriter: w}
-	defer h.logAccess(r, rec, &call, start)
 
 	body, perr := h.checkRequest(w, r, &call)
+	call.Observation = h.observe(r, call)
+	// After a panic the call ends interrupted, which releases its admission. Every
+	// other exit has ended it already, and a second Finish has no effect.
+	defer func() { call.Observation.Finish(summary(rec, &call, observability.Interrupted, rec.status)) }()
 	if perr != nil {
-		h.writeError(rec, perr)
+		h.refuse(rec, &call, perr)
 		return
 	}
 	admitted, perr := h.admit.Admit(r.Context(), call)
 	if perr != nil {
-		h.writeError(rec, perr)
+		h.refuse(rec, &call, perr)
 		return
 	}
-	h.relay(rec, r, body, call.RequestID, admitted)
+	// The gateway has no capacity limit yet, so a call that admission accepts, with
+	// its cost held, is eligible demand and admitted at once. A refused call is
+	// neither, so it never reaches the two demand signals.
+	call.Observation.MarkEligible()
+	call.Observation.MarkAdmitted()
+	outcome := h.relay(rec, r, body, call, admitted)
+	finish(rec, &call, observability.Result(outcome))
 }
 
 func noRedirect(*http.Request, []*http.Request) error {

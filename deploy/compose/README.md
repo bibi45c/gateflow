@@ -7,8 +7,9 @@ stop commands are at the top of that file; the checks are in
 ## Configuration
 
 Every service reads its settings from these variables. Compose sets all of them
-except the `SHUTDOWN_*` pair, whose defaults suit it, so a service issue adds code
-that reads a variable, not a compose change. The defaults
+except the `SHUTDOWN_*` pair, `MODEL_ALIASES` and `UPSTREAM_MAX_IDLE_CONNS`, whose
+defaults suit it, so a service issue adds code that reads a variable, not a compose
+change. The defaults
 are local-only test values, not credentials: never reuse them outside this stack.
 Override a value in `deploy/compose/.env`, which Git ignores.
 
@@ -19,6 +20,8 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `METERING_URL` | gateway | `http://metering:8082` | Internal base URL of metering |
 | `ACCESS_INTERNAL_TOKEN` | access (accepts); gateway, metering (send) | `access-token-local-only` | Bearer token for calls to access |
 | `METERING_INTERNAL_TOKEN` | metering (accepts); gateway (sends) | `metering-token-local-only` | Bearer token for calls to metering |
+| `MODEL_ALIASES` | gateway; compose leaves it unset | The mock scenarios (`mock-text` … `mock-load`), `qwen3:8b`, `qwen2.5-coder:7b` | Comma-separated model names, at most 16, that request log lines show as they are; any other model is logged as `other`. A model is never a metric label |
+| `UPSTREAM_MAX_IDLE_CONNS` | gateway; compose leaves it unset | `256` | Idle upstream connections the gateway keeps, in all and to each upstream host, for 90 s, so a load test reuses connections instead of opening one per call |
 | `ACCESS_KEY_PEPPER` | access | `key-pepper-local-only` | Secret mixed into the stored HMAC of each gateway key |
 | `ACCESS_SEED_SECRET` | access seed | `seed-secret-local-only` | Derives the seeded tenants' gateway keys |
 | `MOCK_UPSTREAM_BASE_URL` | access seed | `http://mock-upstream:8090` | Base URL of the mock upstream channel |

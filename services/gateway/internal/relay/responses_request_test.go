@@ -336,7 +336,7 @@ func TestResponsesAccessLogHoldsNoSecrets(t *testing.T) {
 	}
 	for i, r := range requests {
 		line := lines[ids[i]]
-		if line.Method != http.MethodPost || line.Route != "POST /v1/responses" || line.Status != r.status ||
+		if line.Method != http.MethodPost || line.Route != "/v1/responses" || line.Status != r.status ||
 			line.DurationMS == nil || line.RequestBytes != int64(len(r.body)) || line.ResponseBytes == 0 {
 			t.Errorf("access line of request %d = %+v", i, line)
 		}

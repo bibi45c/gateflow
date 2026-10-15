@@ -46,8 +46,8 @@ const msgUnreadable = "The request body could not be read."
 
 // checkRequest reads and checks a request in the order of #18: body size, gateway key
 // present, then the body members that the endpoint's protocol checks. It fills call as
-// it goes, so that the access log has what was read even when a check fails. It
-// returns the body to send upstream.
+// it goes, so that the request's observation has what was read even when a check
+// fails. It returns the body to send upstream.
 func (h *handler) checkRequest(w http.ResponseWriter, r *http.Request, call *Call) ([]byte, *PublicError) {
 	body, perr := readBody(w, r)
 	if perr != nil {

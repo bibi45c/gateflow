@@ -46,6 +46,11 @@ func (x *exchange) relayStream(resp *http.Response) {
 			x.clientGone = true
 			return
 		}
+		if !x.firstOutput && x.h.proto.modelOutput(event.Type()) {
+			// The event is written and flushed, so the client has the first output.
+			x.firstOutput = true
+			x.observed.MarkFirstOutput()
+		}
 		if role != roleOutput {
 			return
 		}

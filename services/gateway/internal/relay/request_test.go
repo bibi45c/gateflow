@@ -191,17 +191,18 @@ func TestRequestIDsDiffer(t *testing.T) {
 	}
 }
 
-// accessLine is one access log line.
+// accessLine is one access log line, which the observability helper writes: its
+// duration_ms has a fraction, and its route is the route template, without the method.
 type accessLine struct {
-	Msg           string `json:"msg"`
-	Method        string `json:"method"`
-	Route         string `json:"route"`
-	Status        int    `json:"status"`
-	DurationMS    *int64 `json:"duration_ms"`
-	Model         string `json:"model"`
-	RequestBytes  int64  `json:"request_bytes"`
-	ResponseBytes int64  `json:"response_bytes"`
-	RequestID     string `json:"request_id"`
+	Msg           string   `json:"msg"`
+	Method        string   `json:"method"`
+	Route         string   `json:"route"`
+	Status        int      `json:"status"`
+	DurationMS    *float64 `json:"duration_ms"`
+	Model         string   `json:"model"`
+	RequestBytes  int64    `json:"request_bytes"`
+	ResponseBytes int64    `json:"response_bytes"`
+	RequestID     string   `json:"request_id"`
 }
 
 // accessLines returns the access log lines by request id.
@@ -280,7 +281,7 @@ func TestAccessLogHoldsNoSecrets(t *testing.T) {
 	}
 	for i, r := range requests {
 		line := lines[ids[i]]
-		if line.Method != http.MethodPost || line.Route != "POST /v1/messages" ||
+		if line.Method != http.MethodPost || line.Route != "/v1/messages" ||
 			line.Status != r.status || line.DurationMS == nil ||
 			line.RequestBytes != int64(len(r.body)) || line.ResponseBytes == 0 {
 			t.Errorf("access line of request %d = %+v", i, line)

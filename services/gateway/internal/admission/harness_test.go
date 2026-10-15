@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bibi45c/gateflow/pkg/observability"
 	"github.com/bibi45c/gateflow/pkg/protocol/anthropic"
 	"github.com/bibi45c/gateflow/services/gateway/internal/accessclient"
 	"github.com/bibi45c/gateflow/services/gateway/internal/admission"
@@ -97,6 +98,8 @@ type setup struct {
 	// responses makes verify name a channel that speaks openai-responses, whose
 	// upstream answers a completed Responses stream unless upstream is set.
 	responses bool
+	// observer, when set, observes the gateway's requests.
+	observer *observability.Observer
 }
 
 // harness is the gateway's POST /v1/messages and POST /v1/responses, as main mounts
@@ -149,7 +152,7 @@ func start(t *testing.T, s setup) *harness {
 		Getenv:   testEnv,
 		Logger:   logger,
 	})
-	cfg := relay.Config{Getenv: testEnv}
+	cfg := relay.Config{Getenv: testEnv, Observer: s.observer}
 	if s.tlsUpstream {
 		cfg.Transport = upstream.Client().Transport
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"strings"
 
 	"github.com/bibi45c/gateflow/pkg/protocol/openai"
 	"github.com/bibi45c/gateflow/pkg/protocol/sse"
@@ -50,6 +51,14 @@ func (responses) newObserver() observer      { return &responsesObserver{} }
 
 func (responses) setCredential(header http.Header, credential string) {
 	header.Set("Authorization", "Bearer "+credential)
+}
+
+// modelOutput is true for a response.*.delta event, such as response.output_text.delta
+// or response.function_call_arguments.delta. response.created, response.in_progress,
+// the added and done events of items and parts, and the end events are not model
+// output.
+func (responses) modelOutput(eventType string) bool {
+	return strings.HasPrefix(eventType, "response.") && strings.HasSuffix(eventType, ".delta")
 }
 
 // checkBody checks the JSON, model, max_output_tokens and previous_response_id, in the
