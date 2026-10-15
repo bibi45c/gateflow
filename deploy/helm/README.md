@@ -12,6 +12,10 @@ controller-v1.15.1. ingress-nginx is used only in the disposable local rehearsal
 AWS uses the AWS Load Balancer Controller. The three-node cluster needs sufficient
 Docker memory for its control plane, two workers and PostgreSQL.
 
+Optionally install checksum-verified pinned binaries into an ignored local directory
+with `python deploy/helm/toolchain.py --directory .local/bin`, then add that folder
+to this terminal's PATH. CI uses this installer as well.
+
 From the repository root:
 
 ```text
@@ -73,6 +77,11 @@ own schemas. With Helm --wait, post-install/post-upgrade access seed runs after 
 Deployments and finishes before metering seed. Deadlines/backoff bound failures.
 Successful hook Jobs are removed; failed ones remain for diagnosis. Retry with Helm
 upgrade after repairing the cause; before-hook-creation replaces prior hook Jobs.
+
+Access seeding requires Ollama channel settings even when testing only mock models.
+seedChannels.ollamaBaseURL and seedChannels.ollamaModel default to a valid placeholder
+channel at http://ollama:11434 and qwen3:8b. No Ollama workload is installed; real
+Ollama requests require an operator-supplied reachable endpoint/model.
 
 The existing access seed command prints derived gateway API keys to its Job log.
 Treat those logs as credentials: restrict access and never paste them into PRs or

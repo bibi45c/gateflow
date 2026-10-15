@@ -45,6 +45,12 @@ class ChartTests(unittest.TestCase):
         self.assertTrue(all('valueFrom' in e for e in bootstrap['env']))
         self.assertNotIn('local-only',json.dumps(jobs))
 
+    def test_invalid_configuration_rejected(self):
+        for setting in ['environment=production', 'imageTag=', 'services.gateway.image=', 'shutdown.timeout=10']:
+            with self.subTest(setting=setting):
+                p=subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set',setting],capture_output=True,text=True)
+                self.assertNotEqual(p.returncode,0)
+
     def test_invalid_grace_rejected(self):
         p=subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set','shutdown.grace=10'],capture_output=True,text=True)
         self.assertNotEqual(p.returncode,0)
