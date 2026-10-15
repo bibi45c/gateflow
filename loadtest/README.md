@@ -6,7 +6,7 @@ Scheduled load on the gateway, following
 | File | Contents |
 |---|---|
 | `messages.js` | k6 script: scheduled `POST /v1/messages` streams at fixed arrival rates, optionally paired with the same call straight to the mock |
-| `summarize.py` | Builds the results table from the k6 JSON output |
+| `summarize.py` | Builds the results tables, per phase and per tenant, from the k6 JSON output |
 | `test_summarize.py` | Unit tests of `summarize.py`; they need neither k6 nor a stack |
 
 ## Run
@@ -38,7 +38,8 @@ python loadtest/summarize.py .local/loadtest/run.json
 ```
 
 `--no-usage-report` stops k6 from sending anonymous usage statistics to Grafana.
-`summarize.py` prints one Markdown row per phase and writes the same results to
+`summarize.py` prints one Markdown row per phase, then the
+[per-tenant tables](#tenant-scenarios), and writes the same results to
 `.local/loadtest/run.results.json`.
 
 The default model, `mock-load`, streams for about 20 seconds: 200 deltas of 256 bytes,
@@ -53,6 +54,56 @@ settle failed; they stay held until recovery (UC6, see
 [api/metering.yaml](../api/metering.yaml)). Check that `wallet_empty_responses` is 0;
 otherwise repeat with a fresh database and the larger initial balance. Do not
 reuse the volume and assume reseeding updated it.
+
+## Tenant scenarios
+
+Two variants of the run above compare the same arrival levels spread over ten
+tenants and concentrated on one wallet. Run each against its own fresh database,
+with the large-wallet override, and keep every other setting equal.
+
+**Tenant isolation**: ten equally loaded tenants. This is the default
+(`TENANTS=10`): request *n* uses `tenant-01` to `tenant-10` in turn, so each tenant
+gets a tenth of the arrivals and its own `accounting.wallets` row.
+
+```text
+docker compose -p lt75a -f deploy/compose/compose.yaml -f .local/loadtest/large-wallets.yaml up --build --detach --wait
+k6 run --no-usage-report --out json=.local/loadtest/tenants.json -e GATEWAY_URL=http://127.0.0.1:8080 -e PAIRED=0 -e TENANTS=10 loadtest/messages.js
+python loadtest/summarize.py .local/loadtest/tenants.json
+docker compose -p lt75a -f deploy/compose/compose.yaml down --volumes
+```
+
+**Shared wallet**: `TENANTS=1` sends every request with `tenant-01`'s key, so every
+reservation and settlement updates the same wallet row.
+
+```text
+docker compose -p lt75b -f deploy/compose/compose.yaml -f .local/loadtest/large-wallets.yaml up --build --detach --wait
+k6 run --no-usage-report --out json=.local/loadtest/shared.json -e GATEWAY_URL=http://127.0.0.1:8080 -e PAIRED=0 -e TENANTS=1 loadtest/messages.js
+python loadtest/summarize.py .local/loadtest/shared.json
+docker compose -p lt75b -f deploy/compose/compose.yaml down --volumes
+```
+
+The large-wallet override is required here. The one wallet pays for what ten
+wallets share in the isolation run: with the defaults, each request holds about
+7,200 micro-units until it settles (its body bytes at 3 plus `max_tokens` at 15, the
+seeded price version), and the default plan sends about 17,850 requests, more than
+the default seed balance of 100,000,000 can be relied on to cover once failed
+settlements leave holds behind. The override seeds every wallet, `tenant-01`
+included, with 1,000,000,000,000. As always, it must be present on the first seed,
+and `wallet_empty_responses` must be 0.
+
+For a quick local check, shorten the plan, for example
+`-e LEVELS=5 -e WARMUP_S=10 -e RAMP_S=10 -e HOLD_S=30 -e STREAM_S=25`.
+
+What to compare, at the same level:
+
+- In the isolation run, the **spread** table: sent min / max shows the load was
+  even; completion min / max and the TTFB p95 max/min ratio show whether any tenant
+  was served worse than the others. A ratio near 1 and equal completion rates mean
+  no tenant was favoured.
+- Between the runs, the per-phase table (completion, throughput, TTFB) of the
+  shared-wallet run against the isolation run. A drop that appears only with one
+  wallet points at contention on that wallet's row; confirm it with metering's
+  `/metrics` and the database, which these scripts do not measure.
 
 ## Separate latency diagnostic
 
@@ -85,7 +136,7 @@ Pass each with `-e NAME=value`.
 | `WARMUP_S`, `RAMP_S`, `HOLD_S` | `60`, `60`, `180` | Warm-up at the first level, ramp to each later level, hold at each level |
 | `MAX_TOKENS` | `256` | Explicit `max_tokens` on every request; keep it at least the deltas of `mock-load` to cover reported usage. Messages rejects a missing value with 400; Responses defaults to a 32,768-token hold |
 | `INPUT_BYTES` | `1024` | Size of the user message |
-| `TENANTS` | `10` | Seeded tenants `tenant-01` to `tenant-NN`, used in turn |
+| `TENANTS` | `10` | Seeded tenants `tenant-01` to `tenant-NN`, used in turn; `1` is the shared-wallet scenario. The compose stack seeds 10 |
 | `ACCESS_SEED_SECRET` | the compose default | Secret the seeded keys are derived from, as `access seed` derives them |
 | `TTFB_DEADLINE_MS` | `10000` | Time-to-first-byte deadline; this does not measure the first model content delta |
 | `TOTAL_DEADLINE_S` | `60` | Total deadline of a request |
@@ -119,6 +170,20 @@ throughput (completed per second of the phase), TTFB percentiles, added TTFB wit
 the number of pairs, failed pairs, direct-request duration p95 and maximum VUs.
 VUs include preallocated workers; this is not the gateway's active-stream count.
 The JSON also has total-duration and direct-TTFB percentiles and HTTP status counts.
+
+When the requests carry a `tenant` tag, as every request of `messages.js` does, two
+more tables follow the checks:
+
+- **Per tenant**: per phase and tenant, requests sent, completed, the other three
+  results, completion rate and TTFB p50 / p95. Dropped arrivals never reached a
+  tenant, so a tenant's completion rate is over the requests sent for it; dropped
+  arrivals already make the run invalid through the checks.
+- **Spread across tenants**: per phase, the number of tenants, the lowest and
+  highest requests sent, completion rate and TTFB p95, and the highest TTFB p95
+  over the lowest.
+
+The JSON has them as `tenants` and `tenant_spread`. They do not change the exit
+code.
 
 `gateflow_sent` is counted **before** HTTP starts. `unclassified` is sent minus
 the sum of the four results, exposing an interrupted iteration even if it emitted
