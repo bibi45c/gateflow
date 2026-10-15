@@ -1,0 +1,13 @@
+{{- define "gf.jobPod" -}}
+{{- dict "restartPolicy" "Never" "automountServiceAccountToken" false "nodeSelector" (dict "gateflow.io/workload" "services") | toJson -}}
+{{- end -}}
+{{- $env := list -}}
+{{- range $key := list "PGHOST" "PGPORT" "PGDATABASE" "PGUSER" "PGPASSWORD" "PGSSLMODE" "ACCESS_PASSWORD" "METERING_PASSWORD" -}}
+{{- $env = append $env (dict "name" $key "valueFrom" (dict "secretKeyRef" (dict "name" $.Values.bootstrapSecretName "key" $key))) -}}
+{{- end -}}
+{{- $script := "set -eu\n" -}}
+{{- if eq .Values.environment "aws" -}}{{- $script = printf "%s[ \"$PGSSLMODE\" = require ] || { echo 'AWS bootstrap requires PGSSLMODE=require'; exit 1; }\n" $script -}}{{- end -}}
+{{- $script = printf "%spsql -X -v ON_ERROR_STOP=1 <<'SQL'\n%s\nSQL\n" $script (.Files.Get "files/bootstrap.sql") -}}
+{{- $c := dict "name" "bootstrap" "image" .Values.postgresImage "command" (list "sh" "-c" $script) "env" $env -}}
+{{- $pod := include "gf.jobPod" . | fromJson -}}{{- $_ := set $pod "containers" (list $c) -}}
+{{ dict "apiVersion" "batch/v1" "kind" "Job" "metadata" (dict "name" (printf "%s-bootstrap" .Release.Name) "annotations" (dict "helm.sh/hook" "pre-install,pre-upgrade" "helm.sh/hook-weight" "-20" "helm.sh/hook-delete-policy" "before-hook-creation,hook-succeeded")) "spec" (dict "activeDeadlineSeconds" 180 "backoffLimit" 2 "template" (dict "spec" $pod)) | toJson }}

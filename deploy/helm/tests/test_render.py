@@ -31,6 +31,20 @@ class ChartTests(unittest.TestCase):
         self.assertEqual({p['path'] for p in paths},{'/v1/messages','/v1/responses'})
         self.assertTrue(all(p['pathType']=='Exact' for p in paths))
 
+    def test_ordered_jobs(self):
+        jobs={d['metadata']['name']:d for d in render() if d['kind']=='Job'}
+        self.assertEqual(set(jobs),{'gf-bootstrap','gf-seed-access','gf-seed-metering'})
+        weights=[]
+        for name in ['gf-bootstrap','gf-seed-access','gf-seed-metering']:
+            job=jobs[name]
+            weights.append(int(job['metadata']['annotations']['helm.sh/hook-weight']))
+            self.assertEqual(job['spec']['activeDeadlineSeconds'],180)
+            self.assertFalse(job['spec']['template']['spec']['automountServiceAccountToken'])
+        self.assertEqual(weights,[-20,10,20])
+        bootstrap=jobs['gf-bootstrap']['spec']['template']['spec']['containers'][0]
+        self.assertTrue(all('valueFrom' in e for e in bootstrap['env']))
+        self.assertNotIn('local-only',json.dumps(jobs))
+
     def test_invalid_grace_rejected(self):
         p=subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set','shutdown.grace=10'],capture_output=True,text=True)
         self.assertNotEqual(p.returncode,0)
