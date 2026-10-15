@@ -130,13 +130,16 @@ opencode run -m gateflow/qwen3:8b '<task>'
 
 Without `-m`, an OpenCode that did not load `opencode.json` falls back to its own
 hosted model, such as `opencode/big-pickle`. The session looks normal, but no request
-reaches the gateway or Ollama. With `-m`, a missing `gateflow` provider is an error.
+reaches the gateway or Ollama. With `opencode run -m`, a missing `gateflow` provider
+is an error: OpenCode exits with code 1 and prints a generic "Unexpected server
+error". Whether the interactive `opencode -m` also stops is not verified.
 
 ## Confirm the provider
 
 Check every session; a normal-looking answer does not prove where it came from.
 
-- In OpenCode's output, the provider is `gateflow`.
+- In the interactive screen, the model shown is `Qwen3 8B`. Any other model means
+  OpenCode fell back.
 - Through the gateway, the gateway log has one line per request with
   `"msg":"request"` and `"route":"/v1/messages"`. In the compose stack, read it with:
 
@@ -295,7 +298,7 @@ Check that `python -m unittest` fails in that folder. On macOS write `python3`, 
 and in the task below, if `python` is not Python 3.
 
 Set `GATEFLOW_API_KEY`, start `opencode -m gateflow/qwen3:8b` in the folder, confirm
-the provider as in [Confirm the provider](#confirm-the-provider), and send this task:
+that the model shown is `Qwen3 8B`, and send this task:
 
 ```text
 Run python -m unittest in this folder, find why the test fails, fix calc.py, and run the tests again.
