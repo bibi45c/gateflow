@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bibi45c/gateflow/pkg/observability"
 	"github.com/bibi45c/gateflow/pkg/protocol/anthropic"
 	"github.com/bibi45c/gateflow/services/gateway/internal/accessclient"
 	"github.com/bibi45c/gateflow/services/gateway/internal/admission"
@@ -94,10 +95,15 @@ type setup struct {
 	upstream, verify, reserve, settle answer
 	accessDown, meteringDown          bool // the service's address refuses connections
 	tlsUpstream                       bool // an https upstream behind credentialEnv
+	// responses makes verify name a channel that speaks openai-responses, whose
+	// upstream answers a completed Responses stream unless upstream is set.
+	responses bool
+	// observer, when set, observes the gateway's requests.
+	observer *observability.Observer
 }
 
-// harness is the gateway's POST /v1/messages, as main mounts it, in front of
-// stand-ins for the upstream, access and metering.
+// harness is the gateway's POST /v1/messages and POST /v1/responses, as main mounts
+// them, in front of stand-ins for the upstream, access and metering.
 type harness struct {
 	t                                 *testing.T
 	upstream, verify, reserve, settle *route
@@ -112,8 +118,12 @@ func start(t *testing.T, s setup) *harness {
 
 	upstreamMux := http.NewServeMux()
 	upstreamMux.Handle("POST /v1/messages", h.upstream.handler(or(s.upstream, completedStream)))
+	upstreamMux.Handle("POST /v1/responses", h.upstream.handler(or(s.upstream, completedResponses)))
 	upstream := httptest.NewUnstartedServer(upstreamMux)
 	channel := channelJSON{ID: "mock", Protocol: "anthropic-messages"}
+	if s.responses {
+		channel = channelJSON{ID: "mock-responses", Protocol: "openai-responses"}
+	}
 	if s.tlsUpstream {
 		upstream.StartTLS()
 		channel.CredentialEnv = credentialEnv
@@ -142,12 +152,13 @@ func start(t *testing.T, s setup) *harness {
 		Getenv:   testEnv,
 		Logger:   logger,
 	})
-	cfg := relay.Config{Getenv: testEnv}
+	cfg := relay.Config{Getenv: testEnv, Observer: s.observer}
 	if s.tlsUpstream {
 		cfg.Transport = upstream.Client().Transport
 	}
 	mux := http.NewServeMux()
 	mux.Handle("POST /v1/messages", relay.New(cfg, admit, logger))
+	mux.Handle("POST /v1/responses", relay.NewResponses(cfg, admit, logger))
 	h.gateway = httptest.NewServer(mux)
 	t.Cleanup(h.gateway.Close)
 	return h

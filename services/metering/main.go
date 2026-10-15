@@ -3,7 +3,8 @@
 //
 // At startup it requires DATABASE_URL, ACCESS_URL, ACCESS_INTERNAL_TOKEN and
 // METERING_INTERNAL_TOKEN, and applies its migrations before serving the reserve
-// and settle operations under /internal/v1. Run as
+// and settle operations under /internal/v1, and its Prometheus metrics on GET
+// /metrics, for scrapes inside the cluster only. Run as
 // `metering seed [--balance N] [--tenants N]`, it instead creates the missing test
 // wallets and exits.
 package main
@@ -13,14 +14,18 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
+	"github.com/bibi45c/gateflow/pkg/observability"
 	"github.com/bibi45c/gateflow/pkg/server"
 	"github.com/bibi45c/gateflow/services/metering/internal/accessclient"
 	"github.com/bibi45c/gateflow/services/metering/internal/api"
 	"github.com/bibi45c/gateflow/services/metering/internal/config"
 	"github.com/bibi45c/gateflow/services/metering/internal/store"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -42,12 +47,27 @@ func main() {
 	}
 	cfg, err := config.Load(os.Getenv)
 	exitOnError(err)
+	// One metrics registry for the process, never the global one. The helper adds the
+	// service attribute itself, so its logger is a JSON logger on stdout like
+	// server.Main's, without the attribute that server.Main adds to its own.
+	observer, err := api.NewObserver(prometheus.NewRegistry(), slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	exitOnError(err)
 	pool, err := store.Open(context.Background(), cfg.DatabaseURL)
 	exitOnError(err)
 	defer pool.Close()
 	prices := accessclient.New(cfg.AccessURL, cfg.AccessInternalToken)
-	handler := api.New(store.NewReservations(pool), prices, cfg.MeteringInternalToken)
-	server.Main(name, defaultAddr, handler.Register)
+	handler := api.New(store.NewReservations(pool), prices, cfg.MeteringInternalToken, observer)
+	server.Main(name, defaultAddr, routes(handler, observer))
+}
+
+// routes returns the function that adds the two operations and GET /metrics. Like
+// /healthz, /metrics needs no token: only the cluster reaches the service, and no
+// ingress may route to it.
+func routes(handler *api.Handler, observer *observability.Observer) func(*http.ServeMux) {
+	return func(mux *http.ServeMux) {
+		handler.Register(mux)
+		mux.Handle("GET /metrics", observer.MetricsHandler())
+	}
 }
 
 // seed runs the seed command with the arguments after "seed".

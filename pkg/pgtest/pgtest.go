@@ -11,14 +11,17 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bibi45c/gateflow/pkg/pgmigrate"
@@ -31,7 +34,8 @@ const timeout = 30 * time.Second
 
 // DB is one test's database.
 type DB struct {
-	url string
+	name string
+	url  string
 }
 
 // New creates a uniquely named database, runs the init SQL in it and drops it when
@@ -50,23 +54,115 @@ func New(t testing.TB) *DB {
 	_, _ = rand.Read(suffix)
 	name := "gftest_" + hex.EncodeToString(suffix)
 	ident := pgx.Identifier{name}.Sanitize()
+	target, err := targetURL(admin, name)
+	if err != nil {
+		t.Fatalf("%s: %v", EnvURL, err)
+	}
 
 	exec(t, admin, "CREATE DATABASE "+ident)
 	// Cleanups run last-in first-out, so pools opened later are closed before this.
 	t.Cleanup(func() { exec(t, admin, "DROP DATABASE IF EXISTS "+ident+" WITH (FORCE)") })
 
-	u, err := url.Parse(admin)
-	if err != nil {
-		t.Fatalf("%s: %v", EnvURL, err)
-	}
-	u.Path = "/" + name
-	db := &DB{url: u.String()}
-	exec(t, db.url, string(initSQL))
+	db := &DB{name: name, url: target}
+	db.initialize(t, string(initSQL))
 	return db
 }
 
+// Name is the name of this test's database.
+func (db *DB) Name() string { return db.name }
+
 // URL is the superuser URL of this test's database.
 func (db *DB) URL() string { return db.url }
+
+// targetURL points admin at the database name. pgx lets the dbname and database
+// query parameters override the path, so every such parameter is dropped, in any
+// letter case and however often it appears. Other parameters keep their order.
+func targetURL(admin, name string) (string, error) {
+	u, err := url.Parse(admin)
+	if err != nil {
+		return "", err
+	}
+	// pgx reads anything else as keyword/value settings, where the path means nothing.
+	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
+		return "", fmt.Errorf("want a postgres:// or postgresql:// URL, got scheme %q", u.Scheme)
+	}
+	// pgx has no fragments: it reads what follows # as more query parameters.
+	if u.Fragment != "" || u.RawFragment != "" {
+		return "", errors.New("the URL has a # fragment; percent-encode # as %23")
+	}
+	var kept []string
+	for _, pair := range strings.Split(u.RawQuery, "&") {
+		if pair == "" {
+			continue
+		}
+		key, _, _ := strings.Cut(pair, "=")
+		if decoded, err := url.QueryUnescape(key); err == nil && selectsDatabase(decoded) {
+			continue
+		}
+		kept = append(kept, pair)
+	}
+	u.RawQuery = strings.Join(kept, "&")
+	u.Path = "/" + name
+	u.RawPath = ""
+	target := u.String()
+	// Parse as pgx does, so any other way the two parsers differ fails here.
+	config, err := pgconn.ParseConfig(target)
+	if err != nil {
+		return "", err
+	}
+	if config.Database != name {
+		return "", fmt.Errorf("pgx reads the test URL as database %q, want %q", config.Database, name)
+	}
+	for key := range config.RuntimeParams {
+		if selectsDatabase(key) {
+			return "", fmt.Errorf("pgx reads the test URL with a leftover %q parameter", key)
+		}
+	}
+	return target, nil
+}
+
+// selectsDatabase reports whether a query parameter names the database to use.
+// Like pgx, it ignores spaces around the name.
+func selectsDatabase(key string) bool {
+	key = strings.Trim(key, " ")
+	return strings.EqualFold(key, "dbname") || strings.EqualFold(key, "database")
+}
+
+// initialize runs the init SQL in the test's database, after making sure the
+// connection really landed there.
+func (db *DB) initialize(t testing.TB, initSQL string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, db.url)
+	if err != nil {
+		t.Fatalf("connect to Postgres: %v", err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	if err := initDatabase(ctx, conn, db.name, initSQL); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// querier is the part of *pgx.Conn that initDatabase uses.
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// initDatabase runs initSQL on conn only when conn's current database is want, so a
+// misdirected connection never changes another database.
+func initDatabase(ctx context.Context, conn querier, want, initSQL string) error {
+	var got string
+	if err := conn.QueryRow(ctx, "SELECT current_database()").Scan(&got); err != nil {
+		return fmt.Errorf("check current database: %w", err)
+	}
+	if got != want {
+		return fmt.Errorf("connected to database %q, want %q; init SQL not run", got, want)
+	}
+	_, err := conn.Exec(ctx, initSQL)
+	return err
+}
 
 // Pool connects to the database as role, such as "access" or "metering", or as the
 // superuser when role is empty, and closes the pool when the test ends.

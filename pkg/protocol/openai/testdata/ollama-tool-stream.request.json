@@ -1,0 +1,1 @@
+{"model":"qwen3:4b-instruct-2507-q4_K_M","stream":true,"max_output_tokens":200,"input":[{"role":"user","content":"Run the tests with the run_tests tool."}],"tools":[{"type":"function","name":"run_tests","description":"Run the unit tests in the current folder.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}]}

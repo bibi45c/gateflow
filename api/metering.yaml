@@ -1,12 +1,17 @@
 openapi: 3.1.0
 info:
   title: FlowGate metering internal API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     Internal API of the metering service (wallets, reservations, settlement and the
     ledger) for S1, as agreed in issue #18 revision 3.2. The gateway reserves before
     it dispatches a call and settles after the call ends. Callers write their own
     clients under `services/<caller>/internal/`.
+
+    Issue #61 adds a second protocol for S2, `openai-responses`
+    (`POST /v1/responses`), next to `anthropic-messages` (`POST /v1/messages`). The
+    reserve and settle bodies do not change; the bounds of reserve and the usage
+    source and outcome rule of settle give the gateway's rules for each protocol.
 
     `api/errors.md` is the single list of error codes. The `ErrorCode` enum below
     lists exactly the codes it gives for metering.
@@ -45,8 +50,11 @@ info:
       charge 0, although a non-2xx reply does not strictly prove the upstream did no
       work.
     - Prices are whole micro-units per token, with no separate cache or reasoning
-      token prices: cache-read and cache-creation input tokens are charged at the
-      full input price, and thinking tokens arrive inside `output_tokens`.
+      token prices. On `anthropic-messages`, cache-read and cache-creation input
+      tokens are charged at the full input price. On `openai-responses`,
+      `input_tokens_details.cached_tokens` is already part of `input_tokens`, so it
+      is charged at the full input price too. Thinking tokens arrive inside
+      `output_tokens`.
     - On Ollama, the input count in `message_start` is an estimate, so a stream that
       ends before its `message_delta` is charged on that estimate.
     - Metering trusts the gateway's `tenant_id` and `price_version_id`.
@@ -85,11 +93,19 @@ paths:
           checked arithmetic; a `max_cost` that overflows int64 gets 400
           `invalid_request`.
         - The gateway accepts request bodies up to 2 MiB (larger ones get 413
-          `request_too_large`) and `max_tokens` only as an integer from 1 to 32,768.
+          `request_too_large`). It takes the output bound of a call from the request,
+          by protocol:
+          - `anthropic-messages`: `max_tokens`, required, only as an integer from 1
+            to 32,768.
+          - `openai-responses`: `max_output_tokens`, optional, only as an integer
+            from 1 to 32,768. An explicit `null` counts as absent. When it is
+            absent, the bound is 32,768 and the gateway writes
+            `"max_output_tokens": 32768` into the request it sends upstream, so the
+            charge stays bounded.
         - The gateway reserves with `max_input_tokens` = request body size in bytes (at
-          most 2,097,152) and `max_output_tokens` = `max_tokens`. Bytes are an upper
-          bound on tokens for text and tool content, which is all S1 accepts; they are
-          not proven for other content types.
+          most 2,097,152) and `max_output_tokens` = the output bound. Bytes are an
+          upper bound on tokens for text and tool content, which is all S1 accepts;
+          they are not proven for other content types.
 
         **Idempotency and concurrency.**
 
@@ -152,6 +168,19 @@ paths:
                   price_version_id: pv-fixture-2-5
                   max_input_tokens: 100
                   max_output_tokens: 20
+              responses-default-output:
+                summary: A Responses call without max_output_tokens (max_cost 494,520)
+                description: |
+                  A 1,000-byte `/v1/responses` request with no `max_output_tokens`, so
+                  the output bound is 32,768. Price version `pv-seed-1`.
+                  max_cost = 1,000 x 3 + 32,768 x 15 = 3,000 + 491,520 = 494,520.
+                value:
+                  call_id: req_2c4e6a8b-1d3f-4a5b-9c7d-8e9f0a1b2c3d
+                  attempt_id: 1
+                  tenant_id: tenant-01
+                  price_version_id: pv-seed-1
+                  max_input_tokens: 1000
+                  max_output_tokens: 32768
       responses:
         '200':
           description: |
@@ -186,6 +215,12 @@ paths:
                   value:
                     reservation_id: rsv_f1
                     max_cost: 300
+                    status: reserved
+                responses-default-output:
+                  summary: max_cost = 1,000 x 3 + 32,768 x 15 = 494,520
+                  value:
+                    reservation_id: rsv_r3
+                    max_cost: 494520
                     status: reserved
         '400':
           description: |
@@ -269,31 +304,49 @@ paths:
         - Metering stores the counts as sent (null stays null), the outcome and
           `charged`, so reported and unknown usage stay distinguishable.
 
-        **Usage source.** The gateway fills the counts as follows. Input is
-        `input_tokens` + `cache_read_input_tokens` + `cache_creation_input_tokens`,
-        adding each field that is present, all charged at the input price. The gateway
-        reads these from `message_start`, and a later `message_delta` that reports an
-        input total greater than 0 replaces them. It takes `output_tokens` from the
-        last `message_delta`. Non-streaming replies use the body's `usage` the same
-        way. An input total that is 0 or never seen is sent as null, because a
-        non-empty request cannot use 0 input tokens and some upstreams report 0 before
-        the real count. An output count of 0 that the upstream reported is a known 0.
-        An output count never seen (no `message_delta`, or no `usage` in the body) is
-        sent as null.
+        **Usage source.** The gateway fills the counts as follows, by protocol:
+
+        - `anthropic-messages`: input is `input_tokens` + `cache_read_input_tokens` +
+          `cache_creation_input_tokens`, adding each field that is present, all
+          charged at the input price. The gateway reads these from `message_start`,
+          and a later `message_delta` that reports an input total greater than 0
+          replaces them. It takes `output_tokens` from the last `message_delta`.
+        - `openai-responses`: input is `usage.input_tokens` alone. It already
+          includes `input_tokens_details.cached_tokens`, so the two are never added,
+          and cached tokens are charged at the input price too. Output is
+          `usage.output_tokens`, which already counts reasoning tokens;
+          `usage.total_tokens` is not used. The gateway reads `usage` from the
+          `response` of the `response.completed`, `response.incomplete` or
+          `response.failed` event.
+
+        Non-streaming replies use the body's `usage` the same way. An input total
+        that is 0 or never seen is sent as null, because a non-empty request cannot
+        use 0 input tokens and some upstreams report 0 before the real count. An
+        output count of 0 that the upstream reported is a known 0. An output count
+        never seen (no `message_delta`, no Responses event above with `usage`, or no
+        `usage` in the body) is sent as null.
 
         **Outcome rule.** The gateway picks the outcome; the first rule that matches
-        wins:
+        wins. The end event of a stream is `message_stop` on `anthropic-messages`,
+        and `response.completed` or `response.incomplete` on `openai-responses`.
+        When the request asks for a stream, a 2xx reply is read as an event stream
+        whatever the upstream's content type, unless it is `application/json`.
 
         1. `not_dispatched`: no upstream request was sent, including when the
            connection to the upstream could not be opened.
-        2. `completed`: `message_stop` arrived, or a 2xx non-streaming body was read
-           in full, even if the client then left.
+        2. `completed`: the end event arrived, or a 2xx non-streaming JSON body was
+           read in full, even if the client then left. On `openai-responses`, a body
+           whose `status` is `incomplete` is `completed`, as on a stream; a body
+           whose `status` is `failed` is not.
         3. `client_cancelled`: the client disconnected first.
         4. `upstream_error`: the upstream answered with a non-2xx status before any
            output. Only this case is taken as proof that no tokens were used.
         5. `interrupted`: anything else, including a request that was sent but got no
-           reply (connection reset or timeout), a stream that ends without
-           `message_stop`, and an upstream `event: error` after the stream started.
+           reply (connection reset or timeout), a stream that ends without its end
+           event, an upstream `event: error` after the stream started, a
+           `response.failed` event, a 2xx non-streaming body that is not JSON, and a
+           2xx non-streaming Responses body whose `status` is `failed`. That last
+           body is charged on its `usage` when it has one.
 
         **Idempotency and concurrency.**
 
@@ -311,13 +364,14 @@ paths:
         gateway logs `call_id` and `reservation_id` at error level, and the
         reservation stays held until recovery (UC6, after the gate).
 
-        **Examples.** The `worked-*` examples are the worked examples of issue #18
-        and the `fixture-*` examples the shared test fixture for #27 and #39; each
+        **Examples.** The `worked-*` examples are the worked examples of issue #18,
+        the `fixture-*` examples the shared test fixture for #27 and #39, and the
+        `responses-*` examples apply the `openai-responses` rules of issue #61; each
         response example has the same name as its request example. Every outcome
-        appears: `completed` (worked-1, worked-2, fixture-1, fixture-2),
-        `interrupted` (worked-3, worked-4, worked-6, fixture-3), `client_cancelled`
-        (worked-5, fixture-4), `upstream_error` (worked-7, fixture-5) and
-        `not_dispatched` (worked-8).
+        appears: `completed` (worked-1, worked-2, fixture-1, fixture-2,
+        responses-1), `interrupted` (worked-3, worked-4, worked-6, fixture-3,
+        responses-2, responses-3), `client_cancelled` (worked-5, fixture-4),
+        `upstream_error` (worked-7, fixture-5) and `not_dispatched` (worked-8).
       parameters:
         - $ref: '#/components/parameters/RequestId'
         - name: reservation_id
@@ -470,6 +524,44 @@ paths:
                   input_tokens: 0
                   output_tokens: 0
                   outcome: upstream_error
+              responses-1-completed-cached:
+                summary: 'Responses 1: completed, cached tokens not added, 3,150 charged'
+                description: |
+                  `rsv_r1`, reserved like `worked-examples` (max_cost 4,500) for a
+                  `/v1/responses` request with `max_output_tokens` 100.
+                  `response.completed` reports `usage.input_tokens` 800, of which
+                  `input_tokens_details.cached_tokens` 600, and `usage.output_tokens`
+                  50. The gateway sends 800, not 1,400.
+                  charged = 800 x 3 + 50 x 15 = 2,400 + 750 = 3,150; 1,350 is released.
+                value:
+                  input_tokens: 800
+                  output_tokens: 50
+                  outcome: completed
+              responses-2-failed-with-usage:
+                summary: 'Responses 2: interrupted, response.failed with usage, 2,700 charged'
+                description: |
+                  `rsv_r2`, reserved like `worked-examples` (max_cost 4,500) for a
+                  `/v1/responses` request with `max_output_tokens` 100.
+                  `response.failed` reports `usage.input_tokens` 800 and
+                  `usage.output_tokens` 20.
+                  charged = 800 x 3 + 20 x 15 = 2,400 + 300 = 2,700; 1,800 is released.
+                value:
+                  input_tokens: 800
+                  output_tokens: 20
+                  outcome: interrupted
+              responses-3-interrupted-default-output:
+                summary: 'Responses 3: interrupted, no end event and no max_output_tokens, 494,520 charged'
+                description: |
+                  `rsv_r3`, reserved like `responses-default-output` (max_cost
+                  494,520). The stream ends with no `response.completed`,
+                  `response.incomplete` or `response.failed`, so no usage was seen and
+                  both null counts are replaced by their maximums.
+                  charged = 1,000 x 3 + 32,768 x 15 = 3,000 + 491,520 = 494,520;
+                  nothing is released.
+                value:
+                  input_tokens: null
+                  output_tokens: null
+                  outcome: interrupted
       responses:
         '200':
           description: |
@@ -558,6 +650,24 @@ paths:
                   value:
                     charged: 0
                     ledger_entry_id: led_f5
+                    status: settled
+                responses-1-completed-cached:
+                  summary: 3,150 charged
+                  value:
+                    charged: 3150
+                    ledger_entry_id: led_r1
+                    status: settled
+                responses-2-failed-with-usage:
+                  summary: 2,700 charged
+                  value:
+                    charged: 2700
+                    ledger_entry_id: led_r2
+                    status: settled
+                responses-3-interrupted-default-output:
+                  summary: 494,520 charged
+                  value:
+                    charged: 494520
+                    ledger_entry_id: led_r3
                     status: settled
         '400':
           description: |
@@ -655,7 +765,7 @@ components:
           type: integer
           format: int64
           minimum: 0
-          description: The most output tokens the call can use; the gateway sends `max_tokens`.
+          description: The most output tokens the call can use; the gateway sends the output bound of the request (see the bounds of reserve).
     ReserveResponse:
       type: object
       required: [reservation_id, max_cost, status]
@@ -681,8 +791,8 @@ components:
           format: int64
           minimum: 0
           description: |
-            The input total (input, cache-read and cache-creation input tokens), or
-            null when it was 0 or never seen.
+            The input total by the usage source of settle, or null when it was 0 or
+            never seen.
         output_tokens:
           type: [integer, 'null']
           format: int64

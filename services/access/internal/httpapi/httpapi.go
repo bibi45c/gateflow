@@ -3,7 +3,8 @@
 //
 // Every route needs the internal bearer token and answers errors in the shared error
 // body. Each request is logged on one line that never holds a gateway key, its HMAC,
-// the Authorization header, the internal token or a request or response body.
+// the Authorization header, the internal token or a request or response body, and
+// is timed and counted by the observability helper under its route template.
 package httpapi
 
 import (
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bibi45c/gateflow/pkg/observability"
 	"github.com/bibi45c/gateflow/services/access/internal/store"
 )
 
@@ -30,7 +32,7 @@ const QueryTimeout = 800 * time.Millisecond
 
 // Store is what the handlers need from the database; *store.Store implements it.
 type Store interface {
-	VerifyKey(ctx context.Context, keyHMAC []byte, model string) (store.VerifiedKey, error)
+	VerifyKey(ctx context.Context, keyHMAC []byte, model, protocol string) (store.VerifiedKey, error)
 	PriceVersion(ctx context.Context, id string) (store.PriceVersion, error)
 }
 
@@ -41,26 +43,29 @@ type API struct {
 	tokenHash [sha256.Size]byte
 	hasToken  bool
 	logger    *slog.Logger
+	observer  *observability.Observer
 }
 
 // New returns the API. pepper is ACCESS_KEY_PEPPER and internalToken is
-// ACCESS_INTERNAL_TOKEN; with an empty internalToken every call is refused.
-func New(s Store, pepper []byte, internalToken string, logger *slog.Logger) *API {
+// ACCESS_INTERNAL_TOKEN; with an empty internalToken every call is refused. observer,
+// from NewObserver, times and counts every request; nil observes nothing.
+func New(s Store, pepper []byte, internalToken string, logger *slog.Logger, observer *observability.Observer) *API {
 	return &API{
 		store:     s,
 		pepper:    pepper,
 		tokenHash: sha256.Sum256([]byte(internalToken)),
 		hasToken:  internalToken != "",
 		logger:    logger,
+		observer:  observer,
 	}
 }
 
 // Register adds the routes to mux. Everything under /internal/v1/ needs the internal
 // token, including paths that are not routes.
 func (a *API) Register(mux *http.ServeMux) {
-	mux.Handle("POST /internal/v1/keys/verify", a.route(a.verifyKey))
-	mux.Handle("GET /internal/v1/price-versions/{id}", a.route(a.priceVersion))
-	mux.Handle("/internal/v1/", a.route(http.NotFound))
+	mux.Handle("POST "+verifyRoute, a.route(verifyRoute, a.verifyKey))
+	mux.Handle("GET "+priceVersionRoute, a.route(priceVersionRoute, a.priceVersion))
+	mux.Handle(otherRoute, a.route(otherRoute, http.NotFound))
 }
 
 // requestState is what a request's log line needs and only later steps know.
@@ -68,6 +73,7 @@ type requestState struct {
 	requestID string
 	keyID     string
 	tenantID  string
+	code      string // the error code answered, if any
 }
 
 type stateKey struct{}
@@ -93,10 +99,11 @@ func newRequestID() string {
 	return fmt.Sprintf("req_%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// statusWriter remembers the status a handler wrote.
+// statusWriter remembers the status a handler wrote and counts the bytes.
 type statusWriter struct {
 	http.ResponseWriter
 	status int
+	bytes  int64
 }
 
 func (w *statusWriter) WriteHeader(status int) {
@@ -110,22 +117,30 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
-	return w.ResponseWriter.Write(b)
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += int64(n)
+	return n, err
 }
 
-// route wraps a handler with what every route shares: the request id, the log line,
-// 500 on a panic, and the internal token check.
-func (a *API) route(next http.HandlerFunc) http.Handler {
+// route wraps a handler with what every route shares: the request id, the log line
+// and observation under template, 500 on a panic, and the internal token check.
+func (a *API) route(template string, next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		s := &requestState{requestID: r.Header.Get("X-Request-Id")}
 		if s.requestID == "" {
 			s.requestID = newRequestID()
 		}
+		observed := a.observe(r, template, s.requestID)
 		r = r.WithContext(context.WithValue(r.Context(), stateKey{}, s))
+		body := &countingBody{ReadCloser: r.Body}
+		r.Body = body // on the copy WithContext made, not the server's request
 		sw := &statusWriter{ResponseWriter: w}
+		// A panic that goes on to the server still ends the observation.
+		defer func() { observed.Finish(summary(observability.Interrupted, sw, body)) }()
 
 		defer func() {
+			panicked := false
 			if p := recover(); p != nil {
 				if p == http.ErrAbortHandler {
 					panic(p)
@@ -134,18 +149,22 @@ func (a *API) route(next http.HandlerFunc) http.Handler {
 				if sw.status == 0 {
 					writeError(sw, r, CodeInternalError)
 				}
+				panicked = true
 			}
+			result := resultOf(s.code, sw.status, panicked)
 			attrs := []any{
 				"request_id", s.requestID,
 				"method", r.Method,
 				"route", r.Pattern,
 				"status", sw.status,
+				"result", string(result),
 				"duration_ms", time.Since(start).Milliseconds(),
 			}
 			if s.keyID != "" {
 				attrs = append(attrs, "key_id", s.keyID, "tenant_id", s.tenantID)
 			}
 			a.logger.Info("request", attrs...)
+			observed.Finish(summary(result, sw, body))
 		}()
 
 		if !a.authorized(r) {

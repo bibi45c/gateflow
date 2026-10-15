@@ -48,6 +48,7 @@ func writeError(w http.ResponseWriter, r *http.Request, code string) {
 	if !ok {
 		code, kind = CodeInternalError, errorKinds[CodeInternalError]
 	}
+	state(r).code = code
 	writeJSON(w, kind.status, errorBody{Error: errorDetail{
 		Code:      code,
 		Message:   kind.message,

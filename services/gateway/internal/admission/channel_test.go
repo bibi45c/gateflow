@@ -1,6 +1,7 @@
 package admission
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bibi45c/gateflow/services/gateway/internal/accessclient"
@@ -41,7 +42,7 @@ func TestCheckChannel(t *testing.T) {
 			BaseURL:       tc.baseURL,
 			CredentialEnv: tc.credentialEnv,
 		}
-		if err := checkChannel(channel, getenv); (err == nil) != tc.ok {
+		if err := checkChannel(channel, "anthropic-messages", getenv); (err == nil) != tc.ok {
 			t.Errorf("%q, %q: err = %v, want ok %v", tc.baseURL, tc.credentialEnv, err, tc.ok)
 		}
 	}
@@ -49,8 +50,33 @@ func TestCheckChannel(t *testing.T) {
 
 func TestCheckChannelNeedsTheAnthropicProtocol(t *testing.T) {
 	channel := accessclient.Channel{ID: "c", Protocol: "openai-responses", BaseURL: "http://mock-upstream:8090"}
-	if checkChannel(channel, func(string) string { return "" }) == nil {
+	if checkChannel(channel, "anthropic-messages", func(string) string { return "" }) == nil {
 		t.Error("a channel of another protocol passed")
+	}
+}
+
+// A channel must speak the protocol of the endpoint called, whichever that is.
+func TestCheckChannelNeedsTheEndpointProtocol(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	for _, tc := range []struct {
+		channel, endpoint string
+		ok                bool
+	}{
+		{"anthropic-messages", relay.ProtocolMessages.String(), true},
+		{"openai-responses", relay.ProtocolResponses.String(), true},
+		{"anthropic-messages", relay.ProtocolResponses.String(), false},
+		{"openai-responses", relay.ProtocolMessages.String(), false},
+		{"", relay.ProtocolResponses.String(), false},
+		{"OPENAI-RESPONSES", relay.ProtocolResponses.String(), false},
+	} {
+		channel := accessclient.Channel{ID: "c", Protocol: tc.channel, BaseURL: "http://mock-upstream:8090"}
+		err := checkChannel(channel, tc.endpoint, noEnv)
+		if (err == nil) != tc.ok {
+			t.Errorf("%q channel on the %s endpoint: err = %v, want ok %v", tc.channel, tc.endpoint, err, tc.ok)
+		}
+		if err != nil && strings.Contains(err.Error(), tc.channel) && tc.channel != "" {
+			t.Errorf("the reason %q holds the channel's protocol", err)
+		}
 	}
 }
 

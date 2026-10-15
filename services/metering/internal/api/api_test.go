@@ -46,7 +46,7 @@ func newService(wallets map[string]int64) *service {
 		store:  newFakeStore(wallets),
 		prices: &fakePrices{versions: map[string]billing.Prices{"pv-1": {Input: 2, Output: 5}}},
 	}
-	New(s.store, s.prices, token).Register(s.mux)
+	New(s.store, s.prices, token, nil).Register(s.mux)
 	return s
 }
 
@@ -347,7 +347,7 @@ func TestEveryCallNeedsTheInternalToken(t *testing.T) {
 
 	// A service started without a token refuses everything, even an empty bearer.
 	closed := http.NewServeMux()
-	New(s.store, s.prices, "").Register(closed)
+	New(s.store, s.prices, "", nil).Register(closed)
 	request := httptest.NewRequest(http.MethodPost, reservePath, strings.NewReader(fixtureReserve))
 	request.Header.Set("Authorization", "Bearer ")
 	recorder := httptest.NewRecorder()
