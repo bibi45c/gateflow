@@ -168,9 +168,9 @@ Recorded from Codex 0.162.1 against Ollama:
   `previous_response_id` ([api/errors.md](../../api/errors.md)).
 - No `max_output_tokens`. The gateway then holds 32,768 output tokens for each call
   and sends that bound upstream ([api/metering.yaml](../../api/metering.yaml)). The
-  first request of a session is already about 41 KB, so under the seeded price
-  version `pv-seed-1` it holds 40,960 × 3 + 32,768 × 15 = 614,400 micro-units, and
-  later requests hold more as the conversation grows.
+  input bound is the request body size in bytes. A first request of about 41,000
+  bytes therefore holds about 41,000 × 3 + 32,768 × 15 = 614,520 micro-units at the
+  seeded price version `pv-seed-1`. Later requests hold more as the conversation grows.
 - The instructions as `developer` messages in `input`, not as `instructions`.
 - Function tools, one `namespace` tool (`multi_agent_v1`) with nested tools, and the
   hosted `web_search` tool.
@@ -187,8 +187,9 @@ before collecting gateway acceptance evidence.
 ### 1. Start Ollama and pull the model
 
 Follow steps 1 and 2 of the OpenCode guide's direct check:
-[install and start Ollama](opencode.md#1-install-and-start-ollama) with a 64,000-token
-context, then [pull and check the model](opencode.md#2-pull-and-check-the-model).
+[install and start Ollama](opencode.md#1-install-and-start-ollama), setting
+`OLLAMA_CONTEXT_LENGTH=40960` for this guide, then
+[pull and check the model](opencode.md#2-pull-and-check-the-model).
 Put the `CONTEXT` value of `ollama ps` in `model_context_window`.
 
 ### 2. Check Ollama with curl
