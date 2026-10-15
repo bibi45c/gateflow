@@ -87,6 +87,9 @@ type Call struct {
 	// max_output_tokens, or 32768 when the request has none.
 	MaxTokens int64
 	BodyBytes int64 // len(body); #39 reserves with max_input_tokens = BodyBytes
+	// Stream is the request's stream member, or false when it is absent or null. A
+	// 2xx reply to a stream request is read as an event stream unless it is JSON.
+	Stream bool
 	// Observation is the request's observation, on which Admit sets the verified
 	// tenant. Nil observes nothing; its methods are then no-ops.
 	Observation *observability.Request

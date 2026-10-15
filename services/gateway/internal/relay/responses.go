@@ -74,6 +74,7 @@ func (responses) checkBody(body []byte, call *Call) ([]byte, *PublicError) {
 		return nil, invalidRequest(msgModel)
 	}
 	call.Model = req.Model
+	call.Stream = req.Stream
 	bound := req.MaxOutputTokens
 	if bound != nil && (*bound < 1 || *bound > maxOutputTokens) {
 		return nil, invalidRequest(msgMaxOutputTokens)

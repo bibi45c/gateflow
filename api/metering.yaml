@@ -329,11 +329,13 @@ paths:
         **Outcome rule.** The gateway picks the outcome; the first rule that matches
         wins. The end event of a stream is `message_stop` on `anthropic-messages`,
         and `response.completed` or `response.incomplete` on `openai-responses`.
+        When the request asks for a stream, a 2xx reply is read as an event stream
+        whatever the upstream's content type, unless it is `application/json`.
 
         1. `not_dispatched`: no upstream request was sent, including when the
            connection to the upstream could not be opened.
-        2. `completed`: the end event arrived, or a 2xx non-streaming body was read
-           in full, even if the client then left. On `openai-responses`, a body
+        2. `completed`: the end event arrived, or a 2xx non-streaming JSON body was
+           read in full, even if the client then left. On `openai-responses`, a body
            whose `status` is `incomplete` is `completed`, as on a stream; a body
            whose `status` is `failed` is not.
         3. `client_cancelled`: the client disconnected first.
@@ -342,9 +344,9 @@ paths:
         5. `interrupted`: anything else, including a request that was sent but got no
            reply (connection reset or timeout), a stream that ends without its end
            event, an upstream `event: error` after the stream started, a
-           `response.failed` event, and a 2xx non-streaming Responses body whose
-           `status` is `failed`. That body is charged on its `usage` when it has
-           one.
+           `response.failed` event, a 2xx non-streaming body that is not JSON, and a
+           2xx non-streaming Responses body whose `status` is `failed`. That last
+           body is charged on its `usage` when it has one.
 
         **Idempotency and concurrency.**
 
