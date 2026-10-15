@@ -71,4 +71,3 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(init['securityContext']['runAsUser'],65532)
 
 if __name__=='__main__': unittest.main()
-
