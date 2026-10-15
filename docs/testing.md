@@ -7,6 +7,7 @@
 | Repository tests | `python -m unittest discover -s tools/repo/tests -v` | Yes: CI jobs `Tests (ubuntu-latest)`, `Tests (macos-latest)` and `Tests (windows-latest)` |
 | Service image builds | PR run of `.github/workflows/images.yml`, building all four targets without publishing | Yes for image workflow changes: CI jobs `Image build (gateway)`, `Image build (access)`, `Image build (metering)` and `Image build (mock-upstream)` |
 | Terraform configuration | `terraform -chdir=deploy/terraform fmt -check -recursive`, `terraform -chdir=deploy/terraform init -backend=false -input=false -lockfile=readonly`, `terraform -chdir=deploy/terraform validate`, `terraform -chdir=deploy/terraform test` (mock providers only) | Yes for Terraform changes: CI job `Terraform validation`; no AWS credentials or real plan/apply |
+| Load test tools | `python -m unittest discover -s loadtest -v` | Yes: CI jobs `Tests (ubuntu-latest)`, `Tests (macos-latest)` and `Tests (windows-latest)` |
 | Go checks | `go vet ./...`, then `go test ./...`, then `go build ./...` | Yes: CI jobs `Go (ubuntu-latest)`, `Go (macos-latest)` and `Go (windows-latest)` |
 | Go integration tests | With `GATEFLOW_TEST_POSTGRES_URL` set to a Postgres superuser URL, `go test -count=1 ./...` | Yes: CI job `Go integration (ubuntu-latest)` |
 | Compose smoke test | `docker compose -p <worktree-name> -f deploy/compose/compose.yaml up --build --detach`, then open `http://localhost:<port>/healthz` for ports 8080, 8081, 8082 and 8090, then `docker compose -p <worktree-name> -f deploy/compose/compose.yaml down --volumes` | Yes: CI job `Compose smoke test` |
@@ -17,6 +18,10 @@ A required check must pass in CI on the head; a local run is supporting evidence
 - **Repository tests** need Python 3.13 or newer and only the standard library. They
   cover the issue format check and documentation links. On macOS use `python3` if
   `python` is not Python 3; on Windows `py -3.13` also works.
+- **Load test tools** need Python 3.13 or newer and only the standard library. They
+  cover `loadtest/summarize.py`, which builds the results table from k6's JSON output,
+  and need neither k6 nor a stack. The k6 script itself has no automated check,
+  because CI has no k6; a local run is its evidence (see `loadtest/README.md`).
 - **Go checks** need the Go version in `go.mod`. They cover the services, `pkg/`,
   the mock upstream and the module boundaries (`archtest`).
 - **Go integration tests** need a Postgres 17 server. They cover migrations and the
