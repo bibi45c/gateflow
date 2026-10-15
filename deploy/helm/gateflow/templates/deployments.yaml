@@ -1,0 +1,19 @@
+{{- $s := .Values.shutdown -}}
+{{- if lt (int $s.timeout) 60 -}}{{ fail "shutdown.timeout must be >=60 seconds" }}{{- end -}}
+{{- if lt (int $s.grace) (int (add $s.preStop $s.drain $s.timeout $s.margin)) -}}{{ fail "shutdown.grace must cover preStop + drain + timeout + margin" }}{{- end -}}
+{{- range $name, $service := .Values.services }}
+{{- $labels := merge (dict "app.kubernetes.io/component" $name) (include "gf.labels" $ | fromJson) -}}
+{{- $c := dict "name" $name "image" (include "gf.image" (dict "root" $ "service" $service)) "ports" (list (dict "name" "http" "containerPort" $service.port)) "env" (include "gf.env" (dict "root" $ "name" $name) | fromJsonArray) "resources" $service.resources -}}
+{{- $_ := set $c "readinessProbe" (dict "httpGet" (dict "path" "/readyz" "port" "http") "periodSeconds" 2) -}}
+{{- $_ := set $c "livenessProbe" (dict "httpGet" (dict "path" "/healthz" "port" "http") "periodSeconds" 10) -}}
+{{- $_ := set $c "startupProbe" (dict "httpGet" (dict "path" "/healthz" "port" "http") "periodSeconds" 2 "failureThreshold" 90) -}}
+{{- $_ := set $c "lifecycle" (dict "preStop" (dict "sleep" (dict "seconds" $s.preStop))) -}}
+{{- $_ := set $c "securityContext" (dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL"))) -}}
+{{- $pod := dict "containers" (list $c) "automountServiceAccountToken" false "securityContext" (dict "runAsNonRoot" true "seccompProfile" (dict "type" "RuntimeDefault")) "terminationGracePeriodSeconds" $s.grace "nodeSelector" (dict "gateflow.io/workload" "services") -}}
+{{- if eq $name "mock-upstream" -}}
+{{- $_ := set $pod "nodeSelector" (dict "gateflow.io/workload" "load-generator") -}}
+{{- $_ := set $pod "tolerations" (list (dict "key" "gateflow.io/workload" "operator" "Equal" "value" "load-generator" "effect" "NoSchedule")) -}}
+{{- end }}
+---
+{{ dict "apiVersion" "apps/v1" "kind" "Deployment" "metadata" (dict "name" (printf "%s-%s" $.Release.Name $name) "labels" $labels) "spec" (dict "replicas" $service.replicas "selector" (dict "matchLabels" $labels) "template" (dict "metadata" (dict "labels" $labels) "spec" $pod)) | toJson }}
+{{ end -}}

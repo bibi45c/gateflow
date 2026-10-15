@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "environment": {
+      "enum": [
+        "kind",
+        "aws"
+      ]
+    },
+    "imageTag": {
+      "type": "string",
+      "minLength": 1
+    },
+    "secretName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bootstrapSecretName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "shutdown": {
+      "type": "object",
+      "properties": {
+        "preStop": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "drain": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "margin": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grace": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "image": {
+            "type": "string",
+            "minLength": 1
+          },
+          "replicas": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}
