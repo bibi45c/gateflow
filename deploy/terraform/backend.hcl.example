@@ -1,0 +1,6 @@
+# Backend is created/managed separately by bibi45c. Never put credentials here.
+bucket = "REPLACE_EXISTING_STATE_BUCKET"
+key = "gateflow/s3/terraform.tfstate"
+region = "ap-southeast-1"
+encrypt = true
+use_lockfile = true
