@@ -14,6 +14,7 @@ them. Each check prints one PASS or FAIL line; the exit code is 0 only when ever
 check passed. Only the standard library is used.
 """
 import argparse
+from dataclasses import dataclass
 import base64
 import hashlib
 import hmac
@@ -142,7 +143,17 @@ def compose_command(project, *args):
     return command + ["-f", str(COMPOSE_FILE), *args]
 
 
+@dataclass(frozen=True)
+class KubernetesDatabase:
+    context: str
+    namespace: str
+    pod: str
+
+
 def psql_command(project, sql):
+    if isinstance(project, KubernetesDatabase):
+        return ['kubectl', '--context', project.context, '--namespace', project.namespace,
+                'exec', project.pod, '--', 'psql', '-U', 'gateflow', '-d', 'gateflow', '-tAc', sql]
     return compose_command(project, "exec", "-T", "postgres",
                            "psql", "-U", "gateflow", "-d", "gateflow", "-tAc", sql)
 
@@ -154,7 +165,7 @@ def run_psql(project, sql):
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
                                 errors="replace", timeout=HTTP_TIMEOUT, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise RuntimeError(f"docker compose exec failed: {error}") from error
+        raise RuntimeError(f"database exec failed: {error}") from error
     if result.returncode != 0:
         raise RuntimeError(f"psql exited with {result.returncode}: {result.stderr.strip()}")
     return result.stdout
@@ -640,9 +651,20 @@ def check_holds(run, project):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--project", help="compose project name, passed to docker compose -p")
+    parser.add_argument('--kube-context', help='explicit context for local Kubernetes database checks')
+    parser.add_argument('--namespace', help='Kubernetes namespace')
+    parser.add_argument('--postgres-pod', help='local PostgreSQL fixture Pod')
+    parser.add_argument('--host', default='127.0.0.1', help='ingress host (default: localhost)')
+    parser.add_argument('--port', type=int, help='ingress port (default: GATEWAY_PORT or 8080)')
     args = parser.parse_args(argv)
+    kube_options = (args.kube_context, args.namespace, args.postgres_pod)
+    if any(kube_options) and (not all(kube_options) or args.project):
+        parser.error('Kubernetes requires --kube-context, --namespace and --postgres-pod, without --project')
+    database = KubernetesDatabase(*kube_options) if all(kube_options) else args.project
+    global HOST
+    HOST = args.host
     try:
-        port = int(os.environ.get("GATEWAY_PORT") or 8080)
+        port = args.port if args.port is not None else int(os.environ.get("GATEWAY_PORT") or 8080)
     except ValueError:
         print("FAIL setup: GATEWAY_PORT is not a number")
         return 1
@@ -651,8 +673,8 @@ def main(argv=None):
     run = Run()
     send_requests(run, port, secret)
     send_responses_requests(run, port, secret)
-    check_ledger(run, args.project)
-    check_holds(run, args.project)
+    check_ledger(run, database)
+    check_holds(run, database)
     print(f"{run.failed} check(s) failed" if run.failed else "All checks passed")
     return 1 if run.failed else 0
 

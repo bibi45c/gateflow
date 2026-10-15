@@ -400,3 +400,16 @@ class RunTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KubernetesCommandTests(unittest.TestCase):
+    def test_explicit_kubernetes_psql(self):
+        target=smoke.KubernetesDatabase('kind-gateflow71','gf','postgres-0')
+        command=smoke.psql_command(target,'SELECT 1')
+        self.assertEqual(command[:8],['kubectl','--context','kind-gateflow71','--namespace','gf','exec','postgres-0','--'])
+        self.assertEqual(command[-1],'SELECT 1')
+        self.assertIn('psql',command)
+
+    def test_reject_mixed_targets(self):
+        with self.assertRaises(SystemExit):
+            smoke.main(['--project','other','--kube-context','kind-gf','--namespace','gf','--postgres-pod','postgres-0'])
