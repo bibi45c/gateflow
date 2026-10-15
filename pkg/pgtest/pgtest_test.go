@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -90,7 +91,8 @@ func TestServiceRolesLogIn(t *testing.T) {
 
 // Database query parameters in the superuser URL never move the helper off its own
 // database: it initializes, migrates and drops only that database, and leaves the
-// database the parameters name exactly as it was. The plain URL is the control.
+// databases the parameters name exactly as they were. The plain URL is the control.
+// Repeated and combined parameters name two different canaries.
 func TestNewUsesOnlyItsOwnDatabase(t *testing.T) {
 	admin := os.Getenv(pgtest.EnvURL)
 	if admin == "" {
@@ -100,16 +102,21 @@ func TestNewUsesOnlyItsOwnDatabase(t *testing.T) {
 		{"plain", ""},
 		{"dbname", "dbname={canary}"},
 		{"database", "database={canary}"},
-		{"repeated dbname", "dbname={canary}&dbname={canary}"},
-		{"dbname and database", "dbname={canary}&database={canary}"},
-		{"database and dbname", "database={canary}&dbname={canary}"},
+		{"encoded dbname", "dbn%61me={canary}"},
+		{"repeated dbname", "dbname={canary}&dbname={other}"},
+		{"dbname and database", "dbname={canary}&database={other}"},
+		{"database and dbname", "database={canary}&dbname={other}"},
 		{"other settings", "application_name=gfcanary_app&dbname={canary}"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			canary := createCanary(t, admin)
-			before := snapshot(t, admin, canary)
-			query := strings.ReplaceAll(tc.query, "{canary}", canary)
-			t.Setenv(pgtest.EnvURL, withQuery(t, admin, query))
+			canaries := []string{createCanary(t, admin), createCanary(t, admin)}
+			before := snapshots(t, admin, canaries)
+			query := strings.NewReplacer("{canary}", canaries[0], "{other}", canaries[1]).Replace(tc.query)
+			testURL := withQuery(t, admin, query)
+			if query != "" {
+				wantRedirected(t, testURL, canaries)
+			}
+			t.Setenv(pgtest.EnvURL, testURL)
 
 			var name string
 			t.Run("helper", func(t *testing.T) {
@@ -121,8 +128,11 @@ func TestNewUsesOnlyItsOwnDatabase(t *testing.T) {
 					t.Fatal(err)
 				}
 			})
-			if after := snapshot(t, admin, canary); after != before {
-				t.Errorf("canary %s changed from %+v to %+v", canary, before, after)
+			after := snapshots(t, admin, canaries)
+			for _, canary := range canaries {
+				if after[canary] != before[canary] {
+					t.Errorf("canary %s changed from %+v to %+v", canary, before[canary], after[canary])
+				}
 			}
 			wantDropped(t, admin, name)
 		})
@@ -209,6 +219,36 @@ func snapshot(t *testing.T, admin, database string) state {
 		t.Fatal(err)
 	}
 	return s
+}
+
+func snapshots(t *testing.T, admin string, databases []string) map[string]state {
+	t.Helper()
+	states := make(map[string]state, len(databases))
+	for _, database := range databases {
+		states[database] = snapshot(t, admin, database)
+	}
+	return states
+}
+
+// wantRedirected checks that pgx, given the parameterised URL as it is, reaches one
+// of the canaries, so the case really exercises the helper's rewrite.
+func wantRedirected(t *testing.T, rawURL string, canaries []string) {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var current string
+	if err := conn.QueryRow(ctx, "SELECT current_database()").Scan(&current); err != nil {
+		t.Fatal(err)
+	}
+	i := slices.Index(canaries, current)
+	if i < 0 {
+		t.Fatalf("the URL as given reaches %q, want one of the canaries %v", current, canaries)
+	}
+	t.Logf("the URL as given reaches canary %d of %d", i+1, len(canaries))
 }
 
 func wantDropped(t *testing.T, admin, name string) {

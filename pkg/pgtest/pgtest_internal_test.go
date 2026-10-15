@@ -33,6 +33,9 @@ func TestTargetURLKeepsOnlyTheGeneratedDatabase(t *testing.T) {
 		{base + "?dbname=a&dbname=b", want},
 		{base + "?dbname=a&database=b&DBNAME=c", want},
 		{base + "?dbname=", want},
+		{base + "?sslmode=disable& dbname=canary", want + "?sslmode=disable"},
+		{base + "?dbname =canary&sslmode=disable", want + "?sslmode=disable"},
+		{base + "?%20database%20=canary&sslmode=disable", want + "?sslmode=disable"},
 		{base + "?sslmode=disable&application_name=t", want + "?sslmode=disable&application_name=t"},
 		{base + "?sslmode=disable&dbname=x&application_name=t&database=y", want + "?sslmode=disable&application_name=t"},
 		{base + "?application_name=t&sslmode=disable&dbname=x", want + "?application_name=t&sslmode=disable"},
@@ -75,13 +78,38 @@ func wantParsedTarget(t *testing.T, target string) {
 	}
 }
 
+// The forms the rewrite guards against really do move pgx to another database, so
+// the cases above are not vacuous.
+func TestPgxLetsQueryParametersPickTheDatabase(t *testing.T) {
+	const base = "postgres://u:p@localhost:5432/postgres"
+	for _, query := range []string{
+		"?dbname=canary",
+		"?database=canary",
+		"?dbn%61me=canary",
+		"?sslmode=disable& dbname=canary",
+		"?application_name=t#&dbname=canary",
+	} {
+		config, err := pgconn.ParseConfig(base + query)
+		if err != nil {
+			t.Errorf("%s: %v", query, err)
+		} else if config.Database != "canary" {
+			t.Errorf("%s: pgx targets %q, want canary", query, config.Database)
+		}
+	}
+}
+
 // URLs pgx would read as keyword/value settings are refused, since their path
-// would not pick the database.
+// would not pick the database, and so are URLs with a fragment, since Go and pgx
+// disagree on where the query ends.
 func TestTargetURLRejectsOtherForms(t *testing.T) {
+	const base = "postgres://u:p@localhost:5432/postgres"
 	for _, admin := range []string{
 		"host=localhost dbname=postgres",
 		"mysql://u:p@localhost/postgres",
 		"localhost:5432/postgres",
+		base + "?application_name=t#&dbname=canary",
+		base + "#&dbname=canary",
+		base + "#x",
 	} {
 		if got, err := targetURL(admin, testName); err == nil {
 			t.Errorf("%s: got %s, want an error", admin, got)

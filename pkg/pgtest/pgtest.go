@@ -86,6 +86,10 @@ func targetURL(admin, name string) (string, error) {
 	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
 		return "", fmt.Errorf("want a postgres:// or postgresql:// URL, got scheme %q", u.Scheme)
 	}
+	// pgx has no fragments: it reads what follows # as more query parameters.
+	if u.Fragment != "" || u.RawFragment != "" {
+		return "", errors.New("the URL has a # fragment; percent-encode # as %23")
+	}
 	var kept []string
 	for _, pair := range strings.Split(u.RawQuery, "&") {
 		if pair == "" {
@@ -100,11 +104,27 @@ func targetURL(admin, name string) (string, error) {
 	u.RawQuery = strings.Join(kept, "&")
 	u.Path = "/" + name
 	u.RawPath = ""
-	return u.String(), nil
+	target := u.String()
+	// Parse as pgx does, so any other way the two parsers differ fails here.
+	config, err := pgconn.ParseConfig(target)
+	if err != nil {
+		return "", err
+	}
+	if config.Database != name {
+		return "", fmt.Errorf("pgx reads the test URL as database %q, want %q", config.Database, name)
+	}
+	for key := range config.RuntimeParams {
+		if selectsDatabase(key) {
+			return "", fmt.Errorf("pgx reads the test URL with a leftover %q parameter", key)
+		}
+	}
+	return target, nil
 }
 
 // selectsDatabase reports whether a query parameter names the database to use.
+// Like pgx, it ignores spaces around the name.
 func selectsDatabase(key string) bool {
+	key = strings.Trim(key, " ")
 	return strings.EqualFold(key, "dbname") || strings.EqualFold(key, "database")
 }
 
