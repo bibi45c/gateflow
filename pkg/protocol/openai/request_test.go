@@ -62,18 +62,17 @@ func TestParseRequestOllamaFixtures(t *testing.T) {
 	}
 }
 
-// TestParseRequestCodexStyleRequest reads testdata/codex-style.request.json. That file
-// is written by hand after the public Responses format, not recorded from Codex; a
-// request recorded from Codex 0.162.1 replaces it in issue #66.
+// TestParseRequestCodexStyleRequest reads testdata/codex-style.request.json: the
+// request Codex CLI 0.162.1 sent after one tool call, recorded in issue #66 with its
+// long texts shortened and its paths and ids replaced (see testdata/README.md).
 func TestParseRequestCodexStyleRequest(t *testing.T) {
 	body := readFixture(t, "codex-style.request.json")
 	var shape struct {
-		Instructions string                     `json:"instructions"`
-		Input        []struct{ Type string }    `json:"input"`
-		Store        *bool                      `json:"store"`
-		Include      []string                   `json:"include"`
-		Reasoning    map[string]any             `json:"reasoning"`
-		Members      map[string]json.RawMessage `json:"-"`
+		Input     []struct{ Type, Role string } `json:"input"`
+		Store     *bool                         `json:"store"`
+		Include   []string                      `json:"include"`
+		Reasoning map[string]any                `json:"reasoning"`
+		Members   map[string]json.RawMessage    `json:"-"`
 	}
 	if err := json.Unmarshal(body, &shape); err != nil || json.Unmarshal(body, &shape.Members) != nil {
 		t.Fatalf("the fixture is not a JSON object: %v", err)
@@ -82,31 +81,40 @@ func TestParseRequestCodexStyleRequest(t *testing.T) {
 	for _, item := range shape.Input {
 		itemTypes = append(itemTypes, item.Type)
 	}
-	_, hasMax := shape.Members["max_output_tokens"]
-	for _, want := range []string{"message", "function_call", "function_call_output"} {
+	for _, want := range []string{"message", "function_call", "reasoning", "function_call_output"} {
 		if !slices.Contains(itemTypes, want) {
 			t.Errorf("the fixture's input has no %s item: %v", want, itemTypes)
 		}
 	}
-	if shape.Instructions == "" || shape.Store == nil || *shape.Store || len(shape.Include) == 0 || shape.Reasoning == nil || hasMax {
-		t.Error("the fixture lacks instructions, store false, include or reasoning, or has max_output_tokens")
+	// Codex sends its instructions as developer messages, not as instructions.
+	_, hasInstructions := shape.Members["instructions"]
+	_, hasMax := shape.Members["max_output_tokens"]
+	if hasInstructions || len(shape.Input) == 0 || shape.Input[0].Role != "developer" {
+		t.Error("the fixture has instructions, or its input does not start with a developer message")
+	}
+	if shape.Store == nil || *shape.Store || len(shape.Include) == 0 || shape.Reasoning == nil || hasMax {
+		t.Error("the fixture lacks store false, include or reasoning, or has max_output_tokens")
 	}
 
 	req, err := ParseRequest(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Model != "qwen3:4b-instruct-2507-q4_K_M" || !req.Stream || req.MaxOutputTokens != nil || req.PreviousResponseID != nil {
+	if req.Model != "qwen3:8b" || !req.Stream || req.MaxOutputTokens != nil || req.PreviousResponseID != nil {
 		t.Errorf("got %q, stream %v, max_output_tokens %s, previous_response_id %s",
 			req.Model, req.Stream, count(req.MaxOutputTokens), describeID(req.PreviousResponseID))
 	}
-	if got := describeTools(req.Tools); got != "[function/shell function/update_plan]" {
+	// Besides functions, Codex sends a namespace of functions and the built-in
+	// web_search tool, which has no name.
+	want := "[function/exec_command function/write_stdin function/request_user_input function/view_image " +
+		"namespace/multi_agent_v1 function/get_goal function/create_goal function/update_goal web_search/]"
+	if got := describeTools(req.Tools); got != want {
 		t.Errorf("tools: %s", got)
 	}
 	for _, tool := range req.Tools {
-		if !bytes.Contains(body, tool.Raw) || !bytes.HasPrefix(tool.Raw, []byte(`{"type":"function"`)) ||
-			!bytes.Contains(tool.Raw, []byte(`"parameters":{"type":"object"`)) {
-			t.Errorf("%s: Raw is not the tool's bytes in the body: %s", tool.Name, tool.Raw)
+		if !bytes.Contains(body, tool.Raw) || !bytes.HasPrefix(tool.Raw, []byte(`{"type":"`+tool.Type+`"`)) ||
+			tool.Type == "function" && !bytes.Contains(tool.Raw, []byte(`"parameters":{"type":"object"`)) {
+			t.Errorf("%s/%s: Raw is not the tool's bytes in the body: %.80s", tool.Type, tool.Name, tool.Raw)
 		}
 	}
 }
@@ -290,8 +298,8 @@ func TestSetMaxOutputTokensKeepsOtherBytes(t *testing.T) {
 		`"metadata":{"max_output_tokens":"keep"} , "max_output_tokens" : null }`
 	cases := []struct{ name, body, old, new string }{
 		{"codex-style, absent", string(readFixture(t, "codex-style.request.json")),
-			`"prompt_cache_key":"0199e6a3-7c1d-7b52-9f3e-5a8c2d4e6f10"}`,
-			`"prompt_cache_key":"0199e6a3-7c1d-7b52-9f3e-5a8c2d4e6f10","max_output_tokens":4096}`},
+			`"session_id":"00000000-0000-7000-8000-000000000006"}}`,
+			`"session_id":"00000000-0000-7000-8000-000000000006"},"max_output_tokens":4096}`},
 		{"ollama, value", string(readFixture(t, "ollama-tool-stream.request.json")),
 			`"max_output_tokens":200`, `"max_output_tokens":4096`},
 		{"unknown members, null", future, `"max_output_tokens" : null }`, `"max_output_tokens" : 4096 }`},
