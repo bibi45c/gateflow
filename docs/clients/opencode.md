@@ -119,6 +119,34 @@ OS, and merges it with this file. If you have providers, MCP servers or permissi
 there, point `XDG_CONFIG_HOME` at an empty folder for the check, so the result
 depends only on this file.
 
+## Name the model
+
+In both set-ups, start OpenCode with `-m` and the model from `opencode.json`:
+
+```text
+opencode -m gateflow/qwen3:8b
+opencode run -m gateflow/qwen3:8b '<task>'
+```
+
+Without `-m`, an OpenCode that did not load `opencode.json` falls back to its own
+hosted model, such as `opencode/big-pickle`. The session looks normal, but no request
+reaches the gateway or Ollama. With `opencode run -m`, a missing `gateflow` provider
+is an error: OpenCode exits with code 1 and prints a generic "Unexpected server
+error". Whether the interactive `opencode -m` also stops is not verified.
+
+## Confirm the provider
+
+Check every session; a normal-looking answer does not prove where it came from.
+
+- In the interactive screen, the model shown is `Qwen3 8B`. Any other model means
+  OpenCode fell back.
+- Through the gateway, the gateway log has one line per request with
+  `"msg":"request"` and `"route":"/v1/messages"`. In the compose stack, read it with:
+
+```text
+docker compose -f deploy/compose/compose.yaml logs gateway
+```
+
 ## Direct check
 
 Do the steps in order; each one rules out a layer. Allow half a day, most of it
@@ -269,8 +297,8 @@ if __name__ == "__main__":
 Check that `python -m unittest` fails in that folder. On macOS write `python3`, here
 and in the task below, if `python` is not Python 3.
 
-Set `GATEFLOW_API_KEY`, start `opencode` in the folder, confirm that the model shown
-is `Qwen3 8B`, and send this task:
+Set `GATEFLOW_API_KEY`, start `opencode -m gateflow/qwen3:8b` in the folder, confirm
+that the model shown is `Qwen3 8B`, and send this task:
 
 ```text
 Run python -m unittest in this folder, find why the test fails, fix calc.py, and run the tests again.
@@ -290,7 +318,7 @@ and run commands in the folder without asking, and nothing else:
 It also ran the task without the interactive screen. Pass the task in single quotes:
 
 ```text
-opencode run 'Run python -m unittest in this folder, find why the test fails, fix calc.py, and run the tests again.'
+opencode run -m gateflow/qwen3:8b 'Run python -m unittest in this folder, find why the test fails, fix calc.py, and run the tests again.'
 ```
 
 - **Pass (required):** in at least one run, at least one tool call completes and its
@@ -365,6 +393,7 @@ docker compose -f deploy/compose/compose.yaml --profile ollama up --detach ollam
 | `ollama ps` shows a smaller `CONTEXT` than you asked for | Ollama capped it at the model's maximum | Put the value shown in `limit.context` |
 | The model loses instructions in long prompts | The context was not applied | Quit the tray app, restart `ollama serve` with `OLLAMA_CONTEXT_LENGTH`, and check `ollama ps` |
 | OpenCode calls `api.anthropic.com`, or says the key is missing | The config was not picked up, or `baseURL` is wrong | Start OpenCode in the folder with `opencode.json`; check that `baseURL` ends in `/v1`; set `GATEFLOW_API_KEY` |
+| The session looks normal, but the gateway log has no request line; OpenCode used a model such as `opencode/big-pickle` | OpenCode did not load `opencode.json` and fell back to its hosted model. On Git Bash it takes the project folder from the inherited `PWD`, which can point elsewhere | Start OpenCode from the task folder, or set `PWD` to it; always pass `-m`, as in [Name the model](#name-the-model) |
 | OpenCode shows other providers, MCP servers or permissions | Your global OpenCode configuration was merged in | Point `XDG_CONFIG_HOME` at an empty folder for the check |
 | More than 60 s to the first token | The model is loading, or runs partly on the CPU | Wait for the first request to finish, then check `PROCESSOR` in `ollama ps`; use a smaller `OLLAMA_CONTEXT_LENGTH`, a smaller model or a faster machine |
 | Out of memory | The model with its context is too large | Use a smaller model or a smaller `OLLAMA_CONTEXT_LENGTH`; close other programs |
