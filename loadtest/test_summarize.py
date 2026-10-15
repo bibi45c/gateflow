@@ -33,7 +33,8 @@ def request(seconds, phase, level, status=200, result="completed", waiting=20.0,
     """The points k6 writes for one request: http_reqs, the timings and the result counter."""
     tags = {"phase": phase, "level": str(level), "status": str(status)}
     http = {**tags, "path": "gateway"}
-    return [point("http_reqs", seconds, **http),
+    return [point("gateflow_sent", seconds - 0.1, phase=phase, level=str(level)),
+            point("http_reqs", seconds, **http),
             point("http_req_waiting", seconds, waiting, **http),
             point("http_req_duration", seconds, duration, **http),
             point(f"gateflow_{result}", seconds, **tags)]
@@ -89,8 +90,8 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(hold["completion_rate"], round(1 / 3, 4))
         self.assertEqual(hold["throughput_rps"], 0.1)
         self.assertEqual(hold["statuses"], {"0": 1, "200": 1, "503": 1})
-        # Only answered requests count for the first output.
-        self.assertEqual(hold["first_output_ms"]["max"], 30.0)
+        # Only HTTP 200 responses count for TTFB percentiles.
+        self.assertEqual(hold["ttfb_ms"]["max"], 30.0)
 
     def test_dropped_iterations_and_vus_are_placed_by_time(self):
         lines = TWO_PHASES + request(11, "hold", 2)
@@ -114,23 +115,67 @@ class SummarizeTests(unittest.TestCase):
         lines = TWO_PHASES + request(11, "hold", 2) + direct(11, "hold", 2, status=500)
         hold = summarize.summarize(lines)["phases"][1]
         self.assertEqual((hold["scheduled"], hold["admitted"], hold["statuses"]), (1, 1, {"200": 1}))
-        self.assertEqual(hold["first_output_ms"]["max"], 20.0)
-        self.assertIsNone(hold["direct_first_output_ms"])  # the direct call answered 500
+        self.assertEqual(hold["ttfb_ms"]["max"], 20.0)
+        self.assertIsNone(hold["direct_ttfb_ms"])  # the direct call answered 500
+        self.assertIsNone(hold["direct_duration_ms"])
 
-    def test_direct_first_output_shows_the_mock(self):
+    def test_direct_timings_show_the_mock(self):
         lines = TWO_PHASES + request(11, "hold", 2) + direct(11, "hold", 2, waiting=4.0)
         hold = summarize.summarize(lines)["phases"][1]
-        self.assertEqual(hold["direct_first_output_ms"]["max"], 4.0)
+        self.assertEqual(hold["direct_ttfb_ms"]["max"], 4.0)
+        self.assertEqual(hold["direct_duration_ms"]["p95"], 1500.0)
 
-    def test_pairs_give_the_added_first_output(self):
+    def test_pairs_give_the_added_ttfb(self):
         lines = TWO_PHASES + request(11, "hold", 2) + direct(11, "hold", 2)
-        lines += [point("gateflow_added_first_output_ms", 11, v, phase="hold", level="2") for v in (3.0, 9.0, 4.0)]
+        lines += [point("gateflow_added_ttfb_ms", 11, v, phase="hold", level="2") for v in (3.0, 9.0, 4.0)]
         lines += [point("gateflow_pair_failed", 12, phase="hold", level="2")]
         warmup, hold = summarize.summarize(lines)["phases"]
         self.assertEqual((hold["pairs"], hold["failed_pairs"]), (3, 1))
-        self.assertEqual(hold["added_first_output_ms"], {"p50": 4.0, "p95": 9.0, "p99": 9.0, "max": 9.0})
-        self.assertEqual((warmup["pairs"], warmup["added_first_output_ms"]), (0, None))
+        self.assertEqual(hold["added_ttfb_ms"], {"p50": 4.0, "p95": 9.0, "p99": 9.0, "max": 9.0})
+        self.assertEqual((warmup["pairs"], warmup["added_ttfb_ms"]), (0, None))
         self.assertIn("| 9.0, 3 |", summarize.markdown(summarize.summarize(lines)))
+
+    def test_interrupted_iteration_without_http_metrics_is_not_lost(self):
+        lines = TWO_PHASES + request(11, "hold", 2)
+        lines += [point("gateflow_sent", 12, phase="hold", level="2")]
+        summary = summarize.summarize(lines)
+        hold = summary["phases"][1]
+        self.assertEqual((hold["sent"], hold["completed"], hold["unclassified"]), (2, 1, 1))
+        self.assertEqual(hold["completion_rate"], 0.5)
+        self.assertEqual(summary["checks"]["unclassified_requests"], 1)
+        self.assertEqual(summary["sent_source"], "gateflow_sent")
+
+    def test_missing_terminal_counter_after_http_return_is_reported(self):
+        lines = TWO_PHASES + request(11, "hold", 2)[:-1]
+        summary = summarize.summarize(lines)
+        self.assertEqual(summary["phases"][1]["unclassified"], 1)
+
+    def test_duplicate_terminal_results_fail_accounting(self):
+        lines = TWO_PHASES + request(11, "hold", 2)
+        lines += [point("gateflow_failed", 11, phase="hold", level="2")]
+        summary = summarize.summarize(lines)
+        self.assertEqual(summary["phases"][1]["unclassified"], -1)
+        self.assertEqual(summary["checks"]["excess_results"], 1)
+
+    def test_last_phase_results_after_the_arrival_window_still_count(self):
+        lines = TWO_PHASES + request(24, "hold", 2)
+        summary = summarize.summarize(lines)
+        hold = summary["phases"][1]
+        self.assertEqual((hold["completed"], hold["unclassified"]), (1, 0))
+
+    def test_legacy_recordings_are_read_with_accurate_timing_labels(self):
+        lines = TWO_PHASES + request(11, "hold", 2)
+        lines = [line for line in lines if json.loads(line)["metric"] != "gateflow_sent"]
+        lines += [point("gateflow_added_first_output_ms", 11, 15.0, phase="hold", level="2")]
+        summary = summarize.summarize(lines)
+        self.assertEqual(summary["sent_source"], "http_reqs (legacy)")
+        self.assertEqual(summary["phases"][1]["added_ttfb_ms"]["p95"], 15.0)
+        self.assertNotIn("First output", summarize.markdown(summary))
+
+    def test_repeated_phase_and_level_is_rejected_instead_of_merging_rows(self):
+        lines = plan(("hold", 2, 0, 10), ("hold", 2, 10, 20))
+        with self.assertRaisesRegex(ValueError, "repeated phase/level"):
+            summarize.summarize(lines)
 
     def test_plan_is_sorted_by_start(self):
         lines = plan(("hold", 2, 10, 20), ("warmup", 2, 0, 10)) + request(1, "warmup", 2)
@@ -148,7 +193,9 @@ class OutputTests(unittest.TestCase):
         text = summarize.markdown(summarize.summarize(TWO_PHASES + request(11, "hold", 2)))
         rows = [line for line in text.splitlines() if line.startswith("|")]
         self.assertEqual(len({row.count("|") for row in rows}), 1)
-        self.assertIn("| hold | 2 | 1 | 1 | 1 | 0 | 0 | 0 | 100.00% | 0.1 | 20.0 / 20.0 / 20.0 |", text)
+        self.assertIn("| hold | 2 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 100.00% | 0.1 | 20.0 / 20.0 / 20.0 |", text)
+        self.assertIn("Failed pairs", text)
+        self.assertIn("Direct duration", text)
 
     def test_main_writes_the_results_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -166,6 +213,16 @@ class OutputTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()) as err:
                 self.assertEqual(summarize.main([str(source)]), 1)
             self.assertIn("gateflow_plan", err.getvalue())
+
+    def test_main_returns_nonzero_but_writes_incomplete_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "run.json"
+            lines = TWO_PHASES + [point("gateflow_sent", 11, phase="hold", level="2")]
+            source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(summarize.main([str(source)]), 2)
+            written = json.loads(source.with_suffix(".results.json").read_text(encoding="utf-8"))
+            self.assertEqual(written["checks"]["unclassified_requests"], 1)
 
 
 if __name__ == "__main__":

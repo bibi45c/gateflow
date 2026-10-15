@@ -66,33 +66,40 @@ class Run:
         self.plan = []
         self.start = None
         self.sent = Counter()
+        self.http_sent = Counter()  # fallback for recordings predating gateflow_sent
+        self.has_sent_counter = False
         self.statuses = defaultdict(Counter)
         self.results = defaultdict(Counter)
         self.waiting = defaultdict(list)
         self.duration = defaultdict(list)
-        self.added = defaultdict(list)  # gateway minus direct first output, per pair
+        self.added = defaultdict(list)  # gateway minus direct TTFB, per pair
         self.pair_failed = Counter()
-        self.direct_waiting = defaultdict(list)  # first output of the calls straight to the mock
+        self.direct_waiting = defaultdict(list)
+        self.direct_duration = defaultdict(list)
         self.timed = []  # (metric, time, value) of untagged points: dropped iterations, vus
 
     def add(self, metric, time, value, tags):
         key = (tags.get("phase"), tags.get("level"))
         if tags.get("path") == "direct":
             # The paired calls straight to the mock count only through their pair, and
-            # their own first output shows whether the mock kept up.
-            if metric == "http_req_waiting" and tags.get("status") == "200":
-                self.direct_waiting[key].append(value)
+            # their timings show whether the mock kept up.
+            if tags.get("status") == "200" and metric in ("http_req_waiting", "http_req_duration"):
+                target = self.direct_waiting if metric == "http_req_waiting" else self.direct_duration
+                target[key].append(value)
             return
         if metric == "gateflow_plan":
             self.plan.append((tags["phase"], tags["level"], float(tags["start_s"]), float(tags["end_s"])))
         elif metric == "gateflow_start":
             self.start = time if self.start is None else min(self.start, time)
         elif metric == "http_reqs":
-            self.sent[key] += int(value)
+            self.http_sent[key] += int(value)
             self.statuses[key][tags.get("status", "")] += int(value)
+        elif metric == "gateflow_sent":
+            self.has_sent_counter = True
+            self.sent[key] += int(value)
         elif metric.startswith("gateflow_") and metric[len("gateflow_"):] in RESULTS:
             self.results[key][metric[len("gateflow_"):]] += int(value)
-        elif metric == "gateflow_added_first_output_ms":
+        elif metric in ("gateflow_added_ttfb_ms", "gateflow_added_first_output_ms"):
             self.added[key].append(value)
         elif metric == "gateflow_pair_failed":
             self.pair_failed[key] += int(value)
@@ -123,7 +130,8 @@ class Run:
 def phase_row(run, phase, level, start, end, dropped, vus):
     key = (phase, level)
     results = run.results[key]
-    sent, lost = run.sent[key], dropped[key]
+    sent = (run.sent if run.has_sent_counter else run.http_sent)[key]
+    lost = dropped[key]
     scheduled = sent + lost
     statuses = dict(sorted(run.statuses[key].items()))
     return {
@@ -131,13 +139,15 @@ def phase_row(run, phase, level, start, end, dropped, vus):
         "scheduled": scheduled, "sent": sent, "dropped": lost,
         "admitted": statuses.get("200", 0),
         **{name: results[name] for name in RESULTS},
+        "unclassified": sent - sum(results[name] for name in RESULTS),
         "completion_rate": round(results["completed"] / scheduled, 4) if scheduled else None,
         "throughput_rps": round(results["completed"] / (end - start), 2) if end > start else None,
-        "first_output_ms": percentiles(run.waiting[key]),
+        "ttfb_ms": percentiles(run.waiting[key]),
         "duration_ms": percentiles(run.duration[key]),
         "pairs": len(run.added[key]), "failed_pairs": run.pair_failed[key],
-        "added_first_output_ms": percentiles(run.added[key]),
-        "direct_first_output_ms": percentiles(run.direct_waiting[key]),
+        "added_ttfb_ms": percentiles(run.added[key]),
+        "direct_ttfb_ms": percentiles(run.direct_waiting[key]),
+        "direct_duration_ms": percentiles(run.direct_duration[key]),
         "max_active_vus": vus.get(key, 0),
         "statuses": statuses,
     }
@@ -153,6 +163,8 @@ def summarize(lines):
     if run.start is None:
         raise ValueError("no gateflow_start point: the run sent no request")
     run.plan.sort(key=lambda p: p[2])
+    if len({(p[0], p[1]) for p in run.plan}) != len(run.plan):
+        raise ValueError("repeated phase/level in plan: use distinct LEVELS")
     dropped, vus = run.timed_by_phase()
     rows = [phase_row(run, *plan, dropped, vus) for plan in run.plan]
     statuses = Counter()
@@ -165,25 +177,30 @@ def summarize(lines):
             "invalid_key_responses": sum(statuses[s] for s in INVALID_KEY),
             "dropped_iterations": sum(dropped.values()),
             "dropped_outside_plan": dropped[None],
+            "unclassified_requests": sum(max(0, row["unclassified"]) for row in rows),
+            "excess_results": sum(max(0, -row["unclassified"]) for row in rows),
         },
+        "sent_source": "gateflow_sent" if run.has_sent_counter else "http_reqs (legacy)",
     }
 
 
 def markdown(summary):
     """The results as a Markdown table, then one line per check."""
-    head = ("| Phase | Level (req/s) | Scheduled | Admitted | Completed | Rejected | Timed out "
-            "| Failed | Completion | Throughput (req/s) | First output p50 / p95 / p99 (ms) "
-            "| Added first output p95 (ms), pairs | Max active VUs |")
+    head = ("| Phase | Level (req/s) | Scheduled | HTTP 200 | Completed | 429/503/529 | Timed out "
+            "| Failed | Unclassified | Completion | Throughput (req/s) | TTFB p50 / p95 / p99 (ms) "
+            "| Added TTFB p95 (ms), pairs | Failed pairs | Direct duration p95 (ms) | Max VUs |")
     lines = [head, "|" + "---|" * (head.count("|") - 1)]
     for row in summary["phases"]:
-        first = row["first_output_ms"]
+        first = row["ttfb_ms"]
         first = " / ".join(str(first[f"p{p}"]) for p in PERCENTILES) if first else "-"
         rate = f"{row['completion_rate']:.2%}" if row["completion_rate"] is not None else "-"
-        paired = (f"{row['added_first_output_ms']['p95']}, {row['pairs']}"
-                  if row["added_first_output_ms"] else "-")
+        paired = (f"{row['added_ttfb_ms']['p95']}, {row['pairs']}"
+                  if row["added_ttfb_ms"] else "-")
+        direct = row["direct_duration_ms"]["p95"] if row["direct_duration_ms"] else "-"
         lines.append(f"| {row['phase']} | {row['level_rps']:g} | {row['scheduled']} | {row['admitted']} "
                      f"| {row['completed']} | {row['rejected']} | {row['timed_out']} | {row['failed']} "
-                     f"| {rate} | {row['throughput_rps']} | {first} | {paired} | {row['max_active_vus']} |")
+                     f"| {row['unclassified']} | {rate} | {row['throughput_rps']} | {first} "
+                     f"| {paired} | {row['failed_pairs']} | {direct} | {row['max_active_vus']} |")
     lines.append("")
     lines += [f"- {name}: {value}" for name, value in summary["checks"].items()]
     return "\n".join(lines)
@@ -204,7 +221,7 @@ def main(argv=None):
     out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(markdown(summary))
     print(f"\nWrote {out}")
-    return 0
+    return 2 if any(summary["checks"].values()) else 0
 
 
 if __name__ == "__main__":
