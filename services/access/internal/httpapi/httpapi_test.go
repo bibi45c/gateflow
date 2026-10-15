@@ -62,7 +62,7 @@ func newTestServer(s Store, token string) (http.Handler, *bytes.Buffer) {
 	logs := &bytes.Buffer{}
 	mux := http.NewServeMux()
 	mux.Handle("GET /healthz", health.Handler("access"))
-	New(s, []byte(testPepper), token, slog.New(slog.NewJSONHandler(logs, nil))).Register(mux)
+	New(s, []byte(testPepper), token, slog.New(slog.NewJSONHandler(logs, nil)), nil).Register(mux)
 	return mux, logs
 }
 
