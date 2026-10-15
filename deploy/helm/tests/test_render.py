@@ -57,6 +57,9 @@ class ChartTests(unittest.TestCase):
         access=next(d for d in docs if d['kind']=='Deployment' and d['metadata']['name']=='gf-access')
         env=access['spec']['template']['spec']['containers'][0]['env']
         self.assertIn('valueFrom',next(e for e in env if e['name']=='DATABASE_URL'))
+        init=access['spec']['template']['spec']['initContainers'][0]
+        self.assertIn('sslmode=require',init['command'][-1])
+        self.assertIn('pg_stat_ssl',init['command'][-1])
 
 if __name__=='__main__': unittest.main()
 

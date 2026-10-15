@@ -10,6 +10,16 @@
 {{- $_ := set $c "lifecycle" (dict "preStop" (dict "sleep" (dict "seconds" $s.preStop))) -}}
 {{- $_ := set $c "securityContext" (dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL"))) -}}
 {{- $pod := dict "containers" (list $c) "automountServiceAccountToken" false "securityContext" (dict "runAsNonRoot" true "seccompProfile" (dict "type" "RuntimeDefault")) "terminationGracePeriodSeconds" $s.grace "nodeSelector" (dict "gateflow.io/workload" "services") -}}
+{{- if and (eq $.Values.environment "aws") (or (eq $name "access") (eq $name "metering")) -}}
+{{- $check := `set -eu
+case "$DATABASE_URL" in
+  *\?sslmode=require|*\?sslmode=require\&*|*\&sslmode=require|*\&sslmode=require\&*) ;;
+  *) echo 'DATABASE_URL must use sslmode=require'; exit 1;;
+esac
+test "$(psql -X -tAc 'SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()' "$DATABASE_URL")" = t
+` -}}
+{{- $_ := set $pod "initContainers" (list (dict "name" "check-database-tls" "image" $.Values.postgresImage "env" (list (dict "name" "DATABASE_URL" "valueFrom" (dict "secretKeyRef" (dict "name" $.Values.secretName "key" (printf "%s_DATABASE_URL" (upper $name)))))) "command" (list "sh" "-c" $check))) -}}
+{{- end -}}
 {{- if eq $name "mock-upstream" -}}
 {{- $_ := set $pod "nodeSelector" (dict "gateflow.io/workload" "load-generator") -}}
 {{- $_ := set $pod "tolerations" (list (dict "key" "gateflow.io/workload" "operator" "Equal" "value" "load-generator" "effect" "NoSchedule")) -}}

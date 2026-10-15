@@ -1,0 +1,2 @@
+environment: aws
+# URLs in gateflow-runtime must use sslmode=require.
