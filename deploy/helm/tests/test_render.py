@@ -56,10 +56,13 @@ class ChartTests(unittest.TestCase):
         self.assertIn('idle_timeout.timeout_seconds=300',ingress['metadata']['annotations']['alb.ingress.kubernetes.io/load-balancer-attributes'])
         access=next(d for d in docs if d['kind']=='Deployment' and d['metadata']['name']=='gf-access')
         env=access['spec']['template']['spec']['containers'][0]['env']
+        self.assertTrue(next(e for e in env if e['name']=='OLLAMA_BASE_URL')['value'])
+        self.assertTrue(next(e for e in env if e['name']=='OLLAMA_MODEL')['value'])
         self.assertIn('valueFrom',next(e for e in env if e['name']=='DATABASE_URL'))
         init=access['spec']['template']['spec']['initContainers'][0]
         self.assertIn('sslmode=require',init['command'][-1])
         self.assertIn('pg_stat_ssl',init['command'][-1])
+        self.assertEqual(init['securityContext']['runAsUser'],65532)
 
 if __name__=='__main__': unittest.main()
 

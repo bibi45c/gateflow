@@ -1,0 +1,40 @@
+name: Helm
+on:
+  pull_request:
+    paths: ["deploy/helm/**", "test/e2e/**", ".github/workflows/helm.yml"]
+  push:
+    branches: [main]
+    paths: ["deploy/helm/**", "test/e2e/**", ".github/workflows/helm.yml"]
+permissions:
+  contents: read
+jobs:
+  helm-kind:
+    name: Helm kind smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.13"
+      - name: Install verified local tools
+        run: python deploy/helm/toolchain.py --directory .local/bin
+      - name: Add tools to PATH
+        run: echo "$GITHUB_WORKSPACE/.local/bin" >> "$GITHUB_PATH"
+      - name: Lint and test rendered chart
+        run: |
+          helm lint deploy/helm/gateflow
+          python -m unittest discover -s deploy/helm/tests -v
+          python -m unittest discover -s test/e2e -v
+      - name: Install on kind and test ingress
+        run: python deploy/helm/rehearse.py --cluster gateflow71ci --kubeconfig .local/kubeconfig
+      - name: Verify upgrade
+        run: python deploy/helm/rehearse.py --cluster gateflow71ci --kubeconfig .local/kubeconfig --existing-cluster
+      - name: Local cluster diagnostics
+        if: failure()
+        run: |
+          kubectl --kubeconfig .local/kubeconfig --context kind-gateflow71ci -n gateflow get pods,jobs,ingress -o wide
+          kubectl --kubeconfig .local/kubeconfig --context kind-gateflow71ci -n gateflow get events --sort-by=.lastTimestamp
+      - name: Remove disposable cluster
+        if: always()
+        run: kind delete cluster --name gateflow71ci --kubeconfig .local/kubeconfig

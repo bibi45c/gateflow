@@ -17,6 +17,8 @@
 {{- range $key := list "ACCESS_KEY_PEPPER" "ACCESS_SEED_SECRET" -}}
 {{- $env = append $env (dict "name" $key "valueFrom" (dict "secretKeyRef" (dict "name" $r.Values.secretName "key" $key))) -}}
 {{- end -}}
+{{- $env = append $env (dict "name" "OLLAMA_BASE_URL" "value" $r.Values.seedChannels.ollamaBaseURL) -}}
+{{- $env = append $env (dict "name" "OLLAMA_MODEL" "value" $r.Values.seedChannels.ollamaModel) -}}
 {{- $env = append $env (dict "name" "MOCK_UPSTREAM_BASE_URL" "value" (printf "http://%s-mock-upstream:8090" $r.Release.Name)) -}}
 {{- end -}}
 {{- if or (eq $n "gateway") (eq $n "metering") -}}

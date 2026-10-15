@@ -36,6 +36,10 @@ def secret(kube, namespace, name, values):
                            'type':'Opaque','data':{k:base64.b64encode(v.encode()).decode() for k,v in values.items()}})
 
 
+def smoke_environment(environment, config):
+    return environment | {'KUBECONFIG':str(config), 'ACCESS_SEED_SECRET':'seed-secret-local-only'}
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cluster', required=True)
@@ -89,7 +93,7 @@ def main(argv=None):
             raise RuntimeError('Ingress did not reject /metrics with 404')
         run([sys.executable,str(ROOT/'test/e2e/smoke.py'),'--kube-context','kind-'+args.cluster,
              '--namespace',args.namespace,'--postgres-pod','postgres-0','--port','18071'],
-            env=__import__('os').environ | {'KUBECONFIG':str(args.kubeconfig)})
+            env=smoke_environment(dict(__import__('os').environ), args.kubeconfig))
     finally:
         forward.terminate()
         forward.wait(timeout=10)

@@ -72,5 +72,9 @@
         }
       }
     }
+  },
+  "seedChannels": {
+    "ollamaBaseURL": "http://ollama:11434",
+    "ollamaModel": "qwen3:8b"
   }
 }
