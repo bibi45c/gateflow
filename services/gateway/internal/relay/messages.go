@@ -53,6 +53,7 @@ func (messages) checkBody(body []byte, call *Call) ([]byte, *PublicError) {
 		return nil, invalidRequest(msgModel)
 	}
 	call.Model = req.Model
+	call.Stream = req.Stream
 	if req.MaxTokens == nil || *req.MaxTokens < 1 || *req.MaxTokens > maxOutputTokens {
 		return nil, invalidRequest(msgMaxTokens)
 	}

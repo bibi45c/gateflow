@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"mime"
@@ -18,6 +19,10 @@ import (
 
 // errChannelURL reports a channel base URL that no request can be built from.
 var errChannelURL = errors.New("relay: channel base URL is not a valid URL")
+
+// errNotJSON reports a 2xx non-streaming reply whose body is not a JSON object. It
+// never holds the body.
+var errNotJSON = errors.New("relay: upstream reply body is not a JSON object")
 
 // DefaultMaxIdleConns is how many idle upstream connections NewTransport keeps when
 // it is given no number.
@@ -61,7 +66,7 @@ type exchange struct {
 	id string
 
 	dispatched    atomic.Bool // the request was written upstream, or a reply came
-	completed     bool        // the end event arrived, or a 2xx body read in full completes the call
+	completed     bool        // the end event arrived, or a 2xx JSON body read in full completes the call
 	clientGone    bool        // the client disconnected before the reply was complete
 	upstreamError bool        // the upstream answered non-2xx, before any output
 	observer      observer
@@ -96,7 +101,7 @@ func (h *handler) relay(w *recorder, r *http.Request, body []byte, call Call, ad
 	switch {
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		x.relayStatus(resp)
-	case isEventStream(resp.Header):
+	case readsAsStream(resp.Header, call.Stream):
 		x.relayStream(resp)
 	default:
 		x.relayBody(resp)
@@ -181,7 +186,8 @@ func (x *exchange) relayStatus(resp *http.Response) {
 
 // relayBody passes back a 2xx non-streaming reply once it is read in full, so that a
 // failure while reading it still gets a 502. The body is one message or response, so
-// it has the cap of one event.
+// it has the cap of one event. A body that is not a JSON object is passed back as
+// well, but it holds neither usage nor an outcome, so the call ends interrupted.
 func (x *exchange) relayBody(resp *http.Response) {
 	body, err := readAtMost(resp.Body, maxEventBytes)
 	if err != nil {
@@ -189,7 +195,11 @@ func (x *exchange) relayBody(resp *http.Response) {
 		x.h.writeError(x.w, errUpstream)
 		return
 	}
-	x.completed = x.observer.body(body)
+	if isJSONObject(body) {
+		x.completed = x.observer.body(body)
+	} else {
+		x.noteFailure("upstream reply is not JSON", errNotJSON)
+	}
 	x.passBack(resp, body)
 }
 
@@ -220,7 +230,32 @@ func copyHeader(dst, src http.Header, name string) {
 	}
 }
 
-func isEventStream(header http.Header) bool {
+// readsAsStream reports whether a 2xx reply is relayed as an event stream: when its
+// content type is text/event-stream, or when the request asked for a stream and the
+// reply is not application/json. Ollama sends some event streams as
+// application/x-ndjson, so the content type alone does not tell.
+func readsAsStream(header http.Header, stream bool) bool {
+	switch mediaType(header) {
+	case "text/event-stream":
+		return true
+	case "application/json":
+		return false
+	}
+	return stream
+}
+
+// mediaType returns the media type of the Content-Type header, or "" when it is
+// absent or unreadable.
+func mediaType(header http.Header) string {
 	mediaType, _, err := mime.ParseMediaType(header.Get("Content-Type"))
-	return err == nil && mediaType == "text/event-stream"
+	if err != nil {
+		return ""
+	}
+	return mediaType
+}
+
+// isJSONObject reports whether body is one JSON object.
+func isJSONObject(body []byte) bool {
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	return len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed)
 }

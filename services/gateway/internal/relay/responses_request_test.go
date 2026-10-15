@@ -208,8 +208,9 @@ func TestResponsesSendsNoCredentialWithoutCredentialEnv(t *testing.T) {
 	}
 }
 
-// A non-streaming reply read in full completes the call unless its status is failed;
-// either way the client gets it unchanged and it is charged on its usage.
+// A non-streaming reply read in full completes the call unless its status is failed
+// or it is not JSON; either way the client gets it unchanged and it is charged on its
+// usage.
 func TestResponsesNonStreamingReply(t *testing.T) {
 	tests := []struct {
 		name, body    string
@@ -225,7 +226,7 @@ func TestResponsesNonStreamingReply(t *testing.T) {
 		{"failed without usage", `{"id":"resp_1","object":"response","status":"failed","usage":null}`,
 			OutcomeInterrupted, nil, nil},
 		{"without usage", `{"id":"resp_1","object":"response","status":"completed"}`, OutcomeCompleted, nil, nil},
-		{"not JSON", `not json`, OutcomeCompleted, nil, nil},
+		{"not JSON", `not json`, OutcomeInterrupted, nil, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
