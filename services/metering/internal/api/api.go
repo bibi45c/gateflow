@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/bibi45c/gateflow/pkg/observability"
 	"github.com/bibi45c/gateflow/services/metering/internal/billing"
 )
 
@@ -72,22 +73,26 @@ type PriceSource interface {
 
 // Handler serves the reserve and settle operations.
 type Handler struct {
-	store  Store
-	prices PriceSource
-	token  [sha256.Size]byte
-	open   bool
+	store    Store
+	prices   PriceSource
+	token    [sha256.Size]byte
+	open     bool
+	observer *observability.Observer
 }
 
 // New returns a handler that accepts calls carrying token as their bearer token. With
 // an empty token it refuses every call, so a missing setting never opens the API.
-func New(store Store, prices PriceSource, token string) *Handler {
-	return &Handler{store: store, prices: prices, token: sha256.Sum256([]byte(token)), open: token != ""}
+// observer, from NewObserver, times and counts every call and writes its request
+// line; nil observes nothing.
+func New(store Store, prices PriceSource, token string, observer *observability.Observer) *Handler {
+	return &Handler{store: store, prices: prices, token: sha256.Sum256([]byte(token)), open: token != "",
+		observer: observer}
 }
 
 // Register adds the two operations to mux.
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /internal/v1/reservations", identified(h.authorized(h.reserve)))
-	mux.HandleFunc("POST /internal/v1/reservations/{reservation_id}/settle", identified(h.authorized(h.settle)))
+	mux.HandleFunc("POST "+reserveRoute, identified(h.observed(reserveRoute, h.authorized(h.reserve))))
+	mux.HandleFunc("POST "+settleRoute, identified(h.observed(settleRoute, h.authorized(h.settle))))
 }
 
 // authorized runs next only for a request with the internal bearer token. Both sides

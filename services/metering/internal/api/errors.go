@@ -80,6 +80,9 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 // writeError answers with the status and body of code.
 func writeError(w http.ResponseWriter, r *http.Request, code errorCode) {
+	if call, ok := r.Context().Value(callKey{}).(*callState); ok {
+		call.code = code
+	}
 	reply := errorReplies[code]
 	writeJSON(w, reply.status, map[string]any{"error": map[string]string{
 		"code": string(code), "message": reply.message, "request_id": requestID(r),

@@ -98,6 +98,9 @@ func (a *Admission) Admit(ctx context.Context, call relay.Call) (relay.Admitted,
 	if perr != nil {
 		return relay.Admitted{}, perr
 	}
+	// Access has verified the key, so its tenant may name the request's tenant slot,
+	// even when a later step refuses the call. The slot is never a metric label.
+	call.Observation.SetVerifiedTenantSlot(verified.TenantID)
 	if err := checkChannel(verified.Channel, call.Protocol.String(), a.getenv); err != nil {
 		a.logger.Error("channel is misconfigured; no reservation made",
 			"request_id", call.RequestID, "channel_id", verified.Channel.ID, "reason", err.Error())

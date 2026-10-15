@@ -12,24 +12,43 @@ import (
 	"slices"
 	"sync/atomic"
 	"time"
+
+	"github.com/bibi45c/gateflow/pkg/observability"
 )
 
 // errChannelURL reports a channel base URL that no request can be built from.
 var errChannelURL = errors.New("relay: channel base URL is not a valid URL")
 
+// DefaultMaxIdleConns is how many idle upstream connections NewTransport keeps when
+// it is given no number.
+const DefaultMaxIdleConns = 256
+
+// idleConnTimeout is how long an idle upstream connection is kept.
+const idleConnTimeout = 90 * time.Second
+
 // NewTransport returns the upstream transport: 10 s to open a connection and no
 // limit on the reply, so that a slow local model such as Ollama can still stream. It
 // uses no proxy and asks for no compression, so the bytes relayed are those sent.
 // Handlers given the same transport share its connections.
-func NewTransport() *http.Transport {
+//
+// It keeps up to maxIdleConns idle connections for 90 s, in all and to each upstream
+// host; below 1 means DefaultMaxIdleConns. Every channel of a test stack is one host,
+// and with Go's default of two idle connections per host a load test would open and
+// close a connection for nearly every call, measuring connection setup instead of the
+// relay.
+func NewTransport(maxIdleConns int) *http.Transport {
+	if maxIdleConns < 1 {
+		maxIdleConns = DefaultMaxIdleConns
+	}
 	dialer := &net.Dialer{Timeout: connectTimeout, KeepAlive: 30 * time.Second}
 	return &http.Transport{
 		DialContext:         dialer.DialContext,
 		TLSHandshakeTimeout: connectTimeout,
 		DisableCompression:  true,
 		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        100,
-		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConns:        maxIdleConns,
+		MaxIdleConnsPerHost: maxIdleConns,
+		IdleConnTimeout:     idleConnTimeout,
 	}
 }
 
@@ -46,16 +65,23 @@ type exchange struct {
 	clientGone    bool        // the client disconnected before the reply was complete
 	upstreamError bool        // the upstream answered non-2xx, before any output
 	observer      observer
+	observed      *observability.Request // the request's observation; nil observes nothing
+	firstOutput   bool                   // the first model output was written and flushed
 }
 
-// relay sends an admitted request upstream and relays the reply. It calls
-// admitted.Report exactly once, when it returns or panics, and not with the request's
-// context, so the report also happens after the client has gone.
-func (h *handler) relay(w *recorder, r *http.Request, body []byte, id string, admitted Admitted) {
-	x := &exchange{h: h, w: w, r: r, id: id, observer: h.proto.newObserver()}
-	if admitted.Report != nil {
-		defer func() { admitted.Report(x.result()) }()
-	}
+// relay sends an admitted request upstream and relays the reply, and returns its
+// outcome. It calls admitted.Report exactly once, when it returns or panics, and not
+// with the request's context, so the report also happens after the client has gone.
+func (h *handler) relay(w *recorder, r *http.Request, body []byte, call Call, admitted Admitted) (outcome string) {
+	x := &exchange{h: h, w: w, r: r, id: call.RequestID, observer: h.proto.newObserver(),
+		observed: call.Observation}
+	defer func() {
+		result := x.result()
+		outcome = result.Outcome
+		if admitted.Report != nil {
+			admitted.Report(result)
+		}
+	}()
 	// The upstream request ends with the handler, and when the client disconnects,
 	// because the server then cancels the request's context.
 	ctx, cancel := context.WithCancel(r.Context())
@@ -75,6 +101,7 @@ func (h *handler) relay(w *recorder, r *http.Request, body []byte, id string, ad
 	default:
 		x.relayBody(resp)
 	}
+	return // the deferred report sets the outcome
 }
 
 // send posts body to the channel, at the endpoint's path, with only the forwarded

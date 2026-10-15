@@ -19,19 +19,7 @@ import (
 // admitted request was reported exactly once.
 func startResponsesGateway(t *testing.T, channel Channel) *gateway {
 	t.Helper()
-	admission := newStubAdmission(channel)
-	logs := &syncBuffer{}
-	logger := slog.New(slog.NewJSONHandler(logs, nil))
-	mux := http.NewServeMux()
-	mux.Handle("POST /v1/responses", NewResponses(Config{Getenv: testEnv}, admission, logger))
-	server := httptest.NewServer(mux)
-	t.Cleanup(func() {
-		server.Close() // waits for the handlers, and so for their reports
-		if calls, reports := len(admission.admitted()), admission.reportCount(); reports != calls {
-			t.Errorf("%d admitted requests were reported %d times", calls, reports)
-		}
-	})
-	return &gateway{Server: server, admission: admission, logs: logs}
+	return serveGateway(t, channel, "POST /v1/responses", NewResponses)
 }
 
 // postResponses sends a Responses request to the gateway with the gateway key as a

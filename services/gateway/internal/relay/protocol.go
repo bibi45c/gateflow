@@ -9,7 +9,7 @@ import (
 // protocol is the wire format of an endpoint: how the relay checks a request, calls
 // the upstream, writes its own errors and reads the reply. Everything else is shared:
 // the size check, the gateway key, admission, the event cap, the failure handling, the
-// outcome rule and the access log.
+// outcome rule and the observation.
 type protocol interface {
 	// id names the protocol in a Call.
 	id() Protocol
@@ -30,6 +30,9 @@ type protocol interface {
 	noEnd() error
 	// newObserver returns what reads one reply.
 	newObserver() observer
+	// modelOutput reports whether a stream event of the type carries model output,
+	// as opposed to metadata, keep-alives or the end of the stream.
+	modelOutput(eventType string) bool
 }
 
 // observer reads one upstream reply by the usage source and outcome rule of its

@@ -18,7 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bibi45c/gateflow/pkg/observability"
 	"github.com/bibi45c/gateflow/pkg/protocol/anthropic"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Canaries that must never appear in the logs.
@@ -118,18 +120,43 @@ type gateway struct {
 	*httptest.Server
 	admission *stubAdmission
 	logs      *syncBuffer
+	metrics   *prometheus.Registry
+}
+
+// testModelAlias is the one model alias of the test observer.
+const testModelAlias = "mock-small"
+
+// newTestObserver returns an observer as the gateway makes it, with its own registry,
+// writing request lines to logger.
+func newTestObserver(t *testing.T, logger *slog.Logger) (*observability.Observer, *prometheus.Registry) {
+	t.Helper()
+	registry := prometheus.NewRegistry()
+	observer, err := NewObserver(registry, logger, []string{testModelAlias})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return observer, registry
 }
 
 // startGateway serves the relay in front of channel, with a stand-in admission and
-// environment. When the test ends it checks that every admitted request was reported
-// exactly once.
+// environment, and an observer. When the test ends it checks that every admitted
+// request was reported exactly once.
 func startGateway(t *testing.T, channel Channel) *gateway {
+	t.Helper()
+	return serveGateway(t, channel, "POST /v1/messages", New)
+}
+
+// serveGateway serves the handler that newHandler makes on pattern, as startGateway
+// describes.
+func serveGateway(t *testing.T, channel Channel, pattern string,
+	newHandler func(Config, Admission, *slog.Logger) http.Handler) *gateway {
 	t.Helper()
 	admission := newStubAdmission(channel)
 	logs := &syncBuffer{}
 	logger := slog.New(slog.NewJSONHandler(logs, nil))
+	observer, registry := newTestObserver(t, logger)
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/messages", New(Config{Getenv: testEnv}, admission, logger))
+	mux.Handle(pattern, newHandler(Config{Getenv: testEnv, Observer: observer}, admission, logger))
 	server := httptest.NewServer(mux)
 	t.Cleanup(func() {
 		server.Close() // waits for the handlers, and so for their reports
@@ -137,7 +164,7 @@ func startGateway(t *testing.T, channel Channel) *gateway {
 			t.Errorf("%d admitted requests were reported %d times", calls, reports)
 		}
 	})
-	return &gateway{Server: server, admission: admission, logs: logs}
+	return &gateway{Server: server, admission: admission, logs: logs, metrics: registry}
 }
 
 // startUpstream serves a stand-in upstream and returns the channel that reaches it.
