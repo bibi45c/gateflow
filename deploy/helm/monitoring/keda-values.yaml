@@ -1,0 +1,4 @@
+# kedacore/keda; the chart version is pinned in versions.json.
+# The operator, metrics API server and admission webhooks run on the service nodes.
+nodeSelector:
+  gateflow.io/workload: services

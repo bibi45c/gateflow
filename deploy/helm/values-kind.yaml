@@ -1,1 +1,7 @@
 environment: kind
+# Autoscaling stays off for the smoke rehearsal; rehearse.py --autoscale-check turns
+# it on. A small T lets a few mock-load streams scale the gateway on one machine;
+# D is mock-load's default stream of about 20 seconds.
+autoscaling:
+  targetPerReplica: 4
+  requestDurationSeconds: 20

@@ -143,7 +143,8 @@ class LoadCheckTests(unittest.TestCase):
         module=load_rehearse()
         for argv in [['--cluster','gateflow71','--kubeconfig','k','--load-check'],
                      ['--cluster','gateflow71','--kubeconfig','k','--load-check','--existing-cluster','--prepare-only'],
-                     ['--cluster','gateflow71','--kubeconfig','k','--load-check','--existing-cluster','--deploy-check']]:
+                     ['--cluster','gateflow71','--kubeconfig','k','--load-check','--existing-cluster','--deploy-check'],
+                     ['--cluster','gateflow71','--kubeconfig','k','--load-check','--existing-cluster','--autoscale-check']]:
             with self.subTest(argv=argv),contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
                 module.main(argv)
 

@@ -1,0 +1,63 @@
+# prometheus-community/prometheus; the chart version is pinned in versions.json.
+# Only the server runs. It scrapes the gateway Pods for the two KEDA signals.
+alertmanager:
+  enabled: false
+kube-state-metrics:
+  enabled: false
+prometheus-node-exporter:
+  enabled: false
+prometheus-pushgateway:
+  enabled: false
+
+server:
+  nodeSelector:
+    gateflow.io/workload: services
+  # Terraform installs no EBS CSI driver, so a PVC would stay Pending. Data is lost
+  # with the Pod; the scaling queries need only the last few minutes.
+  persistentVolume:
+    enabled: false
+  emptyDir:
+    sizeLimit: 2Gi
+  retention: 6h
+  global:
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    evaluation_interval: 10s
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+serverFiles:
+  prometheus.yml:
+    # Replaces the chart's default jobs. The job name is autoscaling.job in the
+    # FlowGate chart, and the namespace is its release namespace.
+    scrape_configs:
+      - job_name: gateflow-gateway
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - gateflow
+        relabel_configs:
+          # Running gateway Pods only, draining ones included: their streams are
+          # still demand. Pending Pods have no process to scrape yet.
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            regex: gateflow
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            regex: gateway
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: http
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_phase]
+            regex: Running
+            action: keep
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod

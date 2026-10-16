@@ -24,6 +24,7 @@ jobs:
       - name: Lint and test rendered chart
         run: |
           helm lint deploy/helm/gateflow
+          helm lint deploy/helm/gateflow -f deploy/helm/values-aws.yaml --set-json 'ingress.inboundCidrs=["192.0.2.1/32"]'
           python -m unittest discover -s deploy/helm/tests -v
           python -m unittest discover -s test/e2e -v
       - name: Install on kind and test ingress

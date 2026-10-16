@@ -1,0 +1,19 @@
+{{- $a := .Values.autoscaling -}}
+{{- if $a.enabled -}}
+{{- if lt (int $a.maxReplicas) (int $a.minReplicas) -}}{{ fail "autoscaling.maxReplicas must be >= autoscaling.minReplicas" }}{{- end -}}
+{{- $name := printf "%s-gateway" .Release.Name -}}
+{{- $sel := printf "{job=%q}" $a.job -}}
+{{- $active := printf "gateflow_gateway_active_admitted_requests%s" $sel -}}
+{{- $arrivals := printf "rate(gateflow_gateway_eligible_arrivals_total%s[%s])" $sel $a.rateWindow -}}
+{{- /* Every discovered target must be up, freshly scraped and carry the series, or the query is empty: KEDA then reports an error, never a zero. */ -}}
+{{- $guard := printf "and on() (min(up%s) == 1) and on() (max(time() - timestamp(up%s)) < %d)" $sel $sel (int $a.maxSampleAgeSeconds) -}}
+{{- $activeQuery := printf "sum(%s) %s and on() absent(up%s unless on(instance) %s)" $active $guard $sel $active -}}
+{{- $demandQuery := printf "sum(%s) * %v %s and on() absent(up%s unless on(instance) %s)" $arrivals $a.requestDurationSeconds $guard $sel $arrivals -}}
+{{- $t := toString $a.targetPerReplica -}}
+{{- $triggers := list -}}
+{{- $triggers = append $triggers (dict "type" "prometheus" "name" "active-admitted" "metricType" "AverageValue" "metadata" (dict "serverAddress" $a.serverAddress "query" $activeQuery "threshold" $t "ignoreNullValues" "false")) -}}
+{{- $triggers = append $triggers (dict "type" "prometheus" "name" "eligible-demand" "metricType" "AverageValue" "metadata" (dict "serverAddress" $a.serverAddress "query" $demandQuery "threshold" $t "ignoreNullValues" "false")) -}}
+{{- $hpa := dict "name" $name "behavior" (dict "scaleDown" (dict "stabilizationWindowSeconds" (int $a.scaleDownStabilizationSeconds))) }}
+---
+{{ dict "apiVersion" "keda.sh/v1alpha1" "kind" "ScaledObject" "metadata" (dict "name" $name "labels" (merge (dict "app.kubernetes.io/component" "gateway") (include "gf.labels" . | fromJson))) "spec" (dict "scaleTargetRef" (dict "name" $name) "minReplicaCount" (int $a.minReplicas) "maxReplicaCount" (int $a.maxReplicas) "advanced" (dict "horizontalPodAutoscalerConfig" $hpa) "triggers" $triggers) | toJson }}
+{{- end }}
