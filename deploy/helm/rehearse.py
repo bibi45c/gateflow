@@ -53,6 +53,15 @@ def smoke_environment(environment, config):
     return environment | {'KUBECONFIG':str(config), 'ACCESS_SEED_SECRET':SEED_SECRET}
 
 
+def smoke_command(cluster, namespace, existing_cluster):
+    """The smoke suite through the ingress forward. A fresh install reads the ledger in the
+    PostgreSQL fixture Pod; the upgrade of an existing cluster reads it as on EKS, through a
+    query Pod using the metering URL of gateflow-runtime, so CI runs both modes."""
+    database=['--db-secret','gateflow-runtime'] if existing_cluster else ['--postgres-pod','postgres-0']
+    return [sys.executable,str(ROOT/'test/e2e/smoke.py'),'--kube-context','kind-'+cluster,
+            '--namespace',namespace,*database,'--port','18071']
+
+
 def load_credentials(path):
     # Preserve generated credentials across repeat runs and add keys missing from older files.
     keys=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
@@ -181,8 +190,7 @@ def main(argv=None):
     run([*helm,'upgrade','--install','gf',str(HERE/'gateflow'),'-n',args.namespace,'-f',str(HERE/'values-kind.yaml'),
          '--wait','--wait-for-jobs','--timeout','6m'])
     with ingress_forward(kube):
-        run([sys.executable,str(ROOT/'test/e2e/smoke.py'),'--kube-context','kind-'+args.cluster,
-             '--namespace',args.namespace,'--postgres-pod','postgres-0','--port','18071'],
+        run(smoke_command(args.cluster,args.namespace,args.existing_cluster),
             env=smoke_environment(dict(os.environ), args.kubeconfig))
     return 0
 

@@ -413,3 +413,199 @@ class KubernetesCommandTests(unittest.TestCase):
     def test_reject_mixed_targets(self):
         with self.assertRaises(SystemExit):
             smoke.main(['--project','other','--kube-context','kind-gf','--namespace','gf','--postgres-pod','postgres-0'])
+
+
+DATABASE_URL = "postgres://metering:hunter2-must-not-leak@db.internal:5432/gateflow?sslmode=require"
+
+
+class FakeKubectl:
+    """Stands in for kubectl: records each command and fails the verbs in fail."""
+
+    def __init__(self, fail=(), stderr=f"error: cannot connect to {DATABASE_URL}"):
+        self.fail, self.stderr, self.commands, self.inputs = set(fail), stderr, [], []
+
+    def __call__(self, command, **kwargs):
+        self.commands.append(command)
+        self.inputs.append(kwargs.get("input"))
+        verb = command[5]
+        if verb in self.fail:
+            return smoke.subprocess.CompletedProcess(command, 1, "", self.stderr)
+        return smoke.subprocess.CompletedProcess(command, 0, f"{CALL_ID}|completed\n" if verb == "exec" else "", "")
+
+    def verbs(self):
+        return [command[5] for command in self.commands]
+
+
+class QueryPodTests(unittest.TestCase):
+    def kubectl(self, fake):
+        return mock.patch.object(smoke.subprocess, "run", fake)
+
+    def test_db_secret_excludes_the_other_databases_and_needs_a_context(self):
+        base = ["--kube-context", "kind-gf", "--namespace", "gf", "--db-secret", "gateflow-runtime"]
+        for argv in [base + ["--postgres-pod", "postgres-0"], base + ["--project", "wt-1"],
+                     ["--namespace", "gf", "--db-secret", "gateflow-runtime"],
+                     ["--kube-context", "kind-gf", "--db-secret", "gateflow-runtime"],
+                     ["--kube-context", "kind-gf", "--namespace", "gf", "--db-secret", ""],
+                     ["--db-secret-key", "ACCESS_DATABASE_URL"], ["--query-image", "postgres:17.6"],
+                     ["--kube-context", "kind-gf", "--namespace", "gf", "--postgres-pod", "postgres-0",
+                      "--db-secret-key", "METERING_DATABASE_URL"]]:
+            fake = FakeKubectl()
+            with self.subTest(argv=argv), self.kubectl(fake), \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                smoke.main(argv)
+            self.assertEqual([], fake.commands)
+
+    def test_pod_takes_the_url_from_the_secret_and_runs_restricted_on_a_services_node(self):
+        spec = smoke.query_pod_spec("gateflow-smoke-db-0a1b2c3d", "gateflow-runtime")
+        self.assertEqual(("v1", "Pod", "gateflow-smoke-db-0a1b2c3d"),
+                         (spec["apiVersion"], spec["kind"], spec["metadata"]["name"]))
+        self.assertEqual(smoke.QUERY_POD_LABELS, spec["metadata"]["labels"])
+        pod = spec["spec"]
+        self.assertEqual({"gateflow.io/workload": "services"}, pod["nodeSelector"])
+        self.assertIs(False, pod["automountServiceAccountToken"])
+        self.assertEqual("Never", pod["restartPolicy"])
+        self.assertTrue(pod["securityContext"]["runAsNonRoot"])
+        self.assertEqual(65532, pod["securityContext"]["runAsUser"])
+        [container] = pod["containers"]
+        self.assertEqual("postgres:17", container["image"])
+        self.assertEqual("sleep", container["command"][0])
+        self.assertEqual(smoke.QUERY_POD_LIFETIME, int(container["command"][1]))
+        self.assertLessEqual(smoke.QUERY_POD_LIFETIME, 3600)
+        self.assertEqual({"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
+                         container["securityContext"])
+        env = {variable["name"]: variable for variable in container["env"]}
+        self.assertEqual({"DATABASE_URL", "HOME"}, set(env))
+        self.assertEqual({"secretKeyRef": {"name": "gateflow-runtime", "key": "METERING_DATABASE_URL"}},
+                         env["DATABASE_URL"]["valueFrom"])
+        self.assertNotIn("value", env["DATABASE_URL"])
+        self.assertEqual("/tmp", env["HOME"]["value"])
+        text = json.dumps(spec)
+        self.assertNotIn("postgres://", text)
+        self.assertNotIn("sslmode", text)
+
+    def test_pod_key_and_image_can_be_chosen(self):
+        spec = smoke.query_pod_spec("p", "other-secret", "ACCESS_DATABASE_URL", "registry.local/postgres:17")
+        [container] = spec["spec"]["containers"]
+        self.assertEqual("registry.local/postgres:17", container["image"])
+        self.assertEqual({"name": "other-secret", "key": "ACCESS_DATABASE_URL"},
+                         container["env"][0]["valueFrom"]["secretKeyRef"])
+
+    def test_pod_names_are_random_and_marked_as_smoke(self):
+        names = {smoke.query_pod_name() for _ in range(5)}
+        self.assertEqual(5, len(names))
+        for name in names:
+            self.assertRegex(name, r"^gateflow-smoke-db-[0-9a-f]{8}$")
+
+    def test_exec_passes_the_sql_as_an_argument(self):
+        target = smoke.QueryPod("kind-gf", "gf", "gateflow-smoke-db-0a1b2c3d")
+        sql = smoke.ledger_sql([CALL_ID])
+        command = smoke.psql_command(target, sql)
+        self.assertEqual(["kubectl", "--context", "kind-gf", "--namespace", "gf", "exec",
+                          "gateflow-smoke-db-0a1b2c3d", "--", "sh", "-c"], command[:10])
+        script = command[10]
+        self.assertEqual(sql, command[-1])
+        self.assertEqual(13, len(command))
+        self.assertNotIn(sql, script)
+        self.assertNotIn("SELECT", script)
+        self.assertIn('"$1"', script)
+        self.assertIn('"$DATABASE_URL"', script)
+        self.assertIn("psql -X -tAc", script)
+        self.assertNotIn("-U", script)  # the role and sslmode come from the URL as it is
+
+    def test_query_pod_is_created_then_used_then_deleted(self):
+        fake = FakeKubectl()
+        with self.kubectl(fake):
+            with smoke.query_pod("kind-gf", "gf", "gateflow-runtime") as target:
+                self.assertEqual({CALL_ID: ["completed"]}, smoke.query_ledger(target, [CALL_ID]))
+        self.assertEqual(["create", "wait", "exec", "delete"], fake.verbs())
+        for command in fake.commands:
+            self.assertEqual(["kubectl", "--context", "kind-gf", "--namespace", "gf"], command[:5])
+        created = json.loads(fake.inputs[0])
+        self.assertEqual(target.pod, created["metadata"]["name"])
+        self.assertIn(f"pod/{target.pod}", fake.commands[1])
+        self.assertIn("--for=condition=Ready", fake.commands[1])
+        self.assertEqual(["delete", "pod", target.pod, "--wait=false"], fake.commands[3][5:9])
+
+    def test_query_pod_is_deleted_when_it_never_gets_ready(self):
+        fake = FakeKubectl(fail={"wait"})
+        with self.kubectl(fake), self.assertRaises(RuntimeError) as failure:
+            with smoke.query_pod("kind-gf", "gf", "gateflow-runtime"):
+                self.fail("the block must not run")
+        self.assertEqual(["create", "wait", "delete"], fake.verbs())
+        self.assertNotIn("hunter2", str(failure.exception))
+
+    def test_query_pod_is_deleted_when_the_checks_fail_or_are_interrupted(self):
+        for error in [RuntimeError("check failed"), KeyboardInterrupt()]:
+            fake = FakeKubectl()
+            with self.subTest(error=error), self.kubectl(fake), self.assertRaises(type(error)):
+                with smoke.query_pod("kind-gf", "gf", "gateflow-runtime"):
+                    raise error
+            self.assertEqual(["create", "wait", "delete"], fake.verbs())
+
+    def test_main_deletes_the_pod_when_checks_raise(self):
+        fake = FakeKubectl()
+        argv = ["--kube-context", "kind-gf", "--namespace", "gf", "--db-secret", "gateflow-runtime"]
+        with self.kubectl(fake), mock.patch.object(smoke, "run_checks", side_effect=KeyboardInterrupt) as checks, \
+                self.assertRaises(KeyboardInterrupt):
+            smoke.main(argv)
+        target = checks.call_args.args[2]
+        self.assertIsInstance(target, smoke.QueryPod)
+        self.assertEqual(["create", "wait", "delete"], fake.verbs())
+        self.assertEqual(target.pod, fake.commands[-1][7])
+
+    def test_main_passes_key_and_image_and_fails_setup_without_a_ready_pod(self):
+        fake = FakeKubectl(fail={"create"})
+        argv = ["--kube-context", "kind-gf", "--namespace", "gf", "--db-secret", "gateflow-runtime",
+                "--db-secret-key", "ACCESS_DATABASE_URL", "--query-image", "postgres:17.6"]
+        output = io.StringIO()
+        with self.kubectl(fake), mock.patch.object(smoke, "run_checks") as checks, \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(1, smoke.main(argv))
+        checks.assert_not_called()
+        self.assertEqual(["create", "delete"], fake.verbs())
+        container = json.loads(fake.inputs[0])["spec"]["containers"][0]
+        self.assertEqual("postgres:17.6", container["image"])
+        self.assertEqual("ACCESS_DATABASE_URL", container["env"][0]["valueFrom"]["secretKeyRef"]["key"])
+        self.assertTrue(output.getvalue().startswith("FAIL setup: query Pod: kubectl create exited with 1"))
+        self.assertNotIn("hunter2", output.getvalue())
+        self.assertIn("postgres://<redacted>@", output.getvalue())
+
+    def test_psql_errors_are_redacted(self):
+        target = smoke.QueryPod("kind-gf", "gf", "gateflow-smoke-db-0a1b2c3d")
+        stderr = (f'psql: error: connection to "{DATABASE_URL}" failed\n'
+                  "also postgresql://metering:p%40ss@host/db and password=hunter2-must-not-leak&x=1")
+        with self.kubectl(FakeKubectl(fail={"exec"}, stderr=stderr)), self.assertRaises(RuntimeError) as failure:
+            smoke.query_ledger(target, [CALL_ID])
+        message = str(failure.exception)
+        self.assertTrue(message.startswith("psql exited with 1"), message)
+        for secret in ["hunter2", "metering:", "p%40ss"]:
+            self.assertNotIn(secret, message)
+        self.assertIn("db.internal:5432/gateflow?sslmode=require", message)
+
+    def test_kubectl_errors_and_timeouts_are_redacted(self):
+        def timeout(command, **kwargs):
+            raise smoke.subprocess.TimeoutExpired(command, 30, stderr=DATABASE_URL)
+        with mock.patch.object(smoke.subprocess, "run", timeout), self.assertRaises(RuntimeError) as failure:
+            smoke.run_kubectl(["kubectl", "--context", "c", "--namespace", "n", "wait", "pod/p"])
+        self.assertIn("kubectl wait failed", str(failure.exception))
+        self.assertEqual("postgres://<redacted>@db.internal/x password=<redacted>",
+                         smoke.redact("postgres://u:p@w@db.internal/x password=secret"))
+        self.assertEqual("no url here", smoke.redact("no url here"))
+
+    def test_cleanup_failure_is_a_redacted_warning(self):
+        fake = FakeKubectl(fail={"delete"})
+        errors = io.StringIO()
+        with self.kubectl(fake), contextlib.redirect_stderr(errors):
+            with smoke.query_pod("kind-gf", "gf", "gateflow-runtime") as target:
+                pass
+        self.assertIn(f"WARNING could not delete query Pod {target.pod}", errors.getvalue())
+        self.assertNotIn("hunter2", errors.getvalue())
+
+    def test_compose_and_fixture_pod_targets_are_unchanged(self):
+        with mock.patch.object(smoke, "run_checks", return_value=0) as checks:
+            self.assertEqual(0, smoke.main(["--project", "wt-1"]))
+            self.assertEqual(0, smoke.main([]))
+            self.assertEqual(0, smoke.main(["--kube-context", "kind-gf", "--namespace", "gf",
+                                            "--postgres-pod", "postgres-0"]))
+        self.assertEqual(["wt-1", None, smoke.KubernetesDatabase("kind-gf", "gf", "postgres-0")],
+                         [call.args[2] for call in checks.call_args_list])
