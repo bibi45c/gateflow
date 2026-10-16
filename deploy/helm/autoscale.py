@@ -163,6 +163,16 @@ def settled(samples, minimum):
             'seconds_to_min': None if reached is None else round(reached - samples[0]['t'], 1)}
 
 
+def judge_baseline(samples, minimum, hold):
+    """Passes when the last hold samples all have minimum desired and ready replicas.
+    Fewer replicas before that do not count: an autoscaled gateway starts at one until
+    the HPA raises it."""
+    tail = samples[-hold:]
+    steady = len(tail) == hold and all(s['desired'] == minimum and s['ready'] == minimum for s in tail)
+    return {'passed': steady, 'final_desired': samples[-1]['desired'] if samples else None,
+            'seconds_to_min': round(tail[0]['t'] - samples[0]['t'], 1) if steady else None}
+
+
 def judge_scale_up(samples, minimum, maximum):
     desired = [s['desired'] for s in samples]
     peak = max(desired) if desired else None
@@ -187,6 +197,8 @@ def judge_outage(before, samples, minimum, conditions):
 
 
 REQUIRED = ('baseline', 'scale_up', 'scale_down', 'missing_metrics')
+# Consecutive samples at minReplicas, desired and ready, that make a stable baseline.
+BASELINE_HOLD = 2
 
 
 def rehearse(cluster, load, settings, clock=time.monotonic, sleep=time.sleep, log=print):
@@ -212,8 +224,14 @@ def rehearse(cluster, load, settings, clock=time.monotonic, sleep=time.sleep, lo
         record['phases'][phase] = result
         log(f"{phase}: {'passed' if result['passed'] else 'FAILED'}")
 
-    seen = watch('baseline', settle, lambda s: s['desired'] == minimum and s['ready'] == minimum)
-    finish('baseline', settled(seen, minimum))
+    steady = []
+
+    def at_minimum(sample):
+        steady.append(sample['desired'] == minimum and sample['ready'] == minimum)
+        return steady[-BASELINE_HOLD:] == [True]*BASELINE_HOLD
+
+    seen = watch('baseline', settle, at_minimum)
+    finish('baseline', judge_baseline(seen, minimum, BASELINE_HOLD))
 
     load.start()
     try:

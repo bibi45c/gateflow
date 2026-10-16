@@ -10,7 +10,7 @@
   "keda": {
     "repository": "https://kedacore.github.io/charts",
     "chart": "keda",
-    "version": "2.20.0",
+    "version": "2.20.2",
     "release": "keda",
     "namespace": "keda",
     "values": "keda-values.yaml"

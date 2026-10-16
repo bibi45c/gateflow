@@ -172,13 +172,18 @@ class FakeLoad:
 class FakeCluster:
     """A crude HPA: up a step per poll under load, down after the window when idle, frozen without Prometheus."""
 
-    def __init__(self, load, time, window=60, drop_when_blind=False):
+    def __init__(self, load, time, window=60, drop_when_blind=False, start_polls=0):
         self.load,self.time,self.window=load,time,window
         self.desired=1; self.idle_since=None; self.prometheus=True
         self.drop_when_blind=drop_when_blind
+        # Polls before the HPA first raises the newly autoscaled gateway from one replica.
+        self.start_polls=start_polls
         self.scaled=[]
 
     def state(self):
+        if self.start_polls:
+            self.start_polls-=1
+            return {'desired':1,'ready':1,'hpa_desired':None,'metrics':[]}
         if not self.prometheus:
             if self.drop_when_blind: self.desired=2
         elif self.load.running:
@@ -236,6 +241,15 @@ class RehearsalLogicTests(unittest.TestCase):
         self.assertTrue(all(s['streams']==0 for s in record['samples'] if s['phase']=='missing_metrics'))
         json.dumps(record)
 
+    def test_baseline_waits_for_hpa_to_raise_one_replica(self):
+        record,_,_=self.run_rehearsal(start_polls=3)
+        baseline=[s for s in record['samples'] if s['phase']=='baseline']
+        self.assertEqual([s['desired'] for s in baseline],[1,1,1,2,2])
+        self.assertTrue(record['phases']['baseline']['passed'])
+        self.assertEqual(record['phases']['baseline']['final_desired'],2)
+        self.assertEqual(record['phases']['baseline']['seconds_to_min'],15.0)
+        self.assertTrue(record['passed'])
+
     def test_scale_down_while_prometheus_is_down_fails(self):
         record,fake,_=self.run_rehearsal(drop_when_blind=True)
         self.assertFalse(record['passed'])
@@ -257,7 +271,12 @@ class RehearsalLogicTests(unittest.TestCase):
 
     def test_judgements(self):
         def samples(*desired):
-            return [{'t':5.0*i,'desired':d} for i,d in enumerate(desired)]
+            return [{'t':5.0*i,'desired':d,'ready':d} for i,d in enumerate(desired)]
+        self.assertTrue(self.module.judge_baseline(samples(1,1,2,2),2,2)['passed'])
+        self.assertFalse(self.module.judge_baseline(samples(1,1,2),2,2)['passed'])
+        self.assertFalse(self.module.judge_baseline(samples(2,2,1),2,2)['passed'])
+        self.assertFalse(self.module.judge_baseline(samples(1,1,1),2,2)['passed'])
+        self.assertFalse(self.module.judge_baseline([{'t':0.0,'desired':2,'ready':1},{'t':5.0,'desired':2,'ready':1}],2,2)['passed'])
         up=self.module.judge_scale_up(samples(2,3,4),2,4)
         self.assertEqual((up['passed'],up['reached_max'],up['seconds_to_max']),(True,True,10.0))
         self.assertFalse(self.module.judge_scale_up(samples(2,2,2),2,4)['passed'])

@@ -160,8 +160,8 @@ Where to change the settings:
 
 | Value | Meaning | Default | values-kind.yaml | values-aws.yaml |
 |---|---|---|---|---|
-| `autoscaling.targetPerReplica` | T, 0.7 x the per-Pod admission cap C | 70 | 4 | 70, provisional until #17 |
-| `autoscaling.requestDurationSeconds` | D, the mean request duration in seconds | 20 | 20 (mock-load) | 20, provisional until #17 |
+| `autoscaling.targetPerReplica` | T, 0.7 x the per-Pod admission cap C | 70 | 4 | 70, provisional until #73 |
+| `autoscaling.requestDurationSeconds` | D, the mean request duration in seconds | 20 | 20 (mock-load) | 20, provisional until #73 |
 | `autoscaling.minReplicas`, `maxReplicas` | Replica bounds | 2, 4 | | |
 | `autoscaling.scaleDownStabilizationSeconds` | HPA scale-down window | 60 | | |
 | `autoscaling.serverAddress`, `job`, `rateWindow`, `maxSampleAgeSeconds` | Prometheus address, scrape job, rate window, freshest sample age | prometheus-server.monitoring, gateflow-gateway, 1m, 30 | | |
@@ -174,7 +174,7 @@ capacity gate yet, so eligible arrivals equal admitted ones.
 ### Installing Prometheus and KEDA
 
 `monitoring/versions.json` pins both charts: prometheus-community `prometheus`
-27.11.0 and kedacore `keda` 2.20.0. [KEDA 2.20](https://keda.sh/docs/2.20/operate/cluster/)
+27.11.0 and kedacore `keda` 2.20.2. [KEDA 2.20](https://keda.sh/docs/2.20/operate/cluster/)
 lists Kubernetes 1.33-1.35 as tested, which covers kind 1.35.8 and EKS 1.35 (#30).
 Prometheus runs only its server, on an `emptyDir` (Terraform installs no EBS CSI
 driver, so a PVC would stay Pending), keeps 6 hours of data and scrapes the gateway
@@ -188,7 +188,7 @@ ScaledObject kind comes from KEDA's CRDs. On EKS, with the context from #30
 
 ```text
 helm --kubeconfig <file> --kube-context <eks> upgrade --install prometheus prometheus --repo https://prometheus-community.github.io/helm-charts --version 27.11.0 -n monitoring --create-namespace -f deploy/helm/monitoring/prometheus-values.yaml --wait
-helm --kubeconfig <file> --kube-context <eks> upgrade --install keda keda --repo https://kedacore.github.io/charts --version 2.20.0 -n keda --create-namespace -f deploy/helm/monitoring/keda-values.yaml --wait
+helm --kubeconfig <file> --kube-context <eks> upgrade --install keda keda --repo https://kedacore.github.io/charts --version 2.20.2 -n keda --create-namespace -f deploy/helm/monitoring/keda-values.yaml --wait
 helm --kubeconfig <file> --kube-context <eks> upgrade --install gf deploy/helm/gateflow -n gateflow -f deploy/helm/values-aws.yaml --wait --wait-for-jobs
 ```
 
