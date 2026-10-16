@@ -4,8 +4,9 @@ Run k6 with JSON output, then, from the repository root:
 
     python loadtest/summarize.py <k6 JSON output> [--out <results.json>]
 
-It prints one Markdown row per phase of the plan and writes the same results as JSON
-(default: the input path with .results.json). The plan and the time zero come from
+It prints one Markdown row per phase of the plan, then, when the requests carry a
+tenant tag, one row per phase and tenant and the spread across tenants per phase. It
+writes the same results as JSON (default: the input path with .results.json). The plan and the time zero come from
 the gateflow_plan and gateflow_start points that the script writes, so the output
 file alone is enough. Percentiles use the nearest-rank method. Only the standard
 library is used.
@@ -77,6 +78,9 @@ class Run:
         self.direct_waiting = defaultdict(list)
         self.direct_duration = defaultdict(list)
         self.timed = []  # (metric, time, value) of untagged points: dropped iterations, vus
+        # Per (phase, level, tenant): sent, http_sent and the four results, and TTFB.
+        self.tenant_counts = defaultdict(Counter)
+        self.tenant_waiting = defaultdict(list)
 
     def add(self, metric, time, value, tags):
         key = (tags.get("phase"), tags.get("level"))
@@ -87,6 +91,8 @@ class Run:
                 target = self.direct_waiting if metric == "http_req_waiting" else self.direct_duration
                 target[key].append(value)
             return
+        if tags.get("tenant"):
+            self.add_tenant(metric, value, tags, key + (tags["tenant"],))
         if metric == "gateflow_plan":
             self.plan.append((tags["phase"], tags["level"], float(tags["start_s"]), float(tags["end_s"])))
         elif metric == "gateflow_start":
@@ -107,6 +113,17 @@ class Run:
             (self.waiting if metric == "http_req_waiting" else self.duration)[key].append(value)
         elif metric in ("dropped_iterations", "vus"):
             self.timed.append((metric, time, value))
+
+    def add_tenant(self, metric, value, tags, key):
+        """Counts a gateway request's point also under its tenant."""
+        if metric == "http_reqs":
+            self.tenant_counts[key]["http_sent"] += int(value)
+        elif metric == "gateflow_sent":
+            self.tenant_counts[key]["sent"] += int(value)
+        elif metric.startswith("gateflow_") and metric[len("gateflow_"):] in RESULTS:
+            self.tenant_counts[key][metric[len("gateflow_"):]] += int(value)
+        elif metric == "http_req_waiting" and tags.get("status") == "200":
+            self.tenant_waiting[key].append(value)
 
     def phase_at(self, time):
         """The (phase, level) whose interval holds time, or None."""
@@ -153,6 +170,47 @@ def phase_row(run, phase, level, start, end, dropped, vus):
     }
 
 
+def tenant_rows(run):
+    """One row per phase and tenant, in plan order. Dropped arrivals carry no tenant, so
+    a tenant's completion rate is over the requests sent for it."""
+    rows = []
+    for phase, level, _, _ in run.plan:
+        tenants = sorted(t for p, lv, t in run.tenant_counts if (p, lv) == (phase, level))
+        for tenant in tenants:
+            key = (phase, level, tenant)
+            counts = run.tenant_counts[key]
+            sent = counts["sent" if run.has_sent_counter else "http_sent"]
+            rows.append({
+                "phase": phase, "level_rps": float(level), "tenant": tenant, "sent": sent,
+                **{name: counts[name] for name in RESULTS},
+                "completion_rate": round(counts["completed"] / sent, 4) if sent else None,
+                "ttfb_ms": percentiles(run.tenant_waiting[key]),
+            })
+    return rows
+
+
+def tenant_spread(rows):
+    """Per phase, how far apart the tenants are: the lowest and highest requests sent,
+    completion rate and TTFB p95, and the highest TTFB p95 over the lowest."""
+    phases = {}
+    for row in rows:
+        phases.setdefault((row["phase"], row["level_rps"]), []).append(row)
+    out = []
+    for (phase, level), group in phases.items():
+        sent = [r["sent"] for r in group]
+        rates = [r["completion_rate"] for r in group if r["completion_rate"] is not None]
+        p95 = [r["ttfb_ms"]["p95"] for r in group if r["ttfb_ms"]]
+        out.append({
+            "phase": phase, "level_rps": level, "tenants": len(group),
+            "min_sent": min(sent), "max_sent": max(sent),
+            "min_completion_rate": min(rates, default=None),
+            "max_completion_rate": max(rates, default=None),
+            "min_ttfb_p95_ms": min(p95, default=None), "max_ttfb_p95_ms": max(p95, default=None),
+            "ttfb_p95_ratio": round(max(p95) / min(p95), 2) if p95 and min(p95) > 0 else None,
+        })
+    return out
+
+
 def summarize(lines):
     """The results of a run, as a dict ready for JSON."""
     run = Run()
@@ -167,6 +225,7 @@ def summarize(lines):
         raise ValueError("repeated phase/level in plan: use distinct LEVELS")
     dropped, vus = run.timed_by_phase()
     rows = [phase_row(run, *plan, dropped, vus) for plan in run.plan]
+    tenants = tenant_rows(run)
     statuses = Counter()
     for row in rows:
         statuses.update(row["statuses"])
@@ -181,11 +240,51 @@ def summarize(lines):
             "excess_results": sum(max(0, -row["unclassified"]) for row in rows),
         },
         "sent_source": "gateflow_sent" if run.has_sent_counter else "http_reqs (legacy)",
+        "tenants": tenants,
+        "tenant_spread": tenant_spread(tenants),
     }
 
 
+def rate(value):
+    return f"{value:.2%}" if value is not None else "-"
+
+
+def table(head, rows):
+    """A Markdown table: the header, its separator and the rows."""
+    return [head, "|" + "---|" * (head.count("|") - 1), *rows]
+
+
+def tenant_markdown(summary):
+    """The per-tenant table and the spread table, or nothing without tenant tags."""
+    if not summary["tenants"]:
+        return []
+    rows = []
+    for row in summary["tenants"]:
+        ttfb = row["ttfb_ms"]
+        ttfb = f"{ttfb['p50']} / {ttfb['p95']}" if ttfb else "-"
+        rows.append(f"| {row['phase']} | {row['level_rps']:g} | {row['tenant']} | {row['sent']} "
+                    f"| {row['completed']} | {row['rejected']} | {row['timed_out']} | {row['failed']} "
+                    f"| {rate(row['completion_rate'])} | {ttfb} |")
+    lines = ["", "Per tenant:", ""]
+    lines += table("| Phase | Level (req/s) | Tenant | Sent | Completed | 429/503/529 | Timed out "
+                   "| Failed | Completion | TTFB p50 / p95 (ms) |", rows)
+    rows = []
+    for row in summary["tenant_spread"]:
+        p95 = (f"{row['min_ttfb_p95_ms']} / {row['max_ttfb_p95_ms']}"
+               if row["min_ttfb_p95_ms"] is not None else "-")
+        ratio = row["ttfb_p95_ratio"] if row["ttfb_p95_ratio"] is not None else "-"
+        rows.append(f"| {row['phase']} | {row['level_rps']:g} | {row['tenants']} "
+                    f"| {row['min_sent']} / {row['max_sent']} "
+                    f"| {rate(row['min_completion_rate'])} / {rate(row['max_completion_rate'])} "
+                    f"| {p95} | {ratio} |")
+    lines += ["", "Spread across tenants:", ""]
+    lines += table("| Phase | Level (req/s) | Tenants | Sent min / max | Completion min / max "
+                   "| TTFB p95 min / max (ms) | TTFB p95 max/min |", rows)
+    return lines
+
+
 def markdown(summary):
-    """The results as a Markdown table, then one line per check."""
+    """The results as a Markdown table, one line per check, then the per-tenant tables."""
     head = ("| Phase | Level (req/s) | Scheduled | HTTP 200 | Completed | 429/503/529 | Timed out "
             "| Failed | Unclassified | Completion | Throughput (req/s) | TTFB p50 / p95 / p99 (ms) "
             "| Added TTFB p95 (ms), pairs | Failed pairs | Direct duration p95 (ms) | Max VUs |")
@@ -203,6 +302,7 @@ def markdown(summary):
                      f"| {paired} | {row['failed_pairs']} | {direct} | {row['max_active_vus']} |")
     lines.append("")
     lines += [f"- {name}: {value}" for name, value in summary["checks"].items()]
+    lines += tenant_markdown(summary)
     return "\n".join(lines)
 
 

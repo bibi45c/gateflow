@@ -5,9 +5,9 @@
 // request streams, carries an explicit max_tokens and uses the seeded tenants in
 // turn. PAIRED=1 is a separate latency diagnostic: each request also goes straight to
 // the mock, doubling its load. http_req_waiting measures TTFB, not the first model
-// content delta required by proposal section 6.2. Each request is tagged
-// with its phase, level and path, and setup() writes the plan into the output, so that
-// summarize.py can build the results table from the JSON output alone.
+// content delta required by proposal section 6.2. Each request is tagged with its
+// phase, level, tenant and path, and setup() writes the plan into the output, so that
+// summarize.py can build the results tables from the JSON output alone.
 import http from 'k6/http';
 import crypto from 'k6/crypto';
 import encoding from 'k6/encoding';
@@ -26,6 +26,10 @@ const MODEL = env('MODEL', 'mock-load');
 const MAX_TOKENS = number('MAX_TOKENS', '256');
 const INPUT_BYTES = number('INPUT_BYTES', '1024');
 const TENANTS = number('TENANTS', '10');
+// TENANTS=1 sends every request with tenant-01's key: the shared-wallet scenario.
+if (!Number.isInteger(TENANTS) || TENANTS < 1) {
+  throw new Error('TENANTS must be a whole number of at least 1');
+}
 const SEED_SECRET = env('ACCESS_SEED_SECRET', 'seed-secret-local-only');
 const LEVELS = env('LEVELS', '5,25,50').split(',').map(Number);
 const WARMUP_S = number('WARMUP_S', '60');
