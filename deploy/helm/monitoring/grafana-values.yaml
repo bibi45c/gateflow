@@ -12,6 +12,8 @@ rbac:
   create: false
 serviceAccount:
   automountServiceAccountToken: false
+# The Grafana Pod needs no Kubernetes API access (no sidecars), so it gets no token.
+automountServiceAccountToken: false
 nodeSelector:
   gateflow.io/workload: services
 resources:

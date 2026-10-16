@@ -135,6 +135,8 @@ class DashboardTests(unittest.TestCase):
         values = (MONITORING/'grafana-values.yaml').read_text(encoding='utf-8')
         self.assertRegex(values, r'(?m)^rbac:\n  create: false$')
         self.assertRegex(values, r'(?m)^serviceAccount:\n  automountServiceAccountToken: false$')
+        # The chart's Pod-level switch is separate from the ServiceAccount's.
+        self.assertRegex(values, r'(?m)^automountServiceAccountToken: false$')
 
     def test_prometheus_is_configured_only_by_its_own_values(self):
         overlay = MONITORING/'dashboard-prometheus-values.yaml'

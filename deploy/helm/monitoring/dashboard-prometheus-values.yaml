@@ -1,2 +1,0 @@
-# Obsolete; delete this file. kube-state-metrics and its scrape job come from
-# prometheus-values.yaml (#118), and dashboard.py no longer upgrades Prometheus.
