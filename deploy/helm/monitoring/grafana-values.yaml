@@ -1,0 +1,65 @@
+# grafana-community/grafana 14.0.0 (Grafana 13.2.4), a separate Helm release.
+# Install in the FlowGate release namespace. dashboard.py sets the ConfigMap name.
+service:
+  type: ClusterIP
+ingress:
+  enabled: false
+persistence:
+  enabled: false
+# Dashboards are mounted ConfigMaps, not sidecar-watched, so Grafana needs no
+# Kubernetes API access.
+rbac:
+  create: false
+serviceAccount:
+  automountServiceAccountToken: false
+# The Grafana Pod needs no Kubernetes API access (no sidecars), so it gets no token.
+automountServiceAccountToken: false
+nodeSelector:
+  gateflow.io/workload: services
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+env:
+  GOMEMLIMIT: 768MiB
+admin:
+  existingSecret: gateflow-grafana-admin
+  userKey: admin-user
+  passwordKey: admin-password
+grafana.ini:
+  analytics:
+    reporting_enabled: false
+    check_for_updates: false
+  users:
+    allow_sign_up: false
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: FlowGate Prometheus
+        uid: gateflow-prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus-server.monitoring.svc.cluster.local
+        isDefault: true
+        editable: false
+        jsonData:
+          timeInterval: 10s
+          httpMethod: POST
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: gateflow
+        orgId: 1
+        folder: FlowGate
+        type: file
+        disableDeletion: false
+        allowUiUpdates: false
+        updateIntervalSeconds: 10
+        options:
+          path: /var/lib/grafana/dashboards/gateflow
+dashboardsConfigMaps:
+  gateflow: gf-dashboard

@@ -1,0 +1,825 @@
+{
+  "id": null,
+  "uid": "gateflow-load-scaling",
+  "title": "FlowGate · Load and Scaling",
+  "tags": [
+    "gateflow",
+    "loadtest",
+    "scaling"
+  ],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "10s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "run",
+        "label": "Run",
+        "type": "textbox",
+        "current": {
+          "text": "unrecorded",
+          "value": "unrecorded"
+        },
+        "query": "unrecorded",
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "name": "profile",
+        "label": "Profile",
+        "type": "textbox",
+        "current": {
+          "text": "mock-load",
+          "value": "mock-load"
+        },
+        "query": "mock-load",
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "name": "config",
+        "label": "Configuration",
+        "type": "textbox",
+        "current": {
+          "text": "record SHA / values hash",
+          "value": "record SHA / values hash"
+        },
+        "query": "record SHA / values hash",
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "name": "duration",
+        "label": "Mean duration D (s)",
+        "type": "textbox",
+        "current": {
+          "text": "20",
+          "value": "20"
+        },
+        "query": "20",
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "textbox",
+        "current": {
+          "text": "gateflow",
+          "value": "gateflow"
+        },
+        "query": "gateflow",
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "name": "release",
+        "label": "Release",
+        "type": "textbox",
+        "current": {
+          "text": "gf",
+          "value": "gf"
+        },
+        "query": "gf",
+        "hide": 0,
+        "skipUrlSync": false
+      },
+      {
+        "name": "job",
+        "type": "constant",
+        "query": "gateflow-gateway",
+        "current": {
+          "text": "gateflow-gateway",
+          "value": "gateflow-gateway"
+        },
+        "hide": 2
+      },
+      {
+        "name": "route",
+        "label": "Route",
+        "type": "custom",
+        "query": "/v1/messages,/v1/responses",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "options": [
+          {
+            "text": "/v1/messages",
+            "value": "/v1/messages",
+            "selected": false
+          },
+          {
+            "text": "/v1/responses",
+            "value": "/v1/responses",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "FlowGate · load and scaling",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 4
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Run:** ${run} · **Profile:** ${profile} · **Configuration:** ${config} · **D:** ${duration}s\n\nSelect the recorded run time range. Run/profile/config are experiment notes, not metric labels or data filters. Rates and percentiles use the shared dashboard time range. Gaps mean unavailable data. k6 remains authoritative for scheduled arrivals, client TTFB and formal completion; the ledger for money."
+      }
+    },
+    {
+      "id": 2,
+      "title": "Terminal request throughput",
+      "type": "timeseries",
+      "description": "One terminal result per gateway request, including streamed errors after HTTP 200.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gateflow-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(gateflow_http_requests_total{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\"}[$__rate_interval]))",
+          "legendFormat": "{{result}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Active requests and eligible demand",
+      "type": "timeseries",
+      "description": "Active includes synchronous settlement. D is measured mean request duration for this workload. These are demand observations; KEDA uses its own guarded queries.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gateflow-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(gateflow_gateway_active_admitted_requests{job=\"$job\",namespace=\"$namespace\"})",
+          "legendFormat": "active admitted",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(gateflow_gateway_eligible_arrivals_total{job=\"$job\",namespace=\"$namespace\"}[$__rate_interval])) * $duration",
+          "legendFormat": "eligible arrivals × D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Gateway replicas",
+      "type": "timeseries",
+      "description": "Desired and available come from kube-state-metrics. Scraped targets include draining Pods and are not readiness.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gateflow-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kube_deployment_spec_replicas{namespace=\"$namespace\",deployment=\"$release-gateway\"}",
+          "legendFormat": "desired",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "kube_deployment_status_replicas_available{namespace=\"$namespace\",deployment=\"$release-gateway\"}",
+          "legendFormat": "available",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        },
+        {
+          "refId": "C",
+          "expr": "sum(up{job=\"$job\",namespace=\"$namespace\"})",
+          "legendFormat": "successfully scraped gateway targets",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Refusals and dependency errors",
+      "type": "timeseries",
+      "description": "Result counters distinguish admission refusals and dependency errors. No status-code labels exist; do not infer individual HTTP 429/503/529 counts here.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gateflow-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(gateflow_http_requests_total{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\",result=~\"tenant_limited|capacity_rejected|authentication_denied|permission_denied|insufficient_balance|dependency_error|invalid_request|internal_error\"}[$__rate_interval]))",
+          "legendFormat": "{{result}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "First model output latency",
+      "type": "timeseries",
+      "description": "Histograms are combined across replicas before calculating quantiles. Only calls with a first output are observed. This is server first-output time, not paired client added latency. The highest finite bucket is 10 s: values at 10 s mean ≥ 10 s (bucket ceiling), not a measured 10 s. The right axis shows the share of first outputs above that ceiling.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gateflow-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(gateflow_gateway_first_output_seconds_bucket{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\"}[$__rate_interval])))",
+          "legendFormat": "p50",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(gateflow_gateway_first_output_seconds_bucket{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(gateflow_gateway_first_output_seconds_bucket{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\"}[$__rate_interval])))",
+          "legendFormat": "p99",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        },
+        {
+          "refId": "D",
+          "expr": "1 - sum(rate(gateflow_gateway_first_output_seconds_bucket{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\",le=\"10\"}[$__rate_interval])) / sum(rate(gateflow_gateway_first_output_seconds_count{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\"}[$__rate_interval]))",
+          "legendFormat": "share above 10 s ceiling",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Request duration",
+      "type": "timeseries",
+      "description": "From gateway observation after body validation through settlement; includes all results. Above 10 s the buckets are coarse (10, 30, 60, 90, 120 s), so a p95 between them is interpolated, not measured.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gateflow-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(gateflow_http_request_duration_seconds_bucket{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Completed share of observed terminal requests",
+      "type": "timeseries",
+      "description": "Denominator is observed terminal requests, including invalid or refused ones. This is not the proposal completion SLO over scheduled valid requests. Idle is undefined, not 100%.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gateflow-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum(rate(gateflow_http_requests_total{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\",result=\"completed\"}[$__rate_interval])) / sum(rate(gateflow_http_requests_total{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\"}[$__rate_interval]))",
+          "legendFormat": "completed share",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Stream failures and cancellations",
+      "type": "timeseries",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gateflow-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(gateflow_http_requests_total{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\",result=~\"not_dispatched|upstream_error|client_cancelled|interrupted\"}[$__rate_interval]))",
+          "legendFormat": "{{result}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Application data rate",
+      "type": "timeseries",
+      "description": "Application bytes only; excludes transport and TLS overhead.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gateflow-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(gateflow_http_request_bytes_total{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\"}[$__rate_interval]))",
+          "legendFormat": "request bytes",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(gateflow_http_response_bytes_total{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\"}[$__rate_interval]))",
+          "legendFormat": "response bytes",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Scrape health",
+      "type": "timeseries",
+      "description": "Missing series remain absent. This chart is not a substitute for KEDA coverage guards.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "gateflow-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 36,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(up{job=\"$job\",namespace=\"$namespace\"})",
+          "legendFormat": "all discovered targets up",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "count(up{job=\"$job\",namespace=\"$namespace\"})",
+          "legendFormat": "discovered targets",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        },
+        {
+          "refId": "C",
+          "expr": "max(time() - timestamp(up{job=\"$job\",namespace=\"$namespace\"}))",
+          "legendFormat": "oldest sample age (s)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Evidence boundaries",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 24,
+        "h": 4
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Keep the k6 JSON, version/config record, UTC run interval and ledger checks with every experiment. A first-output percentile excludes failures without output. Grafana cannot prove exactly-once settlement, tenant isolation, CPU limits or recovery. Database pools, tenant counters, outbox/SQS and resource telemetry are not implemented by #69 and are not shown as measured values here. The replica panel reads the kube-state-metrics job of monitoring/prometheus-values.yaml."
+      }
+    }
+  ]
+}

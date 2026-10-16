@@ -65,6 +65,87 @@ helm --kubeconfig .local/kubeconfig --kube-context kind-gateflow71 uninstall gf 
 kind delete cluster --name gateflow71 --kubeconfig .local/kubeconfig
 ```
 
+## Load and scaling dashboard (#74)
+
+The opt-in `dashboard.enabled` value provisions the dashboard JSON from
+`gateflow/files/gateflow-dashboard.json` as a ConfigMap in the application release
+namespace. Grafana is a separate release, pinned to chart 14.0.0 / Grafana 13.2.4
+in `monitoring/grafana-version.json`. It reads the Prometheus release of
+[Installing Prometheus and KEDA](#installing-prometheus-and-keda) and never changes
+it. It has no public Ingress, no RBAC objects and no service account token, uses a
+random password in an existing Kubernetes Secret and stores its disposable SQLite
+data in an emptyDir. Export experiment data before daily teardown. Installing this
+dashboard does not install KEDA or alter its rules.
+Grafana requests 256 MiB and has a 1 GiB limit with a 768 MiB Go soft memory limit;
+the initial 512 MiB limit was insufficient during the real dashboard rehearsal.
+
+Install in this order:
+
+1. Prometheus with `monitoring/prometheus-values.yaml` and KEDA, as in
+   [Installing Prometheus and KEDA](#installing-prometheus-and-keda) (on kind,
+   `rehearse.py --existing-cluster --autoscale-check` installs both);
+2. the application chart with `dashboard.enabled=true`, from a checkout that
+   includes the same autoscaling implementation as the installed release;
+3. `dashboard.py`, then a localhost port-forward:
+
+```text
+helm --kubeconfig .local/kubeconfig --kube-context kind-gateflow74 upgrade gf deploy/helm/gateflow -n gateflow --reuse-values --set dashboard.enabled=true --wait --wait-for-jobs --timeout 6m
+python deploy/helm/dashboard.py --kubeconfig .local/kubeconfig --kube-context kind-gateflow74
+kubectl --kubeconfig .local/kubeconfig --context kind-gateflow74 -n gateflow port-forward service/grafana 13000:80
+```
+
+`dashboard.py` stops before installing Grafana unless the `<release>-dashboard`
+ConfigMap matches this checkout, the `prometheus` release in `monitoring` is
+deployed, and its `prometheus-server` and `prometheus-kube-state-metrics`
+Deployments each have an available replica. Desired/available Deployment replicas
+come from the `kube-state-metrics` scrape job of `prometheus-values.yaml`; the
+number of scraped gateway targets is shown separately because it includes draining
+Pods. The Grafana datasource URL assumes release `prometheus` in namespace
+`monitoring`; review it when changing those names.
+
+`rehearse.py --autoscale-check` upgrades `gf` from values-kind.yaml without
+`--reuse-values`, which turns `dashboard.enabled` off and deletes the dashboard
+ConfigMap. Repeat steps 2 and 3 after it. `dashboard.py` deliberately does not
+upgrade the application release itself: that would run the chart's bootstrap and
+seed hooks and decide the release's other values from a dashboard helper.
+The Grafana release is installed in the application namespace, so its mounted
+dashboard ConfigMap is in the same namespace. A non-default application release
+name is supported by `dashboard.py --release`.
+
+Open `http://127.0.0.1:13000/d/gateflow-load-scaling`. Read `admin-user` and
+`admin-password` from the `gateflow-grafana-admin` Secret in a local terminal or
+Kubernetes client, decode the base64 values and sign in. Never publish those values,
+the kubeconfig, credentials file or seed logs. The installer preserves an existing
+admin Secret; if it lacks `admin-user` or `admin-password`, the installer stops
+without printing it. Add the missing key, or delete the Secret so a new random one
+is created. Dashboard JSON is read-only in Grafana; update it through Git.
+
+For kind acceptance, run `loadtest/messages.js` from #73 against the same cluster
+through a localhost ingress port-forward. Record the exact head, Helm values,
+versions, UTC start/end, k6 output and `summarize.py` result. A short demonstration
+can set `LEVELS=5`, `WARMUP_S=10`, `HOLD_S=30`, `TENANTS=10`, `PAIRED=0`; it verifies
+dashboard wiring, not capacity. Keep `--no-usage-report`. Set the dashboard time
+range to that run and take a screenshot showing nonempty throughput, latency,
+demand and replica panels. Check `/api/health`, datasource health and the dashboard
+API as supporting evidence; an API response does not replace the screenshot.
+
+The Run, Profile and Configuration text boxes are experiment notes, not labels
+that filter Prometheus data. Select the matching UTC interval, namespace and
+application release. D is the measured mean workload duration; the default 20 s
+is provisional. The dashboard aggregates histogram buckets across Pods before
+calculating quantiles. The highest finite first-output bucket is 10 s, so a p95 or
+p99 at 10 s means at least 10 s; the panel also shows the share of first outputs
+above 10 s. Request duration buckets above 10 s are 30, 60, 90 and 120 s, so its p95
+there is coarse. Missing samples remain missing, and idle completion is
+undefined. Its completed share uses observed terminal requests and is not the
+proposal's completion SLO over scheduled valid arrivals. k6 supplies scheduled
+load, client latency and formal completion; ledger queries supply money evidence.
+Unimplemented pool, outbox, tenant and resource metrics are not shown as zeros.
+
+Recovery: uninstall only the `grafana` release and remove the dashboard override
+from the application release. Prometheus and KEDA are left as they are. The local admin Secret can be retained for a repeat
+run. For the disposable kind test, save evidence and delete only its named cluster.
+
 ## Chart inputs and Jobs
 
 Set imageTag to a published full commit SHA or set services.<name>.digest to pin

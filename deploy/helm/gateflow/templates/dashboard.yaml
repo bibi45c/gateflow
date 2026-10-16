@@ -1,0 +1,4 @@
+{{- if .Values.dashboard.enabled }}
+---
+{{ dict "apiVersion" "v1" "kind" "ConfigMap" "metadata" (dict "name" (printf "%s-dashboard" .Release.Name) "labels" (include "gf.labels" . | fromJson)) "data" (dict "gateflow.json" (.Files.Get "files/gateflow-dashboard.json")) | toJson }}
+{{- end }}
