@@ -44,11 +44,12 @@ def merge(base, overlay):
 class FakeCluster:
     """Stands in for helm, kubectl, git and the smoke suite."""
 
-    def __init__(self, digests=None, smoke_exit=0, also_change=None, upgrade_exit=0):
+    def __init__(self, digests=None, smoke_exit=0, also_change=None, upgrade_exit=0, get_values_stderr=None):
         self.values = {'imageTag': TAG, 'secretName': 'gateflow-runtime', 'services': {
             name: {'image': f'ghcr.io/bibi45c/gateflow-{name}', 'digest': (digests or {}).get(name, '')}
             for name in deploy.SERVICES}}
         self.revision, self.smoke_exit, self.also_change, self.upgrade_exit = 3, smoke_exit, also_change, upgrade_exit
+        self.get_values_stderr = get_values_stderr
         self.images = self.render()
         self.commands, self.pins, self.smoke_env = [], None, None
 
@@ -62,6 +63,8 @@ class FakeCluster:
         if command[0] == 'git':
             return done('abc123\n')
         if command[0] == 'helm' and 'get' in command:
+            if self.get_values_stderr:
+                return subprocess.CompletedProcess(command, 1, '', self.get_values_stderr)
             return done(json.dumps(self.values))
         if command[0] == 'helm' and 'status' in command:
             return done(json.dumps({'version': self.revision}))
@@ -183,8 +186,55 @@ class DeployTests(unittest.TestCase):
         # Deployed values are not copied into the record, nor is the kubeconfig or its path.
         for secret in [KUBE_SECRET, ENV_SECRET, 'gateflow-runtime', json.dumps(str(self.kubeconfig))[1:-1]]:
             self.assertNotIn(secret, text)
-        self.assertEqual(record['values_files'], [{'path': str(values),
+        self.assertEqual(record['values_files'], [{'path': 'values-aws.json', 'outside_repo': True,
                                                    'sha256': hashlib.sha256(values.read_bytes()).hexdigest()}])
+
+    def assert_no_local_paths(self, record, paths):
+        text = (self.dir/'record.json').read_text(encoding='utf-8')
+        for path in paths:
+            for form in {str(path), path.as_posix(), json.dumps(str(path))[1:-1]}:
+                with self.subTest(path=form):
+                    self.assertNotIn(form, text)
+                    self.assertNotIn(form, json.dumps(record, ensure_ascii=False))
+
+    def test_failed_helm_keeps_kubeconfig_and_home_out_of_the_record(self):
+        home, repo = Path.home(), HELM.parents[1]
+        stderr = (f'Error: Kubernetes cluster unreachable: open {self.kubeconfig}: access denied\n'
+                  f'cache {home/".kube"/"cache"} and chart {repo/"deploy"/"helm"/"gateflow"}\n')
+        cluster = FakeCluster(get_values_stderr=stderr)
+        code, record = self.run_deploy(cluster, '--service', 'gateway', '--digest', NEW, '--skip-smoke')
+        self.assertEqual(code, 1)
+        failed = next(c for c in cluster.commands if 'get' in c)
+        self.assertIn(str(self.kubeconfig), failed)
+        self.assertTrue(record['error'].startswith('helm get exited with 1: Error: Kubernetes cluster unreachable'),
+                        record['error'])
+        self.assertIn('<kubeconfig>', record['error'])
+        self.assertIn('<home>', record['error'])
+        self.assertNotIn('--kubeconfig', record['error'])
+        self.assert_no_local_paths(record, [self.kubeconfig, self.kubeconfig.resolve(), home, repo])
+
+    def test_record_paths_inside_the_repository_are_relative(self):
+        values = HELM/'values-aws.yaml'
+        code, record = self.run_deploy(FakeCluster(), '--service', 'gateway', '--digest', NEW, '-f', str(values),
+                                       '--skip-smoke')
+        self.assertEqual(code, 0, record['error'])
+        self.assertEqual(set(record), RECORD_KEYS)
+        self.assertEqual(record['chart'], 'deploy/helm/gateflow')
+        self.assertEqual(record['values_files'], [{'path': 'deploy/helm/values-aws.yaml',
+                                                   'sha256': hashlib.sha256(values.read_bytes()).hexdigest()}])
+        self.assert_no_local_paths(record, [self.kubeconfig, Path.home(), HELM.parents[1]])
+
+    def test_record_paths_outside_the_repository_keep_only_the_file_name(self):
+        values = self.dir/'private'/'values-mine.yaml'
+        values.parent.mkdir()
+        values.write_text('environment: mine\n', encoding='utf-8')
+        code, record = self.run_deploy(FakeCluster(), '--service', 'gateway', '--digest', NEW, '-f', str(values),
+                                       '--chart', str(self.dir/'chart'), '--skip-smoke')
+        self.assertEqual(code, 0, record['error'])
+        self.assertEqual(record['values_files'], [{'path': 'values-mine.yaml', 'outside_repo': True,
+                                                   'sha256': hashlib.sha256(values.read_bytes()).hexdigest()}])
+        self.assertEqual((record['chart'], record['chart_outside_repo']), ('chart', True))
+        self.assert_no_local_paths(record, [self.dir, values, Path.home(), HELM.parents[1]])
 
     def test_other_service_change_fails(self):
         code, record = self.run_deploy(FakeCluster(also_change='access'), '--service', 'gateway', '--digest', NEW,
@@ -225,7 +275,7 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(code, 0, record['error'])
         self.assertEqual((record['operation'], record['service'], record['previous_digest'], record['new_digest']),
                          ('rollback', 'gateway', NEW, OLD))
-        self.assertEqual(record['rollback_from'], str(self.dir/'deploy.json'))
+        self.assertEqual((record['rollback_from'], record['rollback_from_outside_repo']), ('deploy.json', True))
         self.assertEqual(cluster.pins['services']['gateway'], {'digest': OLD})
         self.assertEqual(record['images_after'], before)
 

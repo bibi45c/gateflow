@@ -178,8 +178,16 @@ read it), release, namespace, context, service, previous_digest and new_digest,
 the chart, each -f file with its SHA-256, the image pins, the four images before
 and after, the changed services, the Helm revisions before and after, the smoke
 result and exit code, verified and any error. It does not copy the deployed
-values, Secret values, the kubeconfig or its path. Review it, then paste it into
-the issue as a fenced json block.
+values or Secret values. Paths in it are relative to the repository root, such
+as `deploy/helm/values-aws.yaml`; a chart, -f file or --rollback-from record
+outside the repository is recorded by file name only and flagged with
+`outside_repo` (`chart_outside_repo`, `rollback_from_outside_repo`). A failed
+helm or kubectl call is recorded as the command and subcommand, its exit code and
+the last lines of its stderr, never the full command line. Before the record is
+written, the kubeconfig path, your home directory and the repository's absolute
+path are replaced with `<kubeconfig>`, `<home>` and `<repo>` wherever they still
+appear. Still read the record before pasting it into the issue as a fenced json
+block, in case a tool printed some other local detail.
 
 To roll back, deploy the previous digest with the same command, or name the
 earlier record:

@@ -64,10 +64,67 @@ def parse_args(argv):
     return args
 
 
+def repo_path(path):
+    """Repository-relative POSIX path, or only the file name and True for a path outside the repository."""
+    resolved = Path(path).resolve()
+    try:
+        return resolved.relative_to(ROOT).as_posix(), False
+    except ValueError:
+        return resolved.name, True
+
+
+def private_paths(kubeconfig=None):
+    """Local paths that must not reach a record, longest first, with their placeholders."""
+    paths = {}
+    named = [(Path.home(), '<home>'), (ROOT, '<repo>')]
+    if kubeconfig is not None:
+        named.append((Path(kubeconfig).resolve(), '<kubeconfig>'))
+        given = str(kubeconfig)
+        if os.sep in given or (os.altsep and os.altsep in given):
+            paths[given] = '<kubeconfig>'
+    for path, label in named:
+        if len(path.parts) > 1:  # never replace a bare drive or root
+            paths[str(path)] = paths[path.as_posix()] = label
+    return sorted(paths.items(), key=lambda item: -len(item[0]))
+
+
+def scrub(text, paths):
+    flags = re.IGNORECASE if os.name == 'nt' else 0
+    for path, label in paths:
+        # repr() of a Windows path, as in OSError messages, doubles its backslashes.
+        for form in {path, path.replace('\\', '\\\\')}:
+            text = re.sub(re.escape(form) + r'(?![\w.-])', label, text, flags=flags)
+    return text
+
+
+def scrub_record(value, paths):
+    if isinstance(value, str):
+        return scrub(value, paths)
+    if isinstance(value, list):
+        return [scrub_record(item, paths) for item in value]
+    if isinstance(value, dict):
+        return {key: scrub_record(item, paths) for key, item in value.items()}
+    return value
+
+
+def command_name(command):
+    """Program and subcommand only; the other arguments can carry local paths."""
+    words = iter(command[1:])
+    for word in words:
+        if word.startswith('-'):
+            if '=' not in word:
+                next(words, None)  # every option before the subcommand takes a value
+            continue
+        return f'{command[0]} {word}'
+    return command[0]
+
+
 def capture(runner, command):
     result = runner(command, capture_output=True, text=True, encoding='utf-8')
     if result.returncode:
-        raise DeployError(f"{' '.join(command)} failed: {result.stderr.strip()}")
+        kubeconfig = command[command.index('--kubeconfig')+1] if '--kubeconfig' in command else None
+        stderr = scrub('\n'.join(result.stderr.strip().splitlines()[-5:]), private_paths(kubeconfig))
+        raise DeployError(f'{command_name(command)} exited with {result.returncode}: {stderr}')
     return result.stdout
 
 
@@ -140,7 +197,26 @@ def default_record(service, stamp):
 
 
 def values_file(path):
-    return {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    name, outside = repo_path(path)
+    entry = {'path': name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    if outside:
+        entry['outside_repo'] = True
+    return entry
+
+
+def record_path(record, key, path):
+    """Store path under key as repo_path does, flagging key_outside_repo for a path outside the repository."""
+    record[key], outside = repo_path(path)
+    if outside:
+        record[f'{key}_outside_repo'] = True
+
+
+def error_text(error):
+    if isinstance(error, DeployError):
+        return str(error)
+    if isinstance(error, OSError) and error.filename:
+        return f'{type(error).__name__}: {error.strerror}: {repo_path(error.filename)[0]}'
+    return f'{type(error).__name__}: {error}'
 
 
 def deploy(args, runner, stamp):
@@ -151,12 +227,15 @@ def deploy(args, runner, stamp):
               'operation': 'rollback' if args.rollback_from else 'deploy',
               'commit': head_commit(runner), 'release': args.release, 'namespace': args.namespace,
               'context': args.kube_context, 'service': args.service, 'previous_digest': None, 'new_digest': None,
-              'rollback_from': str(args.rollback_from) if args.rollback_from else None,
-              'chart': str(args.chart), 'values_files': [], 'image_pins': None,
+              'rollback_from': None, 'chart': None, 'values_files': [], 'image_pins': None,
               'images_before': None, 'images_after': None, 'changed_services': None,
               'helm_revision_before': None, 'helm_revision': None,
               'smoke': {'result': 'not-run', 'exit_code': None, 'host': args.smoke_host, 'port': args.smoke_port},
               'verified': False, 'error': None}
+    # The record is posted publicly, so local paths are kept repository-relative.
+    record_path(record, 'chart', args.chart)
+    if args.rollback_from:
+        record_path(record, 'rollback_from', args.rollback_from)
     try:
         record['values_files'] = [values_file(path) for path in args.values]
         service, new_digest = args.service, args.digest
@@ -210,17 +289,19 @@ def deploy(args, runner, stamp):
             raise DeployError(f'smoke exited with {smoke.returncode}')
         record['verified'] = True
     except (DeployError, OSError, ValueError, KeyError) as error:
-        record['error'] = f'{type(error).__name__}: {error}' if not isinstance(error, DeployError) else str(error)
+        record['error'] = error_text(error)
     return record
 
 
 def main(argv=None, runner=subprocess.run, now=None):
     args = parse_args(argv)
     stamp = now or datetime.now(timezone.utc)
-    record = deploy(args, runner, stamp)
+    # Last guard before writing: replace any kubeconfig, home or repository path still in the record.
+    paths = private_paths(args.kubeconfig)
+    record = scrub_record(deploy(args, runner, stamp), paths)
     path = args.record or default_record(record['service'] or 'unknown', stamp)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, indent=2) + '\n', encoding='utf-8')
+    path.write_text(scrub(json.dumps(record, indent=2), paths) + '\n', encoding='utf-8')
     print(f'Deployment record: {path}')
     if record['error']:
         print(f"FAIL {record['operation']} {record['service']}: {record['error']}", file=sys.stderr)
