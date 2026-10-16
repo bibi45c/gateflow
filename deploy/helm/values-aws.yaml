@@ -6,12 +6,15 @@ environment: aws
 # or a separate values file that is not committed (for example under .local/).
 services:
   gateway:
-    # One vCPU and 2 GiB per gateway Pod (proposal 5.6).
+    # One vCPU and 2 GiB per gateway Pod (proposal 5.6). The CPU limit keeps a Pod
+    # from borrowing idle node CPU, so replica comparisons hold; frozen from before
+    # the single-Pod calibration, and every later run reuses it.
     resources:
       requests:
         cpu: "1"
         memory: 2Gi
       limits:
+        cpu: "1"
         memory: 2Gi
 # KEDA and Prometheus must be installed first; see README.md, Autoscaling.
 autoscaling:

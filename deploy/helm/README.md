@@ -106,8 +106,11 @@ by the smoke suite. Use a private seed secret for a real deployment.
 
 ## AWS handoff (operator only)
 
-Use values-aws.yaml and the existing RDS PostgreSQL 17 endpoint. Both service URLs
-must explicitly contain sslmode=require; bootstrap PGSSLMODE must be require.
+Use values-aws.yaml and the existing RDS PostgreSQL 17 endpoint. It gives each
+gateway Pod 1 vCPU as both request and limit, and 2 GiB (proposal 5.6), so a Pod
+cannot borrow idle node CPU; keep it unchanged from the single-Pod calibration on.
+Both service URLs must explicitly contain sslmode=require; bootstrap PGSSLMODE must
+be require.
 The cloud workload init checks verify URL policy and an actually encrypted session
 before application startup. The kind-only fixture uses sslmode=disable against its
 local database and is never installed in AWS.
@@ -200,11 +203,24 @@ capacity gate yet, so eligible arrivals equal admitted ones.
 `monitoring/versions.json` pins both charts: prometheus-community `prometheus`
 27.11.0 and kedacore `keda` 2.20.2. [KEDA 2.20](https://keda.sh/docs/2.20/operate/cluster/)
 lists Kubernetes 1.33-1.35 as tested, which covers kind 1.35.8 and EKS 1.35 (#30).
-Prometheus runs only its server, on an `emptyDir` (Terraform installs no EBS CSI
-driver, so a PVC would stay Pending), keeps 6 hours of data and scrapes the gateway
-Pods of namespace `gateflow` every 10 seconds; edit the namespace in
-`monitoring/prometheus-values.yaml` if the release uses another. Both run on
-`gateflow.io/workload=services` nodes.
+Prometheus runs its server on an `emptyDir` (Terraform installs no EBS CSI driver,
+so a PVC would stay Pending), keeps 6 hours of data and scrapes every 10 seconds.
+Its scrape jobs replace the chart's defaults:
+
+| Job | Targets | Used for |
+|---|---|---|
+| `gateflow-gateway` | gateway Pods, port `http` | the two KEDA triggers (`autoscaling.job`; keep its name) and gateway latency |
+| `gateflow-access`, `gateflow-metering` | access and metering Pods, port `http` | their request rates and latency; metering latency is the load test's proxy for database contention |
+| `kubernetes-cadvisor` | each node's kubelet through the API server proxy | per-Pod CPU, working-set memory and network; only those four `container_*` series of namespace `gateflow` are kept |
+| `kube-state-metrics` | the minimal kube-state-metrics subchart | `kube_deployment_*`, `kube_horizontalpodautoscaler_*` and `kube_pod_*` (restarts, limits) of namespace `gateflow` |
+
+No target label is named `service`, so the services' own `service` label is kept;
+the kube-state-metrics job uses `honor_labels` to keep its `namespace` and
+`deployment` labels. The cAdvisor job relies on the chart's ClusterRole granting
+`nodes/proxy`. Alertmanager, node-exporter and Pushgateway stay off. Edit the
+`gateflow` namespace in `monitoring/prometheus-values.yaml` (the Pod jobs, the
+cAdvisor filter and `kube-state-metrics.namespaces`) if the release uses another.
+All of it, and KEDA, run on `gateflow.io/workload=services` nodes.
 
 Install in this order, Prometheus and KEDA before the FlowGate chart, because the
 ScaledObject kind comes from KEDA's CRDs. On EKS, with the context from #30
