@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 HELM = Path(__file__).resolve().parents[1]
 
@@ -31,6 +32,34 @@ class RehearsalTests(unittest.TestCase):
         env=module.smoke_environment({'ACCESS_SEED_SECRET':'unrelated-compose-secret'},Path('local-config'))
         self.assertEqual(env['ACCESS_SEED_SECRET'],'seed-secret-local-only')
         self.assertEqual(env['KUBECONFIG'],'local-config')
+
+    def test_install_smoke_uses_the_fixture_pod_and_upgrade_smoke_the_runtime_secret(self):
+        module=load_rehearse()
+        install=module.smoke_command('gateflow71ci','gateflow',False)
+        upgrade=module.smoke_command('gateflow71ci','gateflow',True)
+        for command in (install,upgrade):
+            self.assertTrue(command[1].endswith('smoke.py'))
+            self.assertEqual(command[2:6],['--kube-context','kind-gateflow71ci','--namespace','gateflow'])
+            self.assertEqual(command[-2:],['--port','18071'])
+        self.assertEqual(install[6:8],['--postgres-pod','postgres-0'])
+        self.assertNotIn('--db-secret',install)
+        self.assertEqual(upgrade[6:8],['--db-secret','gateflow-runtime'])
+        self.assertNotIn('--postgres-pod',upgrade)
+
+    def test_main_runs_each_smoke_mode_once_across_install_and_upgrade(self):
+        module=load_rehearse()
+        with tempfile.TemporaryDirectory() as directory:
+            config=Path(directory)/'kubeconfig'
+            smokes=[]
+            def run(command,**kwargs):
+                if command[1:2] and command[1].endswith('smoke.py'):
+                    smokes.append(command)
+            with mock.patch.object(module,'run',run),mock.patch.object(module,'apply'), \
+                    mock.patch.object(module,'ingress_forward',lambda kube:contextlib.nullcontext()):
+                module.main(['--cluster','gateflow71ci','--kubeconfig',str(config)])
+                module.main(['--cluster','gateflow71ci','--kubeconfig',str(config),'--existing-cluster'])
+        self.assertEqual(smokes,[module.smoke_command('gateflow71ci','gateflow',False),
+                                 module.smoke_command('gateflow71ci','gateflow',True)])
 
     def test_bootstrap_runs_as_non_superuser_database_owner(self):
         module=load_rehearse()

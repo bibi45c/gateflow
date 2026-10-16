@@ -30,7 +30,8 @@ labels service and load-generator workers and taints the generator, creates
 random local-only database/token Secrets, installs disposable PostgreSQL 17 and
 ingress, then runs Helm and the existing full smoke suite. Requests go through
 port-forwarded ingress on 127.0.0.1:18071; ledger/reservation reads use kubectl exec
-inside the local PostgreSQL Pod. /metrics must return 404 through ingress.
+inside the local PostgreSQL Pod (with --existing-cluster, inside a short-lived
+query Pod, as on EKS). /metrics must return 404 through ingress.
 Credentials are persisted next to the supplied kubeconfig for repeat runs; put it
 in an ignored folder such as .local. Do not publish the kubeconfig or credentials.
 The fixture has no persistent volume; deleting its Pod loses its database.
@@ -146,7 +147,7 @@ and no workflow deploys to AWS. Pass the kubeconfig and context explicitly; the
 script never uses the default kubeconfig. Pass values-aws.yaml again:
 
 ```text
-python deploy/helm/deploy.py --kubeconfig <path> --kube-context <eks-context> -f deploy/helm/values-aws.yaml --service gateway --digest sha256:<64 hex> --smoke-host <alb-dns-name> --smoke-port 80
+python deploy/helm/deploy.py --kubeconfig <path> --kube-context <eks-context> -f deploy/helm/values-aws.yaml --service gateway --digest sha256:<64 hex> --smoke-host <alb-dns-name> --smoke-port 80 --smoke-db-secret gateflow-runtime
 ```
 
 The script:
@@ -164,12 +165,22 @@ The script:
 
 For the ALB, set --smoke-host to the Ingress address shown by kubectl get ingress
 gf and --smoke-port to 80. Export the private seed secret as ACCESS_SEED_SECRET in
-the shell first; never put it on the command line. The smoke suite's ledger and
-reservation checks read through the kind PostgreSQL fixture Pod
-(--smoke-postgres-pod) or Docker Compose. Neither exists on EKS, so against the
-ALB those checks fail and the record says failed. Report that result as it is.
---skip-smoke records smoke as skipped and verified as false; a skipped record is
-not evidence that the deployment works.
+the shell first; never put it on the command line. EKS has no database Pod, so
+pass --smoke-db-secret gateflow-runtime for the smoke suite's ledger and
+reservation checks. The smoke suite then creates a short-lived query Pod
+(`gateflow-smoke-db-<random>`, image postgres:17) on a gateflow.io/workload=services
+node, which the RDS security group admits. Kubernetes gives it METERING_DATABASE_URL
+from that Secret (another key with --smoke-db-secret-key) as DATABASE_URL, so it
+reads accounting.ledger_entries and accounting.reservations as the metering role,
+which owns them, with the URL's sslmode=require; no superuser or new role is
+needed. The URL never reaches the operator's machine, the command line or the
+logs, and database URLs in kubectl and psql errors are redacted. The Pod runs as a
+non-root user without a service account token, sleeps at most 15 minutes, and is
+deleted when the smoke suite ends, whether it passed, failed or was interrupted.
+--smoke-db-secret and --smoke-postgres-pod (the kind PostgreSQL fixture Pod) are
+mutually exclusive. The record holds only the Secret name and key under
+smoke.db_secret, never the URL. --skip-smoke records smoke as skipped and verified
+as false; a skipped record is not evidence that the deployment works.
 
 The record is JSON, written to `.local/deployments/<UTC time>-<service>.json`
 (ignored by Git) unless --record names another path. It holds the time,
@@ -193,7 +204,7 @@ To roll back, deploy the previous digest with the same command, or name the
 earlier record:
 
 ```text
-python deploy/helm/deploy.py --kubeconfig <path> --kube-context <eks-context> -f deploy/helm/values-aws.yaml --rollback-from .local/deployments/<record>.json --smoke-host <alb-dns-name> --smoke-port 80
+python deploy/helm/deploy.py --kubeconfig <path> --kube-context <eks-context> -f deploy/helm/values-aws.yaml --rollback-from .local/deployments/<record>.json --smoke-host <alb-dns-name> --smoke-port 80 --smoke-db-secret gateflow-runtime
 ```
 
 --rollback-from takes the service and previous_digest from the record. A null
@@ -216,3 +227,7 @@ CI rehearses this on kind with rehearse.py --deploy-check: it moves the gateway 
 an older published digest, runs smoke, rolls back from the record, runs smoke
 again and checks that only the gateway's image changed in both records. Its
 records are written next to the rehearsal kubeconfig, in .local/deployments.
+On kind, the fresh install's smoke reads the ledger through the PostgreSQL fixture
+Pod, and the --existing-cluster upgrade's smoke through a query Pod with
+--db-secret gateflow-runtime, using the fixture's sslmode=disable URL as it is, so
+CI runs both modes.
