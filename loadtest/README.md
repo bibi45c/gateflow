@@ -10,6 +10,10 @@ Scheduled load on the gateway, following
 | `kube_run.py` | Runs `messages.js` in a Pod inside the cluster, copies the output back and runs `summarize.py` |
 | `test_summarize.py` | Unit tests of `summarize.py`; they need neither k6 nor a stack |
 | `test_kube_run.py` | Unit tests of `kube_run.py`; they need neither kubectl nor a cluster |
+| `prom_export.py` | Exports the Prometheus series of a run window through a port-forward |
+| `test_prom_export.py` | Unit tests of `prom_export.py`, with a fake port-forward and Prometheus |
+| `derive.py` | Derives L, C, D and T from the single-Pod calibration repeats |
+| `test_derive.py` | Unit tests of `derive.py`, on run folders built by the tests |
 
 ## Run
 
@@ -173,7 +177,20 @@ UTC time):
 | `run.json`, `exit` | k6's JSON output and exit code |
 | `k6.log` | k6's own output, saved for successful and failed runs alike |
 | `summary.md`, `run.results.json` | the tables printed by `summarize.py` and its JSON |
-| `run-record.json` | time, context, namespace, release, k6 image digest, every setting, repository HEAD, the gateway's replicas and image, the k6 and `summarize.py` exit codes, and the cleanup |
+| `run-record.json` | time, context, namespace, release, k6 image digest, every setting, repository HEAD, the gateway's replicas and image, the k6 and `summarize.py` exit codes, the cleanup, and the run's UTC timeline (below) |
+
+The record's timeline fields are UTC ISO 8601 times with milliseconds:
+
+| Field | Meaning |
+|---|---|
+| `op_start`, `op_end` | when the script started, and when it had deleted the Pod and ConfigMap |
+| `load_start` | k6's time zero: the `gateflow_start` point in `run.json`, written by the first iteration |
+| `plan_end` | `load_start` plus the planned stages (warm-up, ramps, holds), without the graceful stop |
+| `load_end` | the last point k6 wrote, after the graceful stop |
+| `phases` | each phase of the plan, from its `gateflow_plan` point: `phase`, `level_rps`, offsets `start_s` and `end_s`, and UTC `start` and `end` |
+
+They are `null`, with the reason in `timeline_problem`, when `run.json` has no
+`gateflow_start` point or cannot be read; the run itself is still summarized.
 
 The script exits with 1 if the run failed or k6 exited non-zero, 130 after Ctrl-C,
 and otherwise with `summarize.py`'s exit code. To report a run on its issue, paste
@@ -196,6 +213,71 @@ python deploy/helm/rehearse.py --cluster <name> --kubeconfig <kind kubeconfig> -
 It writes to `loadtest/rehearsal/` next to the kubeconfig and fails unless k6 and
 `summarize.py` exit with 0, the results have rows with requests sent, and the Pod and
 ConfigMap were deleted.
+
+## Export the Prometheus series
+
+After each in-cluster run, and before the monitoring stack or the Ingress is
+deleted, export the run's series with `prom_export.py`:
+
+```text
+python loadtest/prom_export.py --kubeconfig <EKS kubeconfig> --kube-context <EKS context> --record .local/loadtest/<name>/run-record.json
+```
+
+It opens `kubectl port-forward svc/prometheus-server <free local port>:80` in the
+`monitoring` namespace (`--service`, `--monitoring-namespace`), runs the fixed
+query list of the report template (Part 0.4) over `load_start` to `load_end` of the
+record plus `--tail-seconds` (default 120), with `--step` (default `15s`), and stops
+the port-forward on every exit. Instead of `--record`, give `--start` and `--end`
+as RFC 3339 times with an offset, and `--out-dir`. If the end of the window is still
+to come, the script prints how long it waits and waits, so the tail samples exist;
+for `auto` runs, raise `--tail-seconds` to cover the scale-down.
+
+Besides the template's queries it exports `access_results` and `metering_results`
+(the `results` rate of those services, by route and result) and the raw counters
+`gateway_duration_sum` and `gateway_duration_count` of gateway `/v1/messages`
+durations, so that D can be recomputed over any hold window. The namespace and
+release in the `cpu_by_pod`, `mem_by_pod`, `net_by_pod`, `replicas` and `hpa_*`
+queries come from the record (`--namespace`, `--release` otherwise).
+
+Each response is written unchanged to `prom/<name>.json` next to the record
+(`--out-dir`), and `prom/index.json` lists each query, the window, the step and the
+number of series and samples it returned. An earlier export is kept unless
+`--overwrite` is given. The script exits with 2 when a query returned no series (the
+others are still written, and the index marks it `empty`), and with 1 on an HTTP,
+connection or port-forward error. Without autoscaling, leave out the HPA queries
+with `--skip hpa_desired --skip hpa_conditions`.
+
+## Derive L, C, D and T
+
+From the single-Pod calibration repeats, each a folder with `run-record.json`,
+`run.results.json` (or `results.json`, as in the data bundle) and the `prom/`
+export, `derive.py` computes the values of the report template (Part 0.3):
+
+```text
+python loadtest/derive.py .local/loadtest/calib-1 .local/loadtest/calib-2 .local/loadtest/calib-3 --out .local/loadtest/calib-derived.json
+```
+
+- Runs that are not valid (an error in the record, a non-zero k6 or `summarize.py`
+  exit code, a non-zero check, or `sent_source` other than `gateflow_sent`) are
+  listed and left out.
+- **L** is the highest hold level such that it and every lower hold level pass in
+  every valid run, a level passing when `completed * 1000 >= 995 * scheduled`; the
+  next level is the first violated one.
+- Over the hold window of L, from the record's `phases` (or the results' offsets
+  after `load_start`): **D** = increase of `gateway_duration_sum` over increase of
+  `gateway_duration_count`, between their first and last samples inside the window,
+  a counter reset counted as a restart from zero; **C** = floor of the mean of the
+  `active` samples inside the window. Across repeats, C is the floor of the median
+  of the per-run C, and D the median of the per-run D. **T** = floor(0.7 × C).
+- It reports the cross-check |C − L × D| ≤ 10% of C, and the k6 `duration_ms.p50`
+  of the same holds next to D. The cross-check is approximate: the gateway's
+  duration includes the work before admission, while `active` counts only admitted
+  requests.
+
+`--level <req/s>` measures C and D over another hold level instead of L. The script
+prints a Markdown summary, writes the JSON to `--out`, and exits with 2 when no run
+is valid or no level passes, with 1 when an input is missing, and otherwise with 0,
+also when the cross-check is off; then record why.
 
 ## Settings
 

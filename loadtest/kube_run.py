@@ -4,12 +4,15 @@ Operator-run. Puts messages.js into a ConfigMap and starts k6 in a Pod on the
 load-generator node, aimed at the gateway Service, so the measurement leaves out the
 ALB, the NAT and the operator's own link. When k6 has finished, its JSON output is
 copied back, the Pod and the ConfigMap are deleted, loadtest/summarize.py builds the
-results table and a JSON run record is written next to it.
+results table and a JSON run record is written next to it. The record places the run
+in UTC: when this script started and finished its cleanup, when k6's plan started
+and ended, and each phase of the plan, read from the gateflow_start and gateflow_plan
+points of the output.
 
 Requires kubectl on PATH. Never uses the default kubeconfig.
 """
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
 import json
@@ -47,6 +50,9 @@ COMMAND = ('k6 run --no-usage-report --quiet --out json=/out/run.json /scripts/m
            'echo $? > /out/exit; sleep {grace}')
 INTERRUPTED = 'interrupted'
 SUMMARIZE_INTERRUPTED = 'interrupted while summarize.py ran'
+TIMELINE_INTERRUPTED = 'interrupted while the timeline was read from run.json'
+# k6 may print more than the six fractional digits datetime accepts.
+FRACTION = re.compile(r'(\.\d{6})\d+')
 
 
 def load_deploy():
@@ -78,16 +84,83 @@ def setting(text):
     return key, value
 
 
+def setting_value(env, name, default):
+    number = float(env.get(name) or default)  # messages.js treats an empty value as unset
+    if not math.isfinite(number) or number < 0:
+        raise ValueError(f'{name} must be a non-negative number')
+    return number
+
+
+def stage_seconds(env):
+    """Seconds from the start of the plan of env to the end of its last hold, as messages.js plans it."""
+    levels = len((env.get('LEVELS') or '5,25,50').split(','))
+    return (setting_value(env, 'WARMUP_S', 60) + (levels-1)*setting_value(env, 'RAMP_S', 60)
+            + levels*setting_value(env, 'HOLD_S', 180))
+
+
 def plan_seconds(env):
     """Seconds the plan of env lasts with messages.js defaults, graceful stop included."""
-    def value(name, default):
-        number = float(env.get(name) or default)  # messages.js treats an empty value as unset
-        if not math.isfinite(number) or number < 0:
-            raise ValueError(f'{name} must be a non-negative number')
-        return number
-    levels = len((env.get('LEVELS') or '5,25,50').split(','))
-    return (value('WARMUP_S', 60) + (levels-1)*value('RAMP_S', 60) + levels*value('HOLD_S', 180)
-            + value('TOTAL_DEADLINE_S', 60) + 5)
+    return stage_seconds(env) + setting_value(env, 'TOTAL_DEADLINE_S', 60) + 5
+
+
+def iso(moment):
+    """A time as UTC ISO 8601 with milliseconds and a Z, or None."""
+    if moment is None:
+        return None
+    return moment.astimezone(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+
+def parse_time(value):
+    """A k6 timestamp as an aware datetime."""
+    moment = datetime.fromisoformat(FRACTION.sub(r'\1', value.replace('Z', '+00:00')))
+    if moment.tzinfo is None:
+        raise ValueError(f'timestamp without a time zone: {value}')
+    return moment
+
+
+def read_timeline(path):
+    """The time zero, the last point and the plan of a k6 JSON output of messages.js.
+
+    Returns (start, last, plan): start is the time of the first gateflow_start point,
+    last the time of the last point of any metric, and plan the (phase, level,
+    start_s, end_s) of the gateflow_plan points, in plan order. Points without a time
+    are skipped.
+    """
+    start = last = None
+    plan = set()
+    with path.open(encoding='utf-8') as lines:
+        for number, line in enumerate(lines, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ValueError(f'run.json line {number}: not JSON: {error}') from None
+            data = item.get('data') if item.get('type') == 'Point' else None
+            if not isinstance(data, dict) or not isinstance(data.get('time'), str):
+                continue
+            moment = parse_time(data['time'])
+            last = moment if last is None else max(last, moment)
+            if item.get('metric') == 'gateflow_start':
+                start = moment if start is None else min(start, moment)
+            elif item.get('metric') == 'gateflow_plan':
+                tags = data.get('tags') or {}
+                plan.add((tags['phase'], tags['level'], float(tags['start_s']), float(tags['end_s'])))
+    return start, last, sorted(plan, key=lambda phase: phase[2])
+
+
+def timeline(path, env):
+    """The run record fields that place the k6 run in UTC; each is None when unknown."""
+    start, last, plan = read_timeline(path)
+    fields = {'load_start': iso(start), 'plan_end': None, 'load_end': iso(last), 'phases': None}
+    if start is not None:
+        def at(seconds):
+            return iso(start + timedelta(seconds=seconds))
+        fields['plan_end'] = at(stage_seconds(env))
+        fields['phases'] = [{'phase': phase, 'level_rps': float(level), 'start_s': begin, 'end_s': end,
+                             'start': at(begin), 'end': at(end)} for phase, level, begin, end in plan]
+    return fields
 
 
 def parse_args(argv, now):
@@ -287,14 +360,26 @@ def error_text(error):
     return deploy.error_text(error)
 
 
-def kube_run(args, runner, stamp, clock=time.monotonic, sleep=time.sleep):
-    """Runs k6 in the cluster and returns the record. Failures are recorded in 'error'."""
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def kube_run(args, runner, stamp, clock=time.monotonic, sleep=time.sleep, wall=utc_now):
+    """Runs k6 in the cluster and returns the record. Failures are recorded in 'error'.
+
+    The record's times are UTC: op_start is stamp, op_end the end of the cleanup,
+    load_start k6's time zero (its gateflow_start point), plan_end that time plus the
+    planned stages, load_end the last point k6 wrote, and phases each phase of the
+    plan with its offsets and times.
+    """
     # Resolved, because kubectl cp runs in the output folder, where a relative path would not lead to it.
     kubeconfig = str(args.kubeconfig.resolve())
     kube = ['kubectl', '--kubeconfig', kubeconfig, '--context', args.kube_context, '-n', args.namespace]
     name, out = PREFIX + args.name, args.out_dir
     script = SCRIPT.read_text(encoding='utf-8')
-    record = {'time': stamp.strftime('%Y-%m-%dT%H:%M:%SZ'), 'name': args.name, 'context': args.kube_context,
+    record = {'time': stamp.strftime('%Y-%m-%dT%H:%M:%SZ'), 'op_start': iso(stamp), 'load_start': None,
+              'plan_end': None, 'load_end': None, 'op_end': None, 'phases': None, 'timeline_problem': None,
+              'name': args.name, 'context': args.kube_context,
               'namespace': args.namespace, 'release': args.release, 'k6_image': K6_IMAGE,
               'script': {'path': deploy.repo_path(SCRIPT)[0],
                          'sha256': hashlib.sha256(script.encode('utf-8')).hexdigest()},
@@ -335,8 +420,20 @@ def kube_run(args, runner, stamp, clock=time.monotonic, sleep=time.sleep):
                     # A second Ctrl-C: the objects may remain, so the record says how to delete them.
                     record['cleanup'] = f'interrupted; {leftovers(created)}'
                     raise
+                finally:
+                    record['op_end'] = iso(wall())
     except KeyboardInterrupt:
         record['error'], interrupted = INTERRUPTED, True
+    if 'run.json' in record['outputs'] and not interrupted:
+        try:
+            record.update(timeline(out/'run.json', args.env))
+            if record['load_start'] is None:
+                record['timeline_problem'] = 'run.json has no gateflow_start point with a time'
+        except (OSError, ValueError, KeyError) as error:
+            # Not a failure of the run: summarize.py judges run.json; only the times stay unknown.
+            record['timeline_problem'] = error_text(error)
+        except KeyboardInterrupt:
+            record['error'], interrupted = TIMELINE_INTERRUPTED, True
     if 'run.json' in record['outputs'] and not interrupted:
         try:
             result = runner([sys.executable, str(HERE/'summarize.py'), 'run.json'],
@@ -353,10 +450,10 @@ def kube_run(args, runner, stamp, clock=time.monotonic, sleep=time.sleep):
     return record
 
 
-def main(argv=None, runner=subprocess.run, now=None, clock=time.monotonic, sleep=time.sleep):
-    stamp = now or datetime.now(timezone.utc)
+def main(argv=None, runner=subprocess.run, now=None, clock=time.monotonic, sleep=time.sleep, wall=utc_now):
+    stamp = now or wall()
     args = parse_args(argv, stamp)
-    record = kube_run(args, runner, stamp, clock, sleep)
+    record = kube_run(args, runner, stamp, clock, sleep, wall)
     # Last guard before writing: replace any kubeconfig, home or repository path still in the record.
     paths = deploy.private_paths(args.kubeconfig)
     record['outputs'].append('run-record.json')
@@ -369,7 +466,7 @@ def main(argv=None, runner=subprocess.run, now=None, clock=time.monotonic, sleep
           f"cleanup {record['cleanup']}")
     if record['error']:
         print(f"FAIL k6 run {record['name']}: {record['error']}", file=sys.stderr)
-        return 130 if record['error'] in (INTERRUPTED, SUMMARIZE_INTERRUPTED) else 1
+        return 130 if record['error'] in (INTERRUPTED, SUMMARIZE_INTERRUPTED, TIMELINE_INTERRUPTED) else 1
     if record['k6_exit_code']:
         return 1
     return record['summarize_exit_code']

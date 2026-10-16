@@ -28,12 +28,12 @@ class Cluster:
     """A fake runner answering the git, kubectl and summarize calls of one run."""
 
     def __init__(self, kubeconfig, waiting=1, phase='Running', status=None, fail=None, interrupt=None,
-                 remote_size=None, summarize_code=0):
+                 remote_size=None, summarize_code=0, run_json=RUN_JSON):
         self.kubeconfig, self.waiting, self.phase, self.status = str(kubeconfig), waiting, phase, status or {}
-        self.fail, self.summarize_code = fail, summarize_code
+        self.fail, self.summarize_code, self.run_json = fail, summarize_code, run_json
         # The steps that raise KeyboardInterrupt, as if Ctrl-C were pressed during them.
         self.interrupt = {interrupt} if isinstance(interrupt, str) else set(interrupt or ())
-        self.remote_size = len(RUN_JSON) if remote_size is None else remote_size
+        self.remote_size = len(run_json) if remote_size is None else remote_size
         self.commands, self.created, self.deleted = [], [], []
         self.creates = 0
 
@@ -68,7 +68,7 @@ class Cluster:
         if step == 'exec /out/run.json':
             return done(f'{self.remote_size} /out/run.json\n')
         if verb == 'cp':
-            (Path(kwargs['cwd'])/command[-1]).write_bytes(b'0\n' if command[-1] == 'exit' else RUN_JSON)
+            (Path(kwargs['cwd'])/command[-1]).write_bytes(b'0\n' if command[-1] == 'exit' else self.run_json)
             return done()
         if verb == 'logs':
             return done('k6 summary\n')
@@ -95,6 +95,41 @@ class Clock:
 
 def parse(*argv):
     return kube_run.parse_args(['--kubeconfig', 'config', '--kube-context', 'eks', *argv], NOW)
+
+
+def point(metric, time, tags=None, value=1):
+    return json.dumps({'type': 'Point', 'metric': metric,
+                       'data': {'time': time, 'value': value, 'tags': tags or {}}})
+
+
+def plan_point(phase, level, start, end, time='2026-10-16T12:00:04.9Z'):
+    return point('gateflow_plan', time, {'phase': phase, 'level': level, 'start_s': start, 'end_s': end})
+
+
+# A short plan, LEVELS=2,4 WARMUP_S=5 RAMP_S=5 HOLD_S=20: warm-up 0-5 s, hold 5-25 s,
+# ramp 25-30 s, hold 30-50 s. k6 prints nanoseconds; the time zero is 12:00:05.123456789.
+TIMED_RUN_JSON = '\n'.join([
+    json.dumps({'type': 'Metric', 'metric': 'gateflow_plan', 'data': {'type': 'counter'}}),
+    plan_point('warmup', '2', '0', '5'), plan_point('hold', '2', '5', '25'),
+    plan_point('hold', '4', '30', '50'), plan_point('ramp', '4', '25', '30'),
+    point('gateflow_start', '2026-10-16T12:00:05.123456789Z'),
+    point('gateflow_sent', '2026-10-16T12:00:05.2Z', {'phase': 'warmup', 'level': '2'}),
+    point('gateflow_completed', '2026-10-16T20:01:02.5+08:00', {'phase': 'hold', 'level': '4'}),
+    point('vus', '2026-10-16T12:00:30Z'),
+    '',
+]).encode('utf-8')
+TIMED_ENV = ('--env', 'LEVELS=2,4', '--env', 'WARMUP_S=5', '--env', 'RAMP_S=5', '--env', 'HOLD_S=20')
+
+
+class Wall:
+    """A fake UTC clock that moves on one minute at each reading."""
+
+    def __init__(self):
+        self.readings = 0
+
+    def __call__(self):
+        self.readings += 1
+        return NOW.replace(minute=self.readings)
 
 
 class SettingsTests(unittest.TestCase):
@@ -135,6 +170,50 @@ class SettingsTests(unittest.TestCase):
         short = parse('--env', 'LEVELS=2', '--env', 'WARMUP_S=5', '--env', 'RAMP_S=5', '--env', 'HOLD_S=20')
         self.assertEqual(short.timeout, 90 + kube_run.MARGIN_S)
         self.assertEqual(parse('--timeout', '60').timeout, 60)
+
+    def test_stages_end_with_the_last_hold_and_the_plan_adds_the_graceful_stop(self):
+        self.assertEqual(kube_run.stage_seconds({}), 720)
+        self.assertEqual(kube_run.stage_seconds(parse(*TIMED_ENV).env), 50)
+        self.assertEqual(kube_run.plan_seconds(parse(*TIMED_ENV).env), 50 + 60 + 5)
+        with self.assertRaises(ValueError):
+            kube_run.stage_seconds({'HOLD_S': 'nan'})
+
+
+class TimelineTests(unittest.TestCase):
+    def write(self, data):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name)/'run.json'
+        path.write_bytes(data)
+        return path
+
+    def test_reads_the_time_zero_the_last_point_and_the_plan_in_order(self):
+        start, last, plan = kube_run.read_timeline(self.write(TIMED_RUN_JSON))
+        self.assertEqual(kube_run.iso(start), '2026-10-16T12:00:05.123Z')
+        # The +08:00 point is the latest once both are in UTC.
+        self.assertEqual(kube_run.iso(last), '2026-10-16T12:01:02.500Z')
+        self.assertEqual(plan, [('warmup', '2', 0.0, 5.0), ('hold', '2', 5.0, 25.0),
+                                ('ramp', '4', 25.0, 30.0), ('hold', '4', 30.0, 50.0)])
+
+    def test_phases_are_placed_after_the_time_zero(self):
+        fields = kube_run.timeline(self.write(TIMED_RUN_JSON), parse(*TIMED_ENV).env)
+        self.assertEqual((fields['load_start'], fields['plan_end'], fields['load_end']),
+                         ('2026-10-16T12:00:05.123Z', '2026-10-16T12:00:55.123Z', '2026-10-16T12:01:02.500Z'))
+        self.assertEqual(fields['phases'][1], {'phase': 'hold', 'level_rps': 2.0, 'start_s': 5.0, 'end_s': 25.0,
+                                               'start': '2026-10-16T12:00:10.123Z',
+                                               'end': '2026-10-16T12:00:30.123Z'})
+        self.assertEqual([p['phase'] for p in fields['phases']], ['warmup', 'hold', 'ramp', 'hold'])
+        self.assertEqual(fields['phases'][-1]['end'], fields['plan_end'])
+
+    def test_output_without_a_time_zero_has_no_phase_times(self):
+        data = (plan_point('hold', '2', '0', '5') + '\n').encode('utf-8')
+        fields = kube_run.timeline(self.write(data), {})
+        self.assertEqual(fields, {'load_start': None, 'plan_end': None, 'load_end': '2026-10-16T12:00:04.900Z',
+                                  'phases': None})
+
+    def test_lines_that_are_not_json_are_refused(self):
+        with self.assertRaisesRegex(ValueError, 'line 2'):
+            kube_run.read_timeline(self.write((point('vus', '2026-10-16T12:00:30Z') + '\n{"type":').encode('utf-8')))
 
     def test_kubeconfig_and_context_are_required(self):
         for argv in (['--kube-context', 'eks'], ['--kubeconfig', 'config']):
@@ -194,12 +273,12 @@ class RunTests(unittest.TestCase):
         self.out = self.folder/'out'
         self.clock = Clock()
 
-    def main(self, cluster, *argv, kubeconfig=None):
+    def main(self, cluster, *argv, kubeconfig=None, wall=kube_run.utc_now):
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             code = kube_run.main(['--kubeconfig', str(kubeconfig or self.kubeconfig), '--kube-context', 'kind-gateflow71',
                                   '--name', 'test', '--out-dir', str(self.out), *argv],
-                                 cluster, NOW, self.clock, self.clock.sleep)
+                                 cluster, NOW, self.clock, self.clock.sleep, wall)
         self.stdout = stdout.getvalue()
         self.record_text = (self.out/'run-record.json').read_text(encoding='utf-8')
         return code, json.loads(self.record_text)
@@ -239,6 +318,54 @@ class RunTests(unittest.TestCase):
         self.assertEqual(record['script']['path'], 'loadtest/messages.js')
         self.assertEqual(set(record['outputs']), {'exit', 'run.json', 'k6.log', 'run.results.json', 'summary.md',
                                                   'run-record.json'})
+
+    def test_record_places_the_operation_the_load_and_each_phase_in_utc(self):
+        wall = Wall()
+        cluster = Cluster(self.kubeconfig, run_json=TIMED_RUN_JSON)
+        code, record = self.main(cluster, *TIMED_ENV, wall=wall)
+        self.assertEqual((code, record['error'], record['timeline_problem']), (0, None, None))
+        self.assertEqual(record['op_start'], '2026-10-16T12:00:00.000Z')
+        self.assertEqual(record['time'], '2026-10-16T12:00:00Z')
+        self.assertEqual(record['load_start'], '2026-10-16T12:00:05.123Z')
+        self.assertEqual(record['plan_end'], '2026-10-16T12:00:55.123Z')
+        self.assertEqual(record['load_end'], '2026-10-16T12:01:02.500Z')
+        # The wall clock is read once, when the cleanup has ended.
+        self.assertEqual((wall.readings, record['op_end']), (1, '2026-10-16T12:01:00.000Z'))
+        holds = [(p['level_rps'], p['start'], p['end']) for p in record['phases'] if p['phase'] == 'hold']
+        self.assertEqual(holds, [(2.0, '2026-10-16T12:00:10.123Z', '2026-10-16T12:00:30.123Z'),
+                                 (4.0, '2026-10-16T12:00:35.123Z', '2026-10-16T12:00:55.123Z')])
+        self.assertEqual(json.loads(self.record_text)['phases'], record['phases'])
+
+    def test_output_without_times_is_still_summarized(self):
+        code, record = self.main(Cluster(self.kubeconfig))
+        self.assertEqual((code, record['error']), (0, None))
+        self.assertEqual(record['timeline_problem'], 'run.json has no gateflow_start point with a time')
+        self.assertEqual((record['load_start'], record['plan_end'], record['load_end'], record['phases']),
+                         (None, None, None, None))
+        self.assertIsNotNone(record['op_end'])
+        self.assertEqual(record['summarize_exit_code'], 0)
+
+    def test_unreadable_output_is_a_timeline_problem_not_a_run_error(self):
+        code, record = self.main(Cluster(self.kubeconfig, run_json=b'not json\n'))
+        self.assertEqual((code, record['error']), (0, None))
+        self.assertIn('line 1: not JSON', record['timeline_problem'])
+        self.assertEqual(record['summarize_exit_code'], 0)
+
+    def test_interrupt_while_reading_the_timeline_stops_before_summarize(self):
+        cluster = Cluster(self.kubeconfig, run_json=TIMED_RUN_JSON)
+        with mock.patch.object(kube_run, 'read_timeline', side_effect=KeyboardInterrupt):
+            code, record = self.main(cluster)
+        self.assertEqual((code, record['error']), (130, kube_run.TIMELINE_INTERRUPTED))
+        self.assertEqual(record['cleanup'], 'deleted')
+        self.assertFalse(any(c[0] == sys.executable for c, _ in cluster.commands))
+
+    def test_failed_run_still_records_when_its_cleanup_ended(self):
+        wall = Wall()
+        code, record = self.main(Cluster(self.kubeconfig, fail='get deployment'), wall=wall)
+        self.assertEqual(code, 1)
+        self.assertEqual(record['op_end'], '2026-10-16T12:01:00.000Z')
+        self.assertIsNone(record['load_start'])
+        self.assertIsNone(record['timeline_problem'])
 
     def test_relative_kubeconfig_is_resolved_for_every_kubectl_call(self):
         # kubectl cp runs in the output folder, where a relative kubeconfig would name another file.
