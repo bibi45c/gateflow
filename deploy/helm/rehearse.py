@@ -4,11 +4,16 @@ Requires kind, kubectl, helm and Docker on PATH. Never uses the default kubeconf
 """
 import argparse
 import base64
+import contextlib
 import json
+import os
 from pathlib import Path
 import secrets
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -17,6 +22,9 @@ INGRESS = 'https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller
 CREDENTIAL_KEYS = ['admin','superuser','access','metering','tokenAccess','tokenMetering','pepper']
 # Created by kind/postgres.yaml like the RDS master role: LOGIN CREATEROLE, database owner, not a superuser.
 BOOTSTRAP_USER = 'gateflow_admin'
+# A published gateway image built from 75da74a, older than the chart's default imageTag.
+DEPLOY_CHECK_SERVICE = 'gateway'
+DEPLOY_CHECK_DIGEST = 'sha256:daa59ab42b40fa40ec45579ec12dcacf6ed953bd1f509d2aebce1fdd1c74f7db'
 
 
 def kube_command(cluster, config, *args):
@@ -58,6 +66,71 @@ def bootstrap_values(keys):
         'PGSSLMODE':'disable','ACCESS_PASSWORD':keys['access'],'METERING_PASSWORD':keys['metering']}
 
 
+@contextlib.contextmanager
+def ingress_forward(kube):
+    # Port-forward the ingress controller, not the gateway, so requests exercise Ingress rules.
+    forward=subprocess.Popen([*kube,'-n','ingress-nginx','port-forward','service/ingress-nginx-controller','18071:80'])
+    try:
+        for attempt in range(60):
+            try:
+                urllib.request.urlopen('http://127.0.0.1:18071/metrics',timeout=2)
+            except urllib.error.HTTPError as error:
+                if error.code==404: break
+                raise
+            except OSError:
+                time.sleep(1)
+        else:
+            raise RuntimeError('Ingress did not reject /metrics with 404')
+        yield
+    finally:
+        forward.terminate()
+        forward.wait(timeout=10)
+
+
+def changed(record):
+    before,after=record.get('images_before') or {},record.get('images_after') or {}
+    return {name for name in before.keys()|after.keys() if before.get(name)!=after.get(name)}
+
+
+def deploy_check_problems(deployed, rolled_back, service, digest):
+    """Problems with the records of a one-service deploy and its rollback."""
+    problems=[]
+    for label,record,operation in (('deploy',deployed,'deploy'),('rollback',rolled_back,'rollback')):
+        if record.get('operation')!=operation or record.get('service')!=service:
+            problems.append(f"{label} record is {record.get('operation')} of {record.get('service')}")
+        if record.get('error') or not record.get('verified') or record.get('smoke',{}).get('result')!='passed':
+            problems.append(f"{label} record is not verified: {record.get('error')}, smoke {record.get('smoke',{}).get('result')}")
+        if changed(record)!={service}:
+            problems.append(f'{label} changed images of {sorted(changed(record))}, not only {service}')
+    if deployed.get('new_digest')!=digest or not (deployed.get('images_after') or {}).get(service,'').endswith('@'+digest):
+        problems.append(f"deploy record did not move {service} to {digest}")
+    if rolled_back.get('new_digest')!=deployed.get('previous_digest'):
+        problems.append('rollback did not restore the previous digest')
+    if rolled_back.get('images_before')!=deployed.get('images_after') or rolled_back.get('images_after')!=deployed.get('images_before'):
+        problems.append('rollback did not return every image to its state before the deploy')
+    return problems
+
+
+def deploy_check(args, kube):
+    """Move one service with deploy.py, smoke, roll back from the record, smoke again."""
+    folder=args.kubeconfig.parent/'deployments'
+    folder.mkdir(parents=True,exist_ok=True)
+    deployed,rolled_back=folder/'rehearsal-deploy.json',folder/'rehearsal-rollback.json'
+    for path in (deployed,rolled_back): path.unlink(missing_ok=True)
+    common=[sys.executable,str(HERE/'deploy.py'),'--kubeconfig',str(args.kubeconfig),'--kube-context','kind-'+args.cluster,
+            '--namespace',args.namespace,'-f',str(HERE/'values-kind.yaml'),'--smoke-port','18071','--smoke-postgres-pod','postgres-0']
+    environment=smoke_environment(dict(os.environ), args.kubeconfig)
+    with ingress_forward(kube):
+        run([*common,'--service',DEPLOY_CHECK_SERVICE,'--digest',DEPLOY_CHECK_DIGEST,'--record',str(deployed)],env=environment)
+        run([*common,'--rollback-from',str(deployed),'--record',str(rolled_back)],env=environment)
+    problems=deploy_check_problems(json.loads(deployed.read_text(encoding='utf-8')),
+                                   json.loads(rolled_back.read_text(encoding='utf-8')),DEPLOY_CHECK_SERVICE,DEPLOY_CHECK_DIGEST)
+    if problems:
+        raise RuntimeError('; '.join(problems))
+    print(f'Deployed and rolled back {DEPLOY_CHECK_SERVICE} only; records in {folder}')
+    return 0
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cluster', required=True)
@@ -65,8 +138,14 @@ def main(argv=None):
     parser.add_argument('--namespace', default='gateflow')
     parser.add_argument('--prepare-only', action='store_true')
     parser.add_argument('--existing-cluster', action='store_true')
+    parser.add_argument('--deploy-check', action='store_true',
+                        help='on an installed cluster, deploy one gateway digest with deploy.py and roll it back')
     args=parser.parse_args(argv)
+    if args.deploy_check and (not args.existing_cluster or args.prepare_only):
+        parser.error('--deploy-check needs --existing-cluster with an installed release')
     kube=kube_command(args.cluster,args.kubeconfig)
+    if args.deploy_check:
+        return deploy_check(args,kube)
     args.kubeconfig.parent.mkdir(parents=True,exist_ok=True)
     if not args.existing_cluster:
         run(['kind','create','cluster','--name',args.cluster,'--kubeconfig',str(args.kubeconfig),
@@ -89,27 +168,10 @@ def main(argv=None):
     helm=['helm','--kubeconfig',str(args.kubeconfig),'--kube-context','kind-'+args.cluster]
     run([*helm,'upgrade','--install','gf',str(HERE/'gateflow'),'-n',args.namespace,'-f',str(HERE/'values-kind.yaml'),
          '--wait','--wait-for-jobs','--timeout','6m'])
-    # Port-forward the ingress controller, not the gateway, so requests exercise Ingress rules.
-    forward=subprocess.Popen([*kube,'-n','ingress-nginx','port-forward','service/ingress-nginx-controller','18071:80'])
-    try:
-        import time
-        import urllib.request
-        for attempt in range(60):
-            try:
-                urllib.request.urlopen('http://127.0.0.1:18071/metrics',timeout=2)
-            except urllib.error.HTTPError as error:
-                if error.code==404: break
-                raise
-            except OSError:
-                time.sleep(1)
-        else:
-            raise RuntimeError('Ingress did not reject /metrics with 404')
+    with ingress_forward(kube):
         run([sys.executable,str(ROOT/'test/e2e/smoke.py'),'--kube-context','kind-'+args.cluster,
              '--namespace',args.namespace,'--postgres-pod','postgres-0','--port','18071'],
-            env=smoke_environment(dict(__import__('os').environ), args.kubeconfig))
-    finally:
-        forward.terminate()
-        forward.wait(timeout=10)
+            env=smoke_environment(dict(os.environ), args.kubeconfig))
     return 0
 
 
