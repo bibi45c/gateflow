@@ -5,7 +5,6 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -189,15 +188,34 @@ func TestOtherUpstreamStatusesGet502(t *testing.T) {
 	}
 }
 
-// closedPortURL returns the URL of a local port that nothing listens on.
+// closedPortURL returns the URL of a local port that nothing listens on: port 0,
+// which no socket can bind, so the dial fails before any byte of the request is
+// written. A port freed by closing a listener could go to a later test server (#109).
 func closedPortURL(t *testing.T) string {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	return "http://127.0.0.1:0"
+}
+
+// The unreachable URL stays unreachable however many servers start after it.
+func TestClosedPortURLIsNeverReused(t *testing.T) {
+	url := closedPortURL(t)
+	for range 8 {
+		startUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+			t.Error("a test server answered the unreachable URL")
+		})
 	}
-	addr := listener.Addr().String()
-	listener.Close()
-	return "http://" + addr
+	gw := startGateway(t, Channel{BaseURL: url})
+
+	resp, err := http.Post(url+"/v1/messages", "application/json", strings.NewReader(messagesBody("mock-small", true)))
+	if err == nil {
+		resp.Body.Close()
+		t.Fatalf("POST %s got %d, want a dial error", url, resp.StatusCode)
+	}
+	resp = gw.post(t, context.Background(), messagesBody("mock-small", true), nil)
+	readAllBody(t, resp)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", resp.StatusCode)
+	}
+	checkResult(t, gw.admission.result(t), OutcomeNotDispatched, count(0), count(0))
 }
 
 func TestUnreachableUpstreamIsNotDispatched(t *testing.T) {
