@@ -106,8 +106,11 @@ by the smoke suite. Use a private seed secret for a real deployment.
 
 ## AWS handoff (operator only)
 
-Use values-aws.yaml and the existing RDS PostgreSQL 17 endpoint. Both service URLs
-must explicitly contain sslmode=require; bootstrap PGSSLMODE must be require.
+Use values-aws.yaml and the existing RDS PostgreSQL 17 endpoint. It gives each
+gateway Pod 1 vCPU as both request and limit, and 2 GiB (proposal 5.6), so a Pod
+cannot borrow idle node CPU; keep it unchanged from the single-Pod calibration on.
+Both service URLs must explicitly contain sslmode=require; bootstrap PGSSLMODE must
+be require.
 The cloud workload init checks verify URL policy and an actually encrypted session
 before application startup. The kind-only fixture uses sslmode=disable against its
 local database and is never installed in AWS.
