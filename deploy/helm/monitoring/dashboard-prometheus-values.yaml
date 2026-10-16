@@ -1,17 +1,2 @@
-# Overlay the #72 Prometheus release, preserving its gateway scrape job.
-# This adds actual Deployment desired/available replica metrics for #74.
-kube-state-metrics:
-  enabled: true
-  nodeSelector:
-    gateflow.io/workload: services
-  resources:
-    requests:
-      cpu: 25m
-      memory: 64Mi
-    limits:
-      memory: 192Mi
-extraScrapeConfigs: |
-  - job_name: gateflow-kube-state-metrics
-    static_configs:
-      - targets:
-          - prometheus-kube-state-metrics.monitoring.svc.cluster.local:8080
+# Obsolete; delete this file. kube-state-metrics and its scrape job come from
+# prometheus-values.yaml (#118), and dashboard.py no longer upgrades Prometheus.

@@ -341,7 +341,7 @@
         },
         {
           "refId": "C",
-          "expr": "count(up{job=\"$job\",namespace=\"$namespace\"} == 1)",
+          "expr": "sum(up{job=\"$job\",namespace=\"$namespace\"})",
           "legendFormat": "successfully scraped gateway targets",
           "datasource": {
             "type": "prometheus",
@@ -409,7 +409,7 @@
       "id": 6,
       "title": "First model output latency",
       "type": "timeseries",
-      "description": "Histograms are combined across replicas before calculating quantiles. Only calls with a first output are observed. This is server first-output time, not paired client added latency.",
+      "description": "Histograms are combined across replicas before calculating quantiles. Only calls with a first output are observed. This is server first-output time, not paired client added latency. The highest finite bucket is 10 s: values at 10 s mean ≥ 10 s (bucket ceiling), not a measured 10 s. The right axis shows the share of first outputs above that ceiling.",
       "datasource": {
         "type": "prometheus",
         "uid": "gateflow-prometheus"
@@ -430,7 +430,24 @@
             "spanNulls": false
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -476,6 +493,16 @@
             "uid": "gateflow-prometheus"
           },
           "range": true
+        },
+        {
+          "refId": "D",
+          "expr": "1 - sum(rate(gateflow_gateway_first_output_seconds_bucket{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\",le=\"10\"}[$__rate_interval])) / sum(rate(gateflow_gateway_first_output_seconds_count{job=\"$job\",namespace=\"$namespace\",service=\"gateway\",route=~\"$route\"}[$__rate_interval]))",
+          "legendFormat": "share above 10 s ceiling",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "gateflow-prometheus"
+          },
+          "range": true
         }
       ]
     },
@@ -483,7 +510,7 @@
       "id": 7,
       "title": "Request duration",
       "type": "timeseries",
-      "description": "From gateway observation after body validation through settlement; includes all results.",
+      "description": "From gateway observation after body validation through settlement; includes all results. Above 10 s the buckets are coarse (10, 30, 60, 90, 120 s), so a p95 between them is interpolated, not measured.",
       "datasource": {
         "type": "prometheus",
         "uid": "gateflow-prometheus"
@@ -791,7 +818,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "Keep the k6 JSON, version/config record, UTC run interval and ledger checks with every experiment. A first-output percentile excludes failures without output. Grafana cannot prove exactly-once settlement, tenant isolation, CPU limits or recovery. Database pools, tenant counters, outbox/SQS and resource telemetry are not implemented by #69 and are not shown as measured values here. The replica panels need the kube-state-metrics overlay documented with this dashboard."
+        "content": "Keep the k6 JSON, version/config record, UTC run interval and ledger checks with every experiment. A first-output percentile excludes failures without output. Grafana cannot prove exactly-once settlement, tenant isolation, CPU limits or recovery. Database pools, tenant counters, outbox/SQS and resource telemetry are not implemented by #69 and are not shown as measured values here. The replica panel reads the kube-state-metrics job of monitoring/prometheus-values.yaml."
       }
     }
   ]

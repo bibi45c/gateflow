@@ -6,6 +6,12 @@ ingress:
   enabled: false
 persistence:
   enabled: false
+# Dashboards are mounted ConfigMaps, not sidecar-watched, so Grafana needs no
+# Kubernetes API access.
+rbac:
+  create: false
+serviceAccount:
+  automountServiceAccountToken: false
 nodeSelector:
   gateflow.io/workload: services
 resources:
