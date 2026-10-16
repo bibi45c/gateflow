@@ -14,6 +14,9 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 NODE_IMAGE = 'kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0'
 INGRESS = 'https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml'
+CREDENTIAL_KEYS = ['admin','superuser','access','metering','tokenAccess','tokenMetering','pepper']
+# Created by kind/postgres.yaml like the RDS master role: LOGIN CREATEROLE, database owner, not a superuser.
+BOOTSTRAP_USER = 'gateflow_admin'
 
 
 def kube_command(cluster, config, *args):
@@ -40,6 +43,21 @@ def smoke_environment(environment, config):
     return environment | {'KUBECONFIG':str(config), 'ACCESS_SEED_SECRET':'seed-secret-local-only'}
 
 
+def load_credentials(path):
+    # Preserve generated credentials across repeat runs and add keys missing from older files.
+    keys=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+    missing=[k for k in CREDENTIAL_KEYS if k not in keys]
+    if missing:
+        keys|={k:secrets.token_hex(24) for k in missing}
+        path.write_text(json.dumps(keys),encoding='utf-8')
+    return keys
+
+
+def bootstrap_values(keys):
+    return {'PGHOST':'postgres','PGPORT':'5432','PGDATABASE':'gateflow','PGUSER':BOOTSTRAP_USER,'PGPASSWORD':keys['admin'],
+        'PGSSLMODE':'disable','ACCESS_PASSWORD':keys['access'],'METERING_PASSWORD':keys['metering']}
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cluster', required=True)
@@ -54,15 +72,10 @@ def main(argv=None):
         run(['kind','create','cluster','--name',args.cluster,'--kubeconfig',str(args.kubeconfig),
              '--config',str(HERE/'kind/config.yaml'),'--image',NODE_IMAGE,'--wait','180s'])
     apply(kube,args.namespace,{'apiVersion':'v1','kind':'Namespace','metadata':{'name':args.namespace}})
-    # Preserve generated credentials across repeat runs. Values stay outside the repo's tracked files.
-    credentials=args.kubeconfig.with_suffix('.credentials.json')
-    if credentials.exists():
-        keys=json.loads(credentials.read_text(encoding='utf-8'))
-    else:
-        keys={k:secrets.token_hex(24) for k in ['admin','access','metering','tokenAccess','tokenMetering','pepper']}
-        credentials.write_text(json.dumps(keys),encoding='utf-8')
-    secret(kube,args.namespace,'gateflow-bootstrap',{'PGHOST':'postgres','PGPORT':'5432','PGDATABASE':'gateflow',
-        'PGUSER':'gateflow','PGPASSWORD':keys['admin'],'PGSSLMODE':'disable','ACCESS_PASSWORD':keys['access'],'METERING_PASSWORD':keys['metering']})
+    # Values stay outside the repo's tracked files.
+    keys=load_credentials(args.kubeconfig.with_suffix('.credentials.json'))
+    secret(kube,args.namespace,'gateflow-postgres',{'POSTGRES_PASSWORD':keys['superuser']})
+    secret(kube,args.namespace,'gateflow-bootstrap',bootstrap_values(keys))
     secret(kube,args.namespace,'gateflow-runtime',{'ACCESS_DATABASE_URL':f"postgres://access:{keys['access']}@postgres:5432/gateflow?sslmode=disable",
         'METERING_DATABASE_URL':f"postgres://metering:{keys['metering']}@postgres:5432/gateflow?sslmode=disable",
         'ACCESS_INTERNAL_TOKEN':keys['tokenAccess'],'METERING_INTERNAL_TOKEN':keys['tokenMetering'],

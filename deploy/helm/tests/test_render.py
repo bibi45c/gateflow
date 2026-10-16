@@ -70,4 +70,39 @@ class ChartTests(unittest.TestCase):
         self.assertIn('pg_stat_ssl',init['command'][-1])
         self.assertEqual(init['securityContext']['runAsUser'],65532)
 
+    def test_aws_gateway_resources(self):
+        docs=render('-f',str(CHART.parent/'values-aws.yaml'))
+        deployments={d['metadata']['name']:d for d in docs if d['kind']=='Deployment'}
+        gateway=deployments['gf-gateway']['spec']['template']['spec']['containers'][0]
+        self.assertEqual(gateway['resources'],{'requests':{'cpu':'1','memory':'2Gi'},'limits':{'memory':'2Gi'}})
+        access=deployments['gf-access']['spec']['template']['spec']['containers'][0]
+        self.assertEqual(access['resources']['requests']['cpu'],'50m')
+
+class SourceTests(unittest.TestCase):
+    def test_bootstrap_grants_service_roles_before_schemas(self):
+        lines=[line.strip() for line in (CHART/'files/bootstrap.sql').read_text(encoding='utf-8').splitlines()]
+        grant=lines.index('GRANT access, metering TO CURRENT_USER;')
+        creates=[i for i,line in enumerate(lines) if 'CREATE ROLE' in line]
+        schemas=[i for i,line in enumerate(lines) if line.startswith('CREATE SCHEMA')]
+        self.assertEqual(len(creates),2)
+        self.assertEqual(len(schemas),2)
+        self.assertLess(max(creates),grant)
+        self.assertLess(grant,min(schemas))
+        self.assertTrue(lines[grant-1].startswith('--'))
+
+    def test_aws_values_size_gateway(self):
+        text=(CHART.parent/'values-aws.yaml').read_text(encoding='utf-8')
+        block='''services:
+  gateway:
+    # One vCPU and 2 GiB per gateway Pod (proposal 5.6).
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        memory: 2Gi
+'''
+        self.assertIn(block,text)
+        self.assertIn('environment: aws\n',text)
+
 if __name__=='__main__': unittest.main()

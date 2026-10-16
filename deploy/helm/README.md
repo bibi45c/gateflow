@@ -34,6 +34,11 @@ inside the local PostgreSQL Pod. /metrics must return 404 through ingress.
 Credentials are persisted next to the supplied kubeconfig for repeat runs; put it
 in an ignored folder such as .local. Do not publish the kubeconfig or credentials.
 The fixture has no persistent volume; deleting its Pod loses its database.
+Like the RDS master role, the bootstrap Job connects as gateflow_admin, a LOGIN
+CREATEROLE non-superuser that owns the gateflow database; the container superuser
+has its own password in gateflow-postgres. Missing keys are added to an older
+credentials file, but a PostgreSQL Pod created by an older helper must be deleted
+(or the cluster recreated) before the next run.
 
 To repeat against this exact local cluster (also exercises Helm upgrade):
 
