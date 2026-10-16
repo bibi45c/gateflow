@@ -112,6 +112,44 @@ The cloud workload init checks verify URL policy and an actually encrypted sessi
 before application startup. The kind-only fixture uses sslmode=disable against its
 local database and is never installed in AWS.
 
+Create both Secrets with [deploy/aws/secrets.py](../aws/secrets.py), in the
+existing release namespace, from a saved `terraform output -json` file (keep it
+under the ignored `.local/`):
+
+```text
+python deploy/aws/secrets.py --kubeconfig <path> --kube-context <eks-context> --terraform-output .local/cloud-day/terraform-output.json
+```
+
+It reads the RDS master user and password from the RDS-managed Secrets Manager
+secret (`master_secret_arn`) and keeps the service passwords, internal tokens, key
+pepper and seed secret in `.local/cloud-day/secrets-state.json` (`--state`), so
+they stay the same on every day; it refuses a state path that git does not ignore.
+New values are generated only while neither Secret exists. If a Secret exists but
+the state file is missing, incomplete or different, it stops: restore the original
+state file rather than starting over. Values reach kubectl only on stdin and are
+never printed. RDS rotates the master password, so before every `helm upgrade`
+(its bootstrap hook logs in as the master user) refresh only `PGPASSWORD`; every
+other key of gateflow-bootstrap, and all of gateflow-runtime, stay unchanged:
+
+```text
+python deploy/aws/secrets.py --kubeconfig <path> --kube-context <eks-context> --terraform-output .local/cloud-day/terraform-output.json --refresh-master-only
+```
+
+The chart's metering seed creates small wallets and never changes an existing
+balance, so load tests need a reset with the large balance from
+[loadtest/README.md](../../loadtest/README.md). Run
+[deploy/aws/reset_db.py](../aws/reset_db.py) once right after the first install,
+before any load, and again between load-test conditions. Without `--yes` it only
+prints its plan. With `--yes` it stops gateway traffic (or pauses the KEDA
+ScaledObject), exports the accounting tables to `.local/cloud-day/db-reset/`,
+truncates them, seeds every wallet but tenant-00 with 1,000,000,000,000 by default,
+verifies the result and restores the gateway:
+
+```text
+python deploy/aws/reset_db.py --kubeconfig <path> --kube-context <eks-context>
+python deploy/aws/reset_db.py --kubeconfig <path> --kube-context <eks-context> --yes
+```
+
 The chart selects gateflow.io/workload=services for gateway/access/metering and
 bootstrap/seeds. Mock upstream selects gateflow.io/workload=load-generator and
 tolerates gateflow.io/workload=load-generator:NoSchedule. Planned service capacity
