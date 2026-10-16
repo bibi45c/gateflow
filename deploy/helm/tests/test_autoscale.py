@@ -116,14 +116,15 @@ class MonitoringSourceTests(unittest.TestCase):
             self.assertTrue(chart['repository'].startswith('https://'))
             self.assertTrue((HELM/'monitoring'/chart['values']).is_file())
 
-    def test_prometheus_is_server_only_on_empty_dir(self):
+    def test_prometheus_server_on_empty_dir_without_other_components(self):
+        # kube-state-metrics is enabled on purpose; test_monitoring.py checks it.
         text=(HELM/'monitoring/prometheus-values.yaml').read_text(encoding='utf-8')
-        for chart in ['alertmanager','kube-state-metrics','prometheus-node-exporter','prometheus-pushgateway']:
+        for chart in ['alertmanager','prometheus-node-exporter','prometheus-pushgateway']:
             self.assertIn(f'{chart}:\n  enabled: false\n',text)
         self.assertIn('  persistentVolume:\n    enabled: false\n',text)
         self.assertIn('  emptyDir:\n',text)
         self.assertIn('      - job_name: gateflow-gateway\n',text)
-        self.assertIn('gateflow.io/workload: services',text)
+        self.assertIn('server:\n  nodeSelector:\n    gateflow.io/workload: services\n',text)
 
     def test_keda_on_service_nodes(self):
         text=(HELM/'monitoring/keda-values.yaml').read_text(encoding='utf-8')
