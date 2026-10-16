@@ -24,6 +24,7 @@ jobs:
           python-version: '3.13'
       - run: python -m unittest discover -s tools/repo/tests -v
       - run: python -m unittest discover -s loadtest -v
+      - run: python -m unittest discover -s deploy/aws/tests -v
 
   go:
     name: Go (${{ matrix.os }})

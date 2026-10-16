@@ -27,6 +27,21 @@
       "type": "string",
       "minLength": 1
     },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "inboundCidrs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$"
+          }
+        },
+        "allowAnySource": {
+          "type": "boolean"
+        }
+      }
+    },
     "shutdown": {
       "type": "object",
       "properties": {

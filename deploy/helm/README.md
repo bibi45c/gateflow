@@ -32,7 +32,8 @@ labels service and load-generator workers and taints the generator, creates
 random local-only database/token Secrets, installs disposable PostgreSQL 17 and
 ingress, then runs Helm and the existing full smoke suite. Requests go through
 port-forwarded ingress on 127.0.0.1:18071; ledger/reservation reads use kubectl exec
-inside the local PostgreSQL Pod. /metrics must return 404 through ingress.
+inside the local PostgreSQL Pod (with --existing-cluster, inside a short-lived
+query Pod, as on EKS). /metrics must return 404 through ingress.
 Credentials are persisted next to the supplied kubeconfig for repeat runs; put it
 in an ignored folder such as .local. Do not publish the kubeconfig or credentials.
 The fixture has no persistent volume; deleting its Pod loses its database.
@@ -166,11 +167,52 @@ by the smoke suite. Use a private seed secret for a real deployment.
 
 ## AWS handoff (operator only)
 
-Use values-aws.yaml and the existing RDS PostgreSQL 17 endpoint. Both service URLs
-must explicitly contain sslmode=require; bootstrap PGSSLMODE must be require.
+Use values-aws.yaml and the existing RDS PostgreSQL 17 endpoint. It gives each
+gateway Pod 1 vCPU as both request and limit, and 2 GiB (proposal 5.6), so a Pod
+cannot borrow idle node CPU; keep it unchanged from the single-Pod calibration on.
+Both service URLs must explicitly contain sslmode=require; bootstrap PGSSLMODE must
+be require.
 The cloud workload init checks verify URL policy and an actually encrypted session
 before application startup. The kind-only fixture uses sslmode=disable against its
 local database and is never installed in AWS.
+
+Create both Secrets with [deploy/aws/secrets.py](../aws/secrets.py), in the
+existing release namespace, from a saved `terraform output -json` file (keep it
+under the ignored `.local/`):
+
+```text
+python deploy/aws/secrets.py --kubeconfig <path> --kube-context <eks-context> --terraform-output .local/cloud-day/terraform-output.json
+```
+
+It reads the RDS master user and password from the RDS-managed Secrets Manager
+secret (`master_secret_arn`) and keeps the service passwords, internal tokens, key
+pepper and seed secret in `.local/cloud-day/secrets-state.json` (`--state`), so
+they stay the same on every day; it refuses a state path that git does not ignore.
+New values are generated only while neither Secret exists. If a Secret exists but
+the state file is missing, incomplete or different, it stops: restore the original
+state file rather than starting over. Values reach kubectl only on stdin and are
+never printed. RDS rotates the master password, so before every `helm upgrade`
+(its bootstrap hook logs in as the master user) refresh only `PGPASSWORD`; every
+other key of gateflow-bootstrap, and all of gateflow-runtime, stay unchanged:
+
+```text
+python deploy/aws/secrets.py --kubeconfig <path> --kube-context <eks-context> --terraform-output .local/cloud-day/terraform-output.json --refresh-master-only
+```
+
+The chart's metering seed creates small wallets and never changes an existing
+balance, so load tests need a reset with the large balance from
+[loadtest/README.md](../../loadtest/README.md). Run
+[deploy/aws/reset_db.py](../aws/reset_db.py) once right after the first install,
+before any load, and again between load-test conditions. Without `--yes` it only
+prints its plan. With `--yes` it stops gateway traffic (or pauses the KEDA
+ScaledObject), exports the accounting tables to `.local/cloud-day/db-reset/`,
+truncates them, seeds every wallet but tenant-00 with 1,000,000,000,000 by default,
+verifies the result and restores the gateway:
+
+```text
+python deploy/aws/reset_db.py --kubeconfig <path> --kube-context <eks-context>
+python deploy/aws/reset_db.py --kubeconfig <path> --kube-context <eks-context> --yes
+```
 
 The chart selects gateflow.io/workload=services for gateway/access/metering and
 bootstrap/seeds. Mock upstream selects gateflow.io/workload=load-generator and
@@ -184,6 +226,21 @@ The public ALB exposes exactly /v1/messages and /v1/responses, uses IP targets,
 300-second idle timeout, 60-second deregistration delay and /readyz health checks.
 Health/metrics/internal APIs are not Ingress routes; their Services are ClusterIP.
 An operator must separately verify ALB behavior; kind does not prove AWS behavior.
+
+Until HTTPS lands, the ALB listens on plain HTTP only, so gateway keys
+(x-api-key, Authorization: Bearer) cross the internet in clear text. As a stopgap,
+the chart restricts the ALB security group to the sources in ingress.inboundCidrs
+(alb.ingress.kubernetes.io/inbound-cidrs). With environment=aws the chart refuses
+to render while the list is empty, and rejects 0.0.0.0/0 (any /0) unless
+ingress.allowAnySource=true is also set. values-aws.yaml holds no addresses; pass
+your own IP at install time, or keep it in an uncommitted values file:
+
+```text
+helm install gf deploy/helm/gateflow --kubeconfig <path> --kube-context <eks-context> -n gateflow -f deploy/helm/values-aws.yaml --set-json 'ingress.inboundCidrs=["<your IP>/32"]' --wait --wait-for-jobs
+```
+
+Only the listed IPs can reach the ALB; keys are still sent over unencrypted HTTP.
+kind uses ingress-nginx and ignores these values.
 
 Load generators inside the cluster should target http://gf-gateway:8080 (same
 namespace), or http://gf-gateway.<namespace>.svc.cluster.local:8080. Public ALB is
@@ -245,11 +302,24 @@ capacity gate yet, so eligible arrivals equal admitted ones.
 `monitoring/versions.json` pins both charts: prometheus-community `prometheus`
 27.11.0 and kedacore `keda` 2.20.2. [KEDA 2.20](https://keda.sh/docs/2.20/operate/cluster/)
 lists Kubernetes 1.33-1.35 as tested, which covers kind 1.35.8 and EKS 1.35 (#30).
-Prometheus runs only its server, on an `emptyDir` (Terraform installs no EBS CSI
-driver, so a PVC would stay Pending), keeps 6 hours of data and scrapes the gateway
-Pods of namespace `gateflow` every 10 seconds; edit the namespace in
-`monitoring/prometheus-values.yaml` if the release uses another. Both run on
-`gateflow.io/workload=services` nodes.
+Prometheus runs its server on an `emptyDir` (Terraform installs no EBS CSI driver,
+so a PVC would stay Pending), keeps 6 hours of data and scrapes every 10 seconds.
+Its scrape jobs replace the chart's defaults:
+
+| Job | Targets | Used for |
+|---|---|---|
+| `gateflow-gateway` | gateway Pods, port `http` | the two KEDA triggers (`autoscaling.job`; keep its name) and gateway latency |
+| `gateflow-access`, `gateflow-metering` | access and metering Pods, port `http` | their request rates and latency; metering latency is the load test's proxy for database contention |
+| `kubernetes-cadvisor` | each node's kubelet through the API server proxy | per-Pod CPU, working-set memory and network; only those four `container_*` series of namespace `gateflow` are kept |
+| `kube-state-metrics` | the minimal kube-state-metrics subchart | `kube_deployment_*`, `kube_horizontalpodautoscaler_*` and `kube_pod_*` (restarts, limits) of namespace `gateflow` |
+
+No target label is named `service`, so the services' own `service` label is kept;
+the kube-state-metrics job uses `honor_labels` to keep its `namespace` and
+`deployment` labels. The cAdvisor job relies on the chart's ClusterRole granting
+`nodes/proxy`. Alertmanager, node-exporter and Pushgateway stay off. Edit the
+`gateflow` namespace in `monitoring/prometheus-values.yaml` (the Pod jobs, the
+cAdvisor filter and `kube-state-metrics.namespaces`) if the release uses another.
+All of it, and KEDA, run on `gateflow.io/workload=services` nodes.
 
 Install in this order, Prometheus and KEDA before the FlowGate chart, because the
 ScaledObject kind comes from KEDA's CRDs. On EKS, with the context from #30
@@ -305,7 +375,7 @@ and no workflow deploys to AWS. Pass the kubeconfig and context explicitly; the
 script never uses the default kubeconfig. Pass values-aws.yaml again:
 
 ```text
-python deploy/helm/deploy.py --kubeconfig <path> --kube-context <eks-context> -f deploy/helm/values-aws.yaml --service gateway --digest sha256:<64 hex> --smoke-host <alb-dns-name> --smoke-port 80
+python deploy/helm/deploy.py --kubeconfig <path> --kube-context <eks-context> -f deploy/helm/values-aws.yaml --service gateway --digest sha256:<64 hex> --smoke-host <alb-dns-name> --smoke-port 80 --smoke-db-secret gateflow-runtime
 ```
 
 The script:
@@ -315,7 +385,9 @@ The script:
 2. Runs helm upgrade --wait --wait-for-jobs with the chart from this checkout.
    The deployed values are the base, then each -f file, then pins that keep
    imageTag and the other three digests as deployed and set only the chosen
-   service's digest. It never runs helm install or helm rollback.
+   service's digest. It never runs helm install or helm rollback. Because the
+   deployed values are the base, the installed ingress.inboundCidrs is kept;
+   values-aws.yaml does not need to repeat it.
 3. Reads the four images again and fails if any other service's image changed,
    or if the chosen service does not run the requested image.
 4. Runs test/e2e/smoke.py against --smoke-host and --smoke-port, then writes the
@@ -323,12 +395,22 @@ The script:
 
 For the ALB, set --smoke-host to the Ingress address shown by kubectl get ingress
 gf and --smoke-port to 80. Export the private seed secret as ACCESS_SEED_SECRET in
-the shell first; never put it on the command line. The smoke suite's ledger and
-reservation checks read through the kind PostgreSQL fixture Pod
-(--smoke-postgres-pod) or Docker Compose. Neither exists on EKS, so against the
-ALB those checks fail and the record says failed. Report that result as it is.
---skip-smoke records smoke as skipped and verified as false; a skipped record is
-not evidence that the deployment works.
+the shell first; never put it on the command line. EKS has no database Pod, so
+pass --smoke-db-secret gateflow-runtime for the smoke suite's ledger and
+reservation checks. The smoke suite then creates a short-lived query Pod
+(`gateflow-smoke-db-<random>`, image postgres:17) on a gateflow.io/workload=services
+node, which the RDS security group admits. Kubernetes gives it METERING_DATABASE_URL
+from that Secret (another key with --smoke-db-secret-key) as DATABASE_URL, so it
+reads accounting.ledger_entries and accounting.reservations as the metering role,
+which owns them, with the URL's sslmode=require; no superuser or new role is
+needed. The URL never reaches the operator's machine, the command line or the
+logs, and database URLs in kubectl and psql errors are redacted. The Pod runs as a
+non-root user without a service account token, sleeps at most 15 minutes, and is
+deleted when the smoke suite ends, whether it passed, failed or was interrupted.
+--smoke-db-secret and --smoke-postgres-pod (the kind PostgreSQL fixture Pod) are
+mutually exclusive. The record holds only the Secret name and key under
+smoke.db_secret, never the URL. --skip-smoke records smoke as skipped and verified
+as false; a skipped record is not evidence that the deployment works.
 
 The record is JSON, written to `.local/deployments/<UTC time>-<service>.json`
 (ignored by Git) unless --record names another path. It holds the time,
@@ -352,7 +434,7 @@ To roll back, deploy the previous digest with the same command, or name the
 earlier record:
 
 ```text
-python deploy/helm/deploy.py --kubeconfig <path> --kube-context <eks-context> -f deploy/helm/values-aws.yaml --rollback-from .local/deployments/<record>.json --smoke-host <alb-dns-name> --smoke-port 80
+python deploy/helm/deploy.py --kubeconfig <path> --kube-context <eks-context> -f deploy/helm/values-aws.yaml --rollback-from .local/deployments/<record>.json --smoke-host <alb-dns-name> --smoke-port 80 --smoke-db-secret gateflow-runtime
 ```
 
 --rollback-from takes the service and previous_digest from the record. A null
@@ -375,3 +457,7 @@ CI rehearses this on kind with rehearse.py --deploy-check: it moves the gateway 
 an older published digest, runs smoke, rolls back from the record, runs smoke
 again and checks that only the gateway's image changed in both records. Its
 records are written next to the rehearsal kubeconfig, in .local/deployments.
+On kind, the fresh install's smoke reads the ledger through the PostgreSQL fixture
+Pod, and the --existing-cluster upgrade's smoke through a query Pod with
+--db-secret gateflow-runtime, using the fixture's sslmode=disable URL as it is, so
+CI runs both modes.

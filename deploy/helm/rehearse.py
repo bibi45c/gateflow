@@ -27,6 +27,10 @@ BOOTSTRAP_USER = 'gateflow_admin'
 # A published gateway image built from 75da74a, older than the chart's default imageTag.
 DEPLOY_CHECK_SERVICE = 'gateway'
 DEPLOY_CHECK_DIGEST = 'sha256:daa59ab42b40fa40ec45579ec12dcacf6ed953bd1f509d2aebce1fdd1c74f7db'
+# A short in-cluster k6 plan: about 50 requests, sized for a kind node.
+LOAD_CHECK_ENV = {'LEVELS':'2','WARMUP_S':'5','RAMP_S':'5','HOLD_S':'20','PAIRED':'0'}
+LOAD_CHECK_SIZE = ['--k6-cpu','500m','--k6-memory','512Mi']
+LOAD_CHECK_OUTPUTS = ['exit','run.json','run.results.json','summary.md','k6.log','run-record.json']
 
 
 def kube_command(cluster, config, *args):
@@ -51,6 +55,15 @@ def secret(kube, namespace, name, values):
 
 def smoke_environment(environment, config):
     return environment | {'KUBECONFIG':str(config), 'ACCESS_SEED_SECRET':SEED_SECRET}
+
+
+def smoke_command(cluster, namespace, existing_cluster):
+    """The smoke suite through the ingress forward. A fresh install reads the ledger in the
+    PostgreSQL fixture Pod; the upgrade of an existing cluster reads it as on EKS, through a
+    query Pod using the metering URL of gateflow-runtime, so CI runs both modes."""
+    database=['--db-secret','gateflow-runtime'] if existing_cluster else ['--postgres-pod','postgres-0']
+    return [sys.executable,str(ROOT/'test/e2e/smoke.py'),'--kube-context','kind-'+cluster,
+            '--namespace',namespace,*database,'--port','18071']
 
 
 def load_credentials(path):
@@ -133,6 +146,47 @@ def deploy_check(args, kube):
     return 0
 
 
+def load_check_command(args, folder):
+    settings=[option for key,value in LOAD_CHECK_ENV.items() for option in ('--env',f'{key}={value}')]
+    return [sys.executable,str(ROOT/'loadtest/kube_run.py'),'--kubeconfig',str(args.kubeconfig),
+            '--kube-context','kind-'+args.cluster,'--namespace',args.namespace,'--out-dir',str(folder),
+            *LOAD_CHECK_SIZE,*settings]
+
+
+def load_check_problems(record, results):
+    """Problems with the record and results of the in-cluster k6 run."""
+    problems=[]
+    if record.get('error'):
+        problems.append(f"run failed: {record['error']}")
+    if record.get('k6_exit_code')!=0:
+        problems.append(f"k6 exited with {record.get('k6_exit_code')}")
+    if record.get('summarize_exit_code')!=0:
+        problems.append(f"summarize exited with {record.get('summarize_exit_code')}")
+    if record.get('cleanup')!='deleted':
+        problems.append(f"cleanup: {record.get('cleanup')}")
+    phases=(results or {}).get('phases') or []
+    if not phases or not sum(row.get('sent',0) for row in phases):
+        problems.append('no result rows with requests sent')
+    return problems
+
+
+def load_check(args):
+    """Run a short k6 plan inside the cluster with loadtest/kube_run.py and check its results."""
+    folder=args.kubeconfig.parent/'loadtest'/'rehearsal'
+    for name in LOAD_CHECK_OUTPUTS: (folder/name).unlink(missing_ok=True)
+    subprocess.run(load_check_command(args,folder))  # its exit code is in the record
+    record=folder/'run-record.json'
+    if not record.exists():
+        raise RuntimeError('kube_run.py wrote no run record')
+    results=folder/'run.results.json'
+    problems=load_check_problems(json.loads(record.read_text(encoding='utf-8')),
+                                 json.loads(results.read_text(encoding='utf-8')) if results.exists() else None)
+    if problems:
+        raise RuntimeError('; '.join(problems))
+    print(f'Ran k6 in the cluster and summarized it; outputs in {folder}')
+    return 0
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cluster', required=True)
@@ -142,6 +196,8 @@ def main(argv=None):
     parser.add_argument('--existing-cluster', action='store_true')
     parser.add_argument('--deploy-check', action='store_true',
                         help='on an installed cluster, deploy one gateway digest with deploy.py and roll it back')
+    parser.add_argument('--load-check', action='store_true',
+                        help='on an installed cluster, run a short k6 plan inside it with loadtest/kube_run.py')
     parser.add_argument('--autoscale-check', action='store_true',
                         help='install Prometheus and KEDA and rehearse gateway autoscaling instead of the smoke suite')
     args=parser.parse_args(argv)
@@ -149,11 +205,19 @@ def main(argv=None):
         parser.error('use --deploy-check or --autoscale-check, not both')
     if args.deploy_check and (not args.existing_cluster or args.prepare_only):
         parser.error('--deploy-check needs --existing-cluster with an installed release')
+    if args.load_check and (not args.existing_cluster or args.prepare_only):
+        parser.error('--load-check needs --existing-cluster with an installed release')
+    if args.load_check and args.deploy_check:
+        parser.error('--load-check and --deploy-check are separate runs')
+    if args.load_check and args.autoscale_check:
+        parser.error('--load-check and --autoscale-check are separate runs')
     if args.autoscale_check and not args.existing_cluster:
         parser.error('--autoscale-check requires --existing-cluster')
     kube=kube_command(args.cluster,args.kubeconfig)
     if args.deploy_check:
         return deploy_check(args,kube)
+    if args.load_check:
+        return load_check(args)
     args.kubeconfig.parent.mkdir(parents=True,exist_ok=True)
     if not args.existing_cluster:
         run(['kind','create','cluster','--name',args.cluster,'--kubeconfig',str(args.kubeconfig),
@@ -181,8 +245,7 @@ def main(argv=None):
     run([*helm,'upgrade','--install','gf',str(HERE/'gateflow'),'-n',args.namespace,'-f',str(HERE/'values-kind.yaml'),
          '--wait','--wait-for-jobs','--timeout','6m'])
     with ingress_forward(kube):
-        run([sys.executable,str(ROOT/'test/e2e/smoke.py'),'--kube-context','kind-'+args.cluster,
-             '--namespace',args.namespace,'--postgres-pod','postgres-0','--port','18071'],
+        run(smoke_command(args.cluster,args.namespace,args.existing_cluster),
             env=smoke_environment(dict(os.environ), args.kubeconfig))
     return 0
 

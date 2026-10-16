@@ -7,6 +7,10 @@
   "secretName": "gateflow-runtime",
   "bootstrapSecretName": "gateflow-bootstrap",
   "postgresImage": "postgres:17",
+  "ingress": {
+    "inboundCidrs": [],
+    "allowAnySource": false
+  },
   "shutdown": {
     "preStop": 5,
     "drain": 10,

@@ -125,7 +125,7 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(exit.exception.code, 0)
         for option in ['--kubeconfig', '--kube-context', '--namespace', '--release', '--service', '--digest',
                        '--rollback-from', '--values', '--record', '--smoke-host', '--smoke-port',
-                       '--smoke-postgres-pod', '--skip-smoke']:
+                       '--smoke-postgres-pod', '--smoke-db-secret', '--smoke-db-secret-key', '--skip-smoke']:
             self.assertIn(option, out.getvalue())
 
     def test_smoke_choice_and_target_are_required(self):
@@ -175,6 +175,43 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(smoke[2:], ['--host', '127.0.0.1', '--port', '18071', '--kube-context', 'kind-gateflow71',
                                      '--namespace', 'gateflow', '--postgres-pod', 'postgres-0'])
         self.assertEqual(cluster.smoke_env['KUBECONFIG'], str(self.kubeconfig))
+
+    def test_smoke_db_secret_is_passed_to_smoke_and_recorded_by_name(self):
+        cluster = FakeCluster()
+        code, record = self.run_deploy(cluster, '--service', 'gateway', '--digest', NEW, '--smoke-host', 'alb.example',
+                                       '--smoke-port', '80', '--smoke-db-secret', 'gateflow-runtime')
+        self.assertEqual(code, 0, record['error'])
+        self.assertEqual(set(record), RECORD_KEYS)
+        smoke = next(c for c in cluster.commands if c[1].endswith('smoke.py'))
+        self.assertEqual(smoke[2:], ['--host', 'alb.example', '--port', '80', '--kube-context', 'kind-gateflow71',
+                                     '--namespace', 'gateflow', '--db-secret', 'gateflow-runtime'])
+        self.assertNotIn('--postgres-pod', smoke)
+        self.assertEqual(cluster.smoke_env['KUBECONFIG'], str(self.kubeconfig))
+        self.assertEqual(record['smoke'], {'result': 'passed', 'exit_code': 0, 'host': 'alb.example', 'port': 80,
+                                           'db_secret': {'name': 'gateflow-runtime', 'key': 'METERING_DATABASE_URL'}})
+        text = (self.dir/'record.json').read_text(encoding='utf-8')
+        for secret in ['postgres://', KUBE_SECRET, ENV_SECRET]:
+            self.assertNotIn(secret, text)
+
+    def test_smoke_db_secret_key_is_passed_and_recorded(self):
+        cluster = FakeCluster()
+        code, record = self.run_deploy(cluster, '--service', 'gateway', '--digest', NEW, '--smoke-port', '80',
+                                       '--smoke-db-secret', 'other-runtime', '--smoke-db-secret-key', 'ACCESS_DATABASE_URL')
+        self.assertEqual(code, 0, record['error'])
+        smoke = next(c for c in cluster.commands if c[1].endswith('smoke.py'))
+        self.assertEqual(smoke[-4:], ['--db-secret', 'other-runtime', '--db-secret-key', 'ACCESS_DATABASE_URL'])
+        self.assertEqual(record['smoke']['db_secret'], {'name': 'other-runtime', 'key': 'ACCESS_DATABASE_URL'})
+
+    def test_smoke_db_secret_excludes_the_postgres_pod(self):
+        base = ['--kubeconfig', 'k', '--kube-context', 'c', '--service', 'gateway', '--digest', NEW, '--smoke-port', '80']
+        for argv in [base + ['--smoke-db-secret', 'gateflow-runtime', '--smoke-postgres-pod', 'postgres-0'],
+                     base + ['--smoke-db-secret-key', 'METERING_DATABASE_URL'],
+                     base + ['--smoke-postgres-pod', 'postgres-0', '--smoke-db-secret-key', 'METERING_DATABASE_URL']]:
+            with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                deploy.parse_args(argv)
+        args = deploy.parse_args(base + ['--smoke-db-secret', 'gateflow-runtime'])
+        self.assertEqual((args.smoke_db_secret, args.smoke_db_secret_key, args.smoke_postgres_pod),
+                         ('gateflow-runtime', None, None))
 
     def test_record_holds_no_secrets(self):
         values = self.dir/'values-aws.json'

@@ -53,12 +53,20 @@ def parse_args(argv):
     smoke = parser.add_argument_group('smoke')
     smoke.add_argument('--smoke-host', default='127.0.0.1', help='ingress host for test/e2e/smoke.py')
     smoke.add_argument('--smoke-port', type=int, help='ingress port for test/e2e/smoke.py')
-    smoke.add_argument('--smoke-postgres-pod', help='PostgreSQL Pod for the smoke ledger checks')
+    database = smoke.add_mutually_exclusive_group()
+    database.add_argument('--smoke-postgres-pod', help='PostgreSQL Pod for the smoke ledger checks')
+    database.add_argument('--smoke-db-secret', metavar='SECRET',
+                          help='Secret with the database URL of a short-lived smoke query Pod, '
+                               'for example gateflow-runtime')
+    smoke.add_argument('--smoke-db-secret-key', metavar='KEY',
+                       help='key of the URL in --smoke-db-secret (default: METERING_DATABASE_URL)')
     smoke.add_argument('--skip-smoke', action='store_true',
                        help='do not run smoke; the record says skipped and is not success evidence')
     args = parser.parse_args(argv)
     if args.skip_smoke == (args.smoke_port is not None):
         parser.error('pass exactly one of --smoke-port and --skip-smoke')
+    if args.smoke_db_secret_key and not args.smoke_db_secret:
+        parser.error('--smoke-db-secret-key requires --smoke-db-secret')
     if args.digest and not args.service:
         parser.error('--digest requires --service')
     return args
@@ -232,6 +240,10 @@ def deploy(args, runner, stamp):
               'helm_revision_before': None, 'helm_revision': None,
               'smoke': {'result': 'not-run', 'exit_code': None, 'host': args.smoke_host, 'port': args.smoke_port},
               'verified': False, 'error': None}
+    if args.smoke_db_secret and not args.skip_smoke:
+        # Only the names; the URL stays in the cluster.
+        record['smoke']['db_secret'] = {'name': args.smoke_db_secret,
+                                        'key': args.smoke_db_secret_key or 'METERING_DATABASE_URL'}
     # The record is posted publicly, so local paths are kept repository-relative.
     record_path(record, 'chart', args.chart)
     if args.rollback_from:
@@ -282,6 +294,11 @@ def deploy(args, runner, stamp):
         if args.smoke_postgres_pod:
             command += ['--kube-context', args.kube_context, '--namespace', args.namespace,
                         '--postgres-pod', args.smoke_postgres_pod]
+        elif args.smoke_db_secret:
+            command += ['--kube-context', args.kube_context, '--namespace', args.namespace,
+                        '--db-secret', args.smoke_db_secret]
+            if args.smoke_db_secret_key:
+                command += ['--db-secret-key', args.smoke_db_secret_key]
         # The smoke suite's kubectl calls pass --context but read the kubeconfig from the environment.
         smoke = runner(command, env=os.environ | {'KUBECONFIG': str(args.kubeconfig)})
         record['smoke'].update(result='passed' if smoke.returncode == 0 else 'failed', exit_code=smoke.returncode)

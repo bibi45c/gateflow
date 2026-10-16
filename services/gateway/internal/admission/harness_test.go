@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -182,15 +181,12 @@ func or(reply, fallback answer) answer {
 	return fallback
 }
 
-// closedPortURL returns the URL of a local port that nothing listens on.
+// closedPortURL returns the URL of a local port that nothing listens on: port 0,
+// which no socket can bind, so the dial fails before any byte of the request is
+// written. A port freed by closing a listener could go to a later test server, such
+// as the upstream that start binds (#109).
 func closedPortURL(t *testing.T) string {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := listener.Addr().String()
-	listener.Close()
-	return "http://" + addr
+	return "http://127.0.0.1:0"
 }
 
 // post sends the client's request with the gateway key in x-api-key, or with header

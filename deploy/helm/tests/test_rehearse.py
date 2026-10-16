@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 HELM = Path(__file__).resolve().parents[1]
 
@@ -31,6 +32,34 @@ class RehearsalTests(unittest.TestCase):
         env=module.smoke_environment({'ACCESS_SEED_SECRET':'unrelated-compose-secret'},Path('local-config'))
         self.assertEqual(env['ACCESS_SEED_SECRET'],'seed-secret-local-only')
         self.assertEqual(env['KUBECONFIG'],'local-config')
+
+    def test_install_smoke_uses_the_fixture_pod_and_upgrade_smoke_the_runtime_secret(self):
+        module=load_rehearse()
+        install=module.smoke_command('gateflow71ci','gateflow',False)
+        upgrade=module.smoke_command('gateflow71ci','gateflow',True)
+        for command in (install,upgrade):
+            self.assertTrue(command[1].endswith('smoke.py'))
+            self.assertEqual(command[2:6],['--kube-context','kind-gateflow71ci','--namespace','gateflow'])
+            self.assertEqual(command[-2:],['--port','18071'])
+        self.assertEqual(install[6:8],['--postgres-pod','postgres-0'])
+        self.assertNotIn('--db-secret',install)
+        self.assertEqual(upgrade[6:8],['--db-secret','gateflow-runtime'])
+        self.assertNotIn('--postgres-pod',upgrade)
+
+    def test_main_runs_each_smoke_mode_once_across_install_and_upgrade(self):
+        module=load_rehearse()
+        with tempfile.TemporaryDirectory() as directory:
+            config=Path(directory)/'kubeconfig'
+            smokes=[]
+            def run(command,**kwargs):
+                if command[1:2] and command[1].endswith('smoke.py'):
+                    smokes.append(command)
+            with mock.patch.object(module,'run',run),mock.patch.object(module,'apply'), \
+                    mock.patch.object(module,'ingress_forward',lambda kube:contextlib.nullcontext()):
+                module.main(['--cluster','gateflow71ci','--kubeconfig',str(config)])
+                module.main(['--cluster','gateflow71ci','--kubeconfig',str(config),'--existing-cluster'])
+        self.assertEqual(smokes,[module.smoke_command('gateflow71ci','gateflow',False),
+                                 module.smoke_command('gateflow71ci','gateflow',True)])
 
     def test_bootstrap_runs_as_non_superuser_database_owner(self):
         module=load_rehearse()
@@ -103,3 +132,57 @@ class DeployCheckTests(unittest.TestCase):
         self.assertTrue(any('rollback record is not verified' in p for p in problems))
         self.assertTrue(any('every image' in p for p in problems))
         self.assertTrue(module.deploy_check_problems(*self.records('sha256:'+'0'*64),'gateway',digest))
+
+class LoadCheckTests(unittest.TestCase):
+    def good(self):
+        record={'error':None,'k6_exit_code':0,'summarize_exit_code':0,'cleanup':'deleted'}
+        results={'phases':[{'phase':'warmup','sent':10},{'phase':'hold','sent':40}]}
+        return record,results
+
+    def test_load_check_needs_an_installed_cluster_and_runs_alone(self):
+        module=load_rehearse()
+        for argv in [['--cluster','gateflow71','--kubeconfig','k','--load-check'],
+                     ['--cluster','gateflow71','--kubeconfig','k','--load-check','--existing-cluster','--prepare-only'],
+                     ['--cluster','gateflow71','--kubeconfig','k','--load-check','--existing-cluster','--deploy-check'],
+                     ['--cluster','gateflow71','--kubeconfig','k','--load-check','--existing-cluster','--autoscale-check']]:
+            with self.subTest(argv=argv),contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
+                module.main(argv)
+
+    def test_load_check_runs_only_kube_run_with_a_short_plan(self):
+        module=load_rehearse()
+        with tempfile.TemporaryDirectory() as directory:
+            config=Path(directory)/'kubeconfig'
+            folder=Path(directory)/'loadtest'/'rehearsal'
+            calls=[]
+            def run(command,**kwargs):
+                calls.append(command)
+                folder.mkdir(parents=True,exist_ok=True)
+                record,results=self.good()
+                (folder/'run-record.json').write_text(json.dumps(record),encoding='utf-8')
+                (folder/'run.results.json').write_text(json.dumps(results),encoding='utf-8')
+            with mock.patch.object(module.subprocess,'run',run),mock.patch.object(module,'run') as other, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(module.main(['--cluster','gateflow71','--kubeconfig',str(config),
+                                              '--existing-cluster','--load-check']),0)
+            other.assert_not_called()
+        command,=calls
+        self.assertTrue(command[1].endswith('kube_run.py'))
+        self.assertEqual(command[2:8],['--kubeconfig',str(config),'--kube-context','kind-gateflow71','--namespace','gateflow'])
+        self.assertEqual(command[command.index('--out-dir')+1],str(folder))
+        settings=[command[i+1] for i,word in enumerate(command) if word=='--env']
+        self.assertEqual(settings,['LEVELS=2','WARMUP_S=5','RAMP_S=5','HOLD_S=20','PAIRED=0'])
+
+    def test_good_run_passes(self):
+        module=load_rehearse()
+        self.assertEqual(module.load_check_problems(*self.good()),[])
+
+    def test_failed_summary_missing_rows_and_leftovers_fail(self):
+        module=load_rehearse()
+        record,results=self.good()
+        self.assertTrue(module.load_check_problems(record|{'summarize_exit_code':2},results))
+        self.assertTrue(module.load_check_problems(record|{'k6_exit_code':107},results))
+        self.assertTrue(module.load_check_problems(record|{'error':'interrupted'},results))
+        self.assertTrue(module.load_check_problems(record|{'cleanup':'kubectl delete exited with 1'},results))
+        self.assertTrue(module.load_check_problems(record,{'phases':[]}))
+        self.assertTrue(module.load_check_problems(record,{'phases':[{'phase':'hold','sent':0}]}))
+        self.assertTrue(module.load_check_problems(record,None))

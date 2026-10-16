@@ -1,9 +1,26 @@
 # prometheus-community/prometheus; the chart version is pinned in versions.json.
-# Only the server runs. It scrapes the gateway Pods for the two KEDA signals.
+# The server scrapes the gateway Pods for the two KEDA signals, plus what the load
+# test report queries: access and metering /metrics, kubelet cAdvisor container
+# usage, and a minimal kube-state-metrics for Deployment and HPA replica series.
 alertmanager:
   enabled: false
+# Subchart; only Deployment, HPA and Pod objects of namespace gateflow. Pods give
+# restarts, terminations and the frozen resource limits during a run window.
 kube-state-metrics:
-  enabled: false
+  enabled: true
+  collectors:
+    - deployments
+    - horizontalpodautoscalers
+    - pods
+  namespaces: gateflow
+  nodeSelector:
+    gateflow.io/workload: services
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
 prometheus-node-exporter:
   enabled: false
 prometheus-pushgateway:
@@ -32,8 +49,11 @@ server:
 
 serverFiles:
   prometheus.yml:
-    # Replaces the chart's default jobs. The job name is autoscaling.job in the
-    # FlowGate chart, and the namespace is its release namespace.
+    # Replaces the chart's default jobs. gateflow-gateway is autoscaling.job in the
+    # FlowGate chart, so keep its name and relabelling; the namespace is the
+    # release namespace. Target labels are only job, instance, namespace and pod
+    # (node for cAdvisor), never service, so the services' own service label is
+    # kept as is (no exported_service).
     scrape_configs:
       - job_name: gateflow-gateway
         metrics_path: /metrics
@@ -61,3 +81,101 @@ serverFiles:
             target_label: namespace
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: pod
+      - job_name: gateflow-access
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - gateflow
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            regex: gateflow
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            regex: access
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: http
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_phase]
+            regex: Running
+            action: keep
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+      # Metering latency is the report's proxy for database contention.
+      - job_name: gateflow-metering
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - gateflow
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            regex: gateflow
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            regex: metering
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: http
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_phase]
+            regex: Running
+            action: keep
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+      # Container CPU, memory and network from each node's kubelet, through the API
+      # server proxy (the chart's ClusterRole grants nodes/proxy). Only the series
+      # the report queries, and only namespace gateflow (k6 and mock included), are
+      # stored.
+      - job_name: kubernetes-cadvisor
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        authorization:
+          credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: node
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_network_receive_bytes_total|container_network_transmit_bytes_total
+            action: keep
+          - source_labels: [namespace]
+            regex: gateflow
+            action: keep
+      # kube_deployment_* and kube_horizontalpodautoscaler_* for the replica series.
+      # honor_labels keeps the exported namespace, deployment and pod labels, which
+      # would otherwise become exported_namespace and so on.
+      - job_name: kube-state-metrics
+        honor_labels: true
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - monitoring
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            regex: kube-state-metrics
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: http
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_phase]
+            regex: Running
+            action: keep
