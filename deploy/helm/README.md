@@ -123,6 +123,21 @@ The public ALB exposes exactly /v1/messages and /v1/responses, uses IP targets,
 Health/metrics/internal APIs are not Ingress routes; their Services are ClusterIP.
 An operator must separately verify ALB behavior; kind does not prove AWS behavior.
 
+Until HTTPS lands, the ALB listens on plain HTTP only, so gateway keys
+(x-api-key, Authorization: Bearer) cross the internet in clear text. As a stopgap,
+the chart restricts the ALB security group to the sources in ingress.inboundCidrs
+(alb.ingress.kubernetes.io/inbound-cidrs). With environment=aws the chart refuses
+to render while the list is empty, and rejects 0.0.0.0/0 (any /0) unless
+ingress.allowAnySource=true is also set. values-aws.yaml holds no addresses; pass
+your own IP at install time, or keep it in an uncommitted values file:
+
+```text
+helm install gf deploy/helm/gateflow --kubeconfig <path> --kube-context <eks-context> -n gateflow -f deploy/helm/values-aws.yaml --set-json 'ingress.inboundCidrs=["<your IP>/32"]' --wait --wait-for-jobs
+```
+
+Only the listed IPs can reach the ALB; keys are still sent over unencrypted HTTP.
+kind uses ingress-nginx and ignores these values.
+
 Load generators inside the cluster should target http://gf-gateway:8080 (same
 namespace), or http://gf-gateway.<namespace>.svc.cluster.local:8080. Public ALB is
 only for the ingress streaming check; load should not traverse NAT and return.
@@ -157,7 +172,9 @@ The script:
 2. Runs helm upgrade --wait --wait-for-jobs with the chart from this checkout.
    The deployed values are the base, then each -f file, then pins that keep
    imageTag and the other three digests as deployed and set only the chosen
-   service's digest. It never runs helm install or helm rollback.
+   service's digest. It never runs helm install or helm rollback. Because the
+   deployed values are the base, the installed ingress.inboundCidrs is kept;
+   values-aws.yaml does not need to repeat it.
 3. Reads the four images again and fails if any other service's image changed,
    or if the chosen service does not run the requested image.
 4. Runs test/e2e/smoke.py against --smoke-host and --smoke-port, then writes the
