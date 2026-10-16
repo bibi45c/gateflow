@@ -1,0 +1,6 @@
+{
+  "repository": "https://grafana-community.github.io/helm-charts",
+  "chart": "grafana",
+  "version": "14.0.0",
+  "appVersion": "13.2.4"
+}
