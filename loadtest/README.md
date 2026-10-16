@@ -12,6 +12,8 @@ Scheduled load on the gateway, following
 | `test_kube_run.py` | Unit tests of `kube_run.py`; they need neither kubectl nor a cluster |
 | `prom_export.py` | Exports the Prometheus series of a run window through a port-forward |
 | `test_prom_export.py` | Unit tests of `prom_export.py`, with a fake port-forward and Prometheus |
+| `derive.py` | Derives L, C, D and T from the single-Pod calibration repeats |
+| `test_derive.py` | Unit tests of `derive.py`, on run folders built by the tests |
 
 ## Run
 
@@ -244,6 +246,38 @@ number of series and samples it returned. An earlier export is kept unless
 others are still written, and the index marks it `empty`), and with 1 on an HTTP,
 connection or port-forward error. Without autoscaling, leave out the HPA queries
 with `--skip hpa_desired --skip hpa_conditions`.
+
+## Derive L, C, D and T
+
+From the single-Pod calibration repeats, each a folder with `run-record.json`,
+`run.results.json` (or `results.json`, as in the data bundle) and the `prom/`
+export, `derive.py` computes the values of the report template (Part 0.3):
+
+```text
+python loadtest/derive.py .local/loadtest/calib-1 .local/loadtest/calib-2 .local/loadtest/calib-3 --out .local/loadtest/calib-derived.json
+```
+
+- Runs that are not valid (an error in the record, a non-zero k6 or `summarize.py`
+  exit code, a non-zero check, or `sent_source` other than `gateflow_sent`) are
+  listed and left out.
+- **L** is the highest hold level such that it and every lower hold level pass in
+  every valid run, a level passing when `completed * 1000 >= 995 * scheduled`; the
+  next level is the first violated one.
+- Over the hold window of L, from the record's `phases` (or the results' offsets
+  after `load_start`): **D** = increase of `gateway_duration_sum` over increase of
+  `gateway_duration_count`, between their first and last samples inside the window,
+  a counter reset counted as a restart from zero; **C** = floor of the mean of the
+  `active` samples inside the window. Across repeats, C is the floor of the median
+  of the per-run C, and D the median of the per-run D. **T** = floor(0.7 × C).
+- It reports the cross-check |C − L × D| ≤ 10% of C, and the k6 `duration_ms.p50`
+  of the same holds next to D. The cross-check is approximate: the gateway's
+  duration includes the work before admission, while `active` counts only admitted
+  requests.
+
+`--level <req/s>` measures C and D over another hold level instead of L. The script
+prints a Markdown summary, writes the JSON to `--out`, and exits with 2 when no run
+is valid or no level passes, with 1 when an input is missing, and otherwise with 0,
+also when the cross-check is off; then record why.
 
 ## Settings
 
