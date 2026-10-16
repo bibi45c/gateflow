@@ -5,14 +5,15 @@ They are drawn from the code, and every diagram names the files it was checked
 against, so a reviewer can compare the two. Where the build differs from the
 proposal, the difference is listed under [Deviations](#7-deviations-from-the-proposal).
 
-- **Snapshot:** `main` at `467167c` (16 October 2026). Earlier versions were drawn at
+- **Snapshot:** `main` at `ea0f9b5` (16 October 2026). Earlier versions were drawn at
   `31d5c4a` (14 October) and `de208ff` (15 October). The S3 cloud runs have not
   happened yet; the first is on 17 October. The views are checked again at the
   freeze on 19 October, before they go into the slides (#17).
 - **Scope:** S1 and S2 as built: `POST /v1/messages` and `POST /v1/responses` through
   the gateway, key verification by model and protocol, cost hold and settlement, and
   Prometheus metrics on every service. S3 as built: the Helm chart, KEDA autoscaling,
-  Prometheus, in-cluster k6 and `deploy.py`, all run on kind. The `deploy/aws`
+  Prometheus, the opt-in Grafana dashboard, in-cluster k6 and `deploy.py`, all run
+  on kind. The `deploy/aws`
   scripts have not run against EKS or RDS; of them, `reset_db.py` has run on kind.
   The AWS environment is written as Terraform but not applied.
 - **Legend:**
@@ -255,9 +256,9 @@ Checked against: `deploy/compose/compose.yaml`, `deploy/compose/postgres-init.sq
 *Written, not deployed.* Everything in AWS is on `main` but has not run yet. The
 Terraform (#90) is not applied; the first apply is on 17 October, and only bibi45c
 runs it. The Helm chart (#106), KEDA with Prometheus (#112, #118), the in-cluster k6
-(#117, #119) and the deployment script (#111) run on kind, not yet on EKS. Only the
-image pipeline (#83) and GHCR run today. So every AWS box is dotted, with a tag for
-its state (see the legend).
+(#117, #119), the Grafana dashboard (#115) and the deployment script (#111) run on
+kind, not yet on EKS. Only the image pipeline (#83) and GHCR run today. So every
+AWS box is dotted, with a tag for its state (see the legend).
 
 ```mermaid
 flowchart LR
@@ -282,6 +283,7 @@ flowchart LR
           ACM["access, metering<br/>one Pod each [kind]"]
           JOB["bootstrap and seed Jobs [kind]"]
           PROM["Prometheus server, emptyDir, 6 h<br/>kube-state-metrics; cAdvisor from<br/>each kubelet via the API server [kind]"]
+          GRAF["Grafana 13.2.4, optional ClusterIP<br/>dashboard ConfigMap, no persistence [kind]"]
           KEDA["KEDA, gateway ScaledObject [kind]"]
         end
         subgraph gen["node group load-generator: 1 × c6i.xlarge, tainted [TF]"]
@@ -297,6 +299,7 @@ flowchart LR
   GHCR[("GHCR<br/>ghcr.io/bibi45c/gateflow-*<br/>tagged by commit, public")]
 
   OPR -.->|"HTTP :80, from the /32 only"| ALB
+  OPR -.->|"localhost port-forward only"| GRAF
   ALB -.->|"IP targets, /readyz"| GW
   GW -.->|"verify, reserve, settle"| ACM
   GW -.->|"mock channels"| MU
@@ -305,6 +308,7 @@ flowchart LR
   JOB -.->|"roles, schemas, seed"| RDS
   PROM -.->|"GET /metrics"| GW
   PROM -.->|"GET /metrics"| ACM
+  GRAF -.->|"PromQL, private datasource"| PROM
   KEDA -.->|"two triggers"| PROM
   KEDA -.->|"scales 2 to 4"| GW
   TFC -.->|"creates"| aws
@@ -314,7 +318,7 @@ flowchart LR
   NAT -.->|"anonymous pull"| GHCR
 
   classDef notrun stroke-dasharray:2 2
-  class TFC,DEP,AWSS,LT,ALB,NAT,GW,ACM,JOB,PROM,KEDA,MU,K6,RDS notrun
+  class TFC,DEP,AWSS,LT,ALB,NAT,GW,ACM,JOB,PROM,GRAF,KEDA,MU,K6,RDS notrun
   style aws stroke-dasharray:2 2
   style pub stroke-dasharray:2 2
   style priv stroke-dasharray:2 2
@@ -338,9 +342,16 @@ flowchart LR
   load check are kind rehearsals run by hand, not in CI
   (`rehearse.py --autoscale-check`, `--load-check`).
 - **Pod placement:** gateway, access, metering, the bootstrap and seed Jobs,
-  Prometheus, kube-state-metrics and KEDA select `gateflow.io/workload=services`.
+  Prometheus, kube-state-metrics, Grafana and KEDA select `gateflow.io/workload=services`.
   mock-upstream and k6 select `gateflow.io/workload=load-generator` and tolerate its
   taint, so they share the one generator node.
+- **Dashboard:** `dashboard.enabled=true` adds the dashboard ConfigMap to the
+  application release. `deploy/helm/dashboard.py` installs Grafana separately in
+  the same namespace, checks the existing Prometheus release and leaves it
+  unchanged. Grafana has no Ingress, Kubernetes RBAC or mounted API token; the
+  operator views it through a localhost port-forward. It requests 256 MiB with a
+  1 GiB limit and has no persistent volume. The kind screenshot and its UTC load
+  interval are recorded in [the dashboard instructions](../../deploy/helm/README.md#load-and-scaling-dashboard-74).
 - **Scaling:** with `values-aws.yaml`, KEDA's HPA owns the gateway's replica count,
   between 2 and 4. T is 70 and D is 20 s, provisional until the 17 October single-Pod
   calibration (#73). access and metering stay at one replica.
@@ -361,7 +372,8 @@ flowchart LR
 Checked against: `deploy/terraform/` (`main.tf`, `variables.tf`, `modules/*`, `README.md`),
 `deploy/helm/gateflow/` (`values.yaml`, `templates/deployments.yaml`,
 `templates/ingress.yaml`, `templates/scaledobject.yaml`), `deploy/helm/values-aws.yaml`,
-`deploy/helm/monitoring/`, `deploy/helm/README.md`, `deploy/helm/deploy.py`,
+`deploy/helm/monitoring/`, `deploy/helm/README.md`, `deploy/helm/dashboard.py`,
+`deploy/helm/gateflow/templates/dashboard.yaml`, `deploy/helm/deploy.py`,
 `deploy/aws/`, `loadtest/kube_run.py`, `loadtest/README.md`,
 `.github/workflows/images.yml`, `.github/workflows/helm.yml`,
 `deploy/docker/README.md`, #21.
@@ -607,6 +619,6 @@ The S3 rows come from [deploy/helm/README.md](../../deploy/helm/README.md),
 | Aurora, Argo CD, Cognito and CloudFront (section 5.5) | Plain RDS PostgreSQL in Terraform, images in GHCR instead of ECR, and the operator-run `deploy/helm/deploy.py` instead of Argo CD: one service by digest, rolled back from its record (#111) | Cost and time |
 | Distributed tracing (UC15) | Prometheus metrics and JSON logs only (`docs/observability.md`) | Tracing is optional and its overhead unmeasured |
 | Public HTTPS ingress (section 5.5) | The ALB listens on plain HTTP, with no TLS. It admits only `ingress.inboundCidrs`, the operator's /32; the chart refuses an empty list, and any `/0` unless `ingress.allowAnySource=true` (#116) | HTTPS has not landed; the source allow-list is the stopgap, and keys still cross the internet in clear text |
-| Prometheus and one Grafana dashboard (section 5.5) | The Prometheus server runs on an `emptyDir` with 6 h retention, so its data is lost with the Pod; `loadtest/prom_export.py` exports each run's series before teardown. No Grafana dashboard is on `main` | Terraform installs no EBS CSI driver, so a volume claim would stay Pending; the scaling queries need only the last minutes |
+| Prometheus and one Grafana dashboard (section 5.5) | Both run on kind (#115); neither has run on EKS. Prometheus uses an `emptyDir` with 6 h retention, so its data is lost with the Pod; `loadtest/prom_export.py` exports each run's series before teardown. Grafana is opt-in, has no persistence and loads its dashboard from a ConfigMap | Terraform installs no EBS CSI driver, so a volume claim would stay Pending; the scaling queries need only the last minutes. The dashboard definition is provisioned from Git |
 | Generator and simulator compute isolated from the relay nodes (section 5.6) | Isolated from the services nodes, but k6 and mock-upstream share one c6i.xlarge load-generator node | Cost; a saturated node slows both, so rising dropped iterations read as a generator limit, not gateway capacity |
 | A calibrated per-Pod admission cap C, with capacity rejections (section 5.6) | No admission cap: every call whose cost is held is admitted, so eligible arrivals equal admitted ones. C is measured, as the mean active requests of the single-Pod calibration (`loadtest/derive.py`), and sets T = floor(0.7 × C); nothing enforces it | The capacity gate is not built yet |
