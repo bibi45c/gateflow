@@ -171,7 +171,7 @@ UTC time):
 | File | Contents |
 |---|---|
 | `run.json`, `exit` | k6's JSON output and exit code |
-| `k6.log` | k6's own output, for a failed run |
+| `k6.log` | k6's own output, saved for successful and failed runs alike |
 | `summary.md`, `run.results.json` | the tables printed by `summarize.py` and its JSON |
 | `run-record.json` | time, context, namespace, release, k6 image digest, every setting, repository HEAD, the gateway's replicas and image, the k6 and `summarize.py` exit codes, and the cleanup |
 

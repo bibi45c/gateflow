@@ -30,7 +30,9 @@ class Cluster:
     def __init__(self, kubeconfig, waiting=1, phase='Running', status=None, fail=None, interrupt=None,
                  remote_size=None, summarize_code=0):
         self.kubeconfig, self.waiting, self.phase, self.status = str(kubeconfig), waiting, phase, status or {}
-        self.fail, self.interrupt, self.summarize_code = fail, interrupt, summarize_code
+        self.fail, self.summarize_code = fail, summarize_code
+        # The steps that raise KeyboardInterrupt, as if Ctrl-C were pressed during them.
+        self.interrupt = {interrupt} if isinstance(interrupt, str) else set(interrupt or ())
         self.remote_size = len(RUN_JSON) if remote_size is None else remote_size
         self.commands, self.created, self.deleted = [], [], []
         self.creates = 0
@@ -40,12 +42,14 @@ class Cluster:
         if command[0] == 'git':
             return done('0123456789abcdef\n')
         if command[0] == sys.executable:
+            if 'summarize' in self.interrupt:
+                raise KeyboardInterrupt
             (Path(kwargs['cwd'])/'run.results.json').write_text('{}\n', encoding='utf-8')
             return done('| Phase | Level (req/s) |\n|---|---|\n| hold | 2 |\n\nWrote run.results.json\n',
                         self.summarize_code)
         verb = command[7]
         step = verb if verb not in ('get', 'exec') else f'{verb} {command[8] if verb == "get" else command[-1]}'
-        if step == self.interrupt:
+        if step in self.interrupt:
             raise KeyboardInterrupt
         if step == self.fail or (self.fail == 'create pod' and verb == 'create' and self.creates == 1):
             self.creates += verb == 'create'
@@ -190,10 +194,10 @@ class RunTests(unittest.TestCase):
         self.out = self.folder/'out'
         self.clock = Clock()
 
-    def main(self, cluster, *argv):
+    def main(self, cluster, *argv, kubeconfig=None):
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            code = kube_run.main(['--kubeconfig', str(self.kubeconfig), '--kube-context', 'kind-gateflow71',
+            code = kube_run.main(['--kubeconfig', str(kubeconfig or self.kubeconfig), '--kube-context', 'kind-gateflow71',
                                   '--name', 'test', '--out-dir', str(self.out), *argv],
                                  cluster, NOW, self.clock, self.clock.sleep)
         self.stdout = stdout.getvalue()
@@ -222,7 +226,7 @@ class RunTests(unittest.TestCase):
         self.assertEqual((summarize[0][1:], summarize[1]['cwd']), ([str(kube_run.HERE/'summarize.py'), 'run.json'], self.out))
         for command, _ in cluster.commands:
             if command[0] == 'kubectl':
-                self.assertEqual(command[1:7], ['--kubeconfig', str(self.kubeconfig), '--context', 'kind-gateflow71',
+                self.assertEqual(command[1:7], ['--kubeconfig', str(self.kubeconfig.resolve()), '--context', 'kind-gateflow71',
                                                 '-n', 'gateflow'])
         self.assertEqual((record['k6_exit_code'], record['summarize_exit_code'], record['error']), (0, 0, None))
         self.assertEqual(record['cleanup'], 'deleted')
@@ -235,6 +239,29 @@ class RunTests(unittest.TestCase):
         self.assertEqual(record['script']['path'], 'loadtest/messages.js')
         self.assertEqual(set(record['outputs']), {'exit', 'run.json', 'k6.log', 'run.results.json', 'summary.md',
                                                   'run-record.json'})
+
+    def test_relative_kubeconfig_is_resolved_for_every_kubectl_call(self):
+        # kubectl cp runs in the output folder, where a relative kubeconfig would name another file.
+        cwd = os.getcwd()
+        os.chdir(self.folder)
+        self.addCleanup(os.chdir, cwd)
+        relative = os.path.join('secret-cluster', 'kubeconfig')
+        cluster = Cluster(relative)
+        code, record = self.main(cluster, kubeconfig=relative)
+        self.assertEqual((code, record['error']), (0, None))
+        kubectl = [(c, k) for c, k in cluster.commands if c[0] == 'kubectl']
+        self.assertTrue(kubectl)
+        for command, _ in kubectl:
+            with self.subTest(command=command[7]):
+                self.assertEqual(command[1], '--kubeconfig')
+                self.assertTrue(Path(command[2]).is_absolute())
+                self.assertEqual(Path(command[2]), self.kubeconfig.resolve())
+        copies = cluster.kubectl('cp')
+        self.assertEqual(len(copies), 2)
+        for command, kwargs in copies:
+            self.assertEqual(kwargs['cwd'], self.out)
+            self.assertEqual((Path(kwargs['cwd'])/command[2]).resolve(), self.kubeconfig.resolve())
+        self.assert_private(self.record_text)
 
     def test_summarize_and_k6_failures_set_the_exit_code(self):
         code, record = self.main(Cluster(self.kubeconfig, summarize_code=2))
@@ -284,6 +311,32 @@ class RunTests(unittest.TestCase):
         self.assert_deleted(cluster, 'pod/gateflow-k6-test', 'configmap/gateflow-k6-test')
         self.assertFalse(any(c[0] == sys.executable for c, _ in cluster.commands))
         self.assertEqual(cluster.kubectl('logs'), [])
+
+    def test_second_interrupt_during_cleanup_records_how_to_delete(self):
+        cluster = Cluster(self.kubeconfig, interrupt=('exec /out/exit', 'delete'))
+        code, record = self.main(cluster)
+        self.assertEqual(code, 130)
+        self.assertEqual(record['error'], 'interrupted')
+        self.assertEqual(record['cleanup'], 'interrupted; delete them with kubectl -n <namespace> delete '
+                                            'pod/gateflow-k6-test configmap/gateflow-k6-test')
+        self.assertEqual(len(cluster.kubectl('delete')), 1)
+        self.assert_deleted(cluster)  # the only delete call was interrupted
+        self.assertNotIn('--kubeconfig', record['cleanup'])
+        self.assert_private(self.record_text)
+        self.assertFalse(any(c[0] == sys.executable for c, _ in cluster.commands))
+
+    def test_interrupted_summarize_is_recorded(self):
+        cluster = Cluster(self.kubeconfig, interrupt='summarize')
+        code, record = self.main(cluster)
+        self.assertEqual(code, 130)
+        self.assertEqual(record['error'], kube_run.SUMMARIZE_INTERRUPTED)
+        self.assertIn('summarize.py', record['error'])
+        self.assertEqual((record['k6_exit_code'], record['summarize_exit_code']), (0, None))
+        self.assertEqual(record['cleanup'], 'deleted')
+        self.assert_deleted(cluster, 'pod/gateflow-k6-test', 'configmap/gateflow-k6-test')
+        self.assertEqual(record['outputs'], ['exit', 'run.json', 'k6.log', 'run-record.json'])
+        self.assertEqual((self.out/'run.json').read_bytes(), RUN_JSON)
+        self.assertFalse((self.out/'summary.md').exists())
 
     def test_interrupted_create_is_still_deleted(self):
         cluster = Cluster(self.kubeconfig, interrupt='create')

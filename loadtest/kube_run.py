@@ -45,6 +45,8 @@ FATAL = {'CreateContainerConfigError', 'CreateContainerError', 'InvalidImageName
 OUTPUTS = ('exit', 'run.json', 'run.results.json', 'summary.md', 'k6.log', 'run-record.json')
 COMMAND = ('k6 run --no-usage-report --quiet --out json=/out/run.json /scripts/messages.js; '
            'echo $? > /out/exit; sleep {grace}')
+INTERRUPTED = 'interrupted'
+SUMMARIZE_INTERRUPTED = 'interrupted while summarize.py ran'
 
 
 def load_deploy():
@@ -194,6 +196,11 @@ def create(runner, kube, document, created):
         raise
 
 
+def leftovers(created):
+    """How to delete what this run created by hand; it names only the objects, never the kubeconfig."""
+    return f"delete them with kubectl -n <namespace> delete {' '.join(reversed(created))}"
+
+
 def delete(runner, kube, created):
     """Deletes what this run created; returns a problem or None."""
     if not created:
@@ -202,7 +209,7 @@ def delete(runner, kube, created):
     try:
         capture(runner, command)
     except (KubeRunError, OSError) as error:
-        return f"{error}; delete them with kubectl -n <namespace> delete {' '.join(reversed(created))}"
+        return f'{error}; {leftovers(created)}'
     return None
 
 
@@ -265,7 +272,7 @@ def fetch(runner, kube, name, out):
 
 
 def save_logs(runner, kube, name, out):
-    """k6's own output, for a run that failed; best effort."""
+    """k6's own output, saved for successful and failed runs alike; best effort."""
     try:
         result = runner([*kube, 'logs', name, '-c', 'k6'], capture_output=True, text=True, encoding='utf-8')
     except OSError:
@@ -282,7 +289,9 @@ def error_text(error):
 
 def kube_run(args, runner, stamp, clock=time.monotonic, sleep=time.sleep):
     """Runs k6 in the cluster and returns the record. Failures are recorded in 'error'."""
-    kube = ['kubectl', '--kubeconfig', str(args.kubeconfig), '--context', args.kube_context, '-n', args.namespace]
+    # Resolved, because kubectl cp runs in the output folder, where a relative path would not lead to it.
+    kubeconfig = str(args.kubeconfig.resolve())
+    kube = ['kubectl', '--kubeconfig', kubeconfig, '--context', args.kube_context, '-n', args.namespace]
     name, out = PREFIX + args.name, args.out_dir
     script = SCRIPT.read_text(encoding='utf-8')
     record = {'time': stamp.strftime('%Y-%m-%dT%H:%M:%SZ'), 'name': args.name, 'context': args.kube_context,
@@ -312,7 +321,7 @@ def kube_run(args, runner, stamp, clock=time.monotonic, sleep=time.sleep):
         except (KubeRunError, OSError, ValueError, KeyError) as error:
             record['error'] = error_text(error)
         except KeyboardInterrupt:
-            record['error'], interrupted = 'interrupted', True
+            record['error'], interrupted = INTERRUPTED, True
         finally:
             try:
                 if f'pod/{name}' in created and not interrupted:
@@ -320,18 +329,27 @@ def kube_run(args, runner, stamp, clock=time.monotonic, sleep=time.sleep):
                     if (out/'k6.log').exists():
                         record['outputs'].append('k6.log')
             finally:
-                record['cleanup'] = delete(runner, kube, created) or ('deleted' if created else 'nothing created')
+                try:
+                    record['cleanup'] = delete(runner, kube, created) or ('deleted' if created else 'nothing created')
+                except KeyboardInterrupt:
+                    # A second Ctrl-C: the objects may remain, so the record says how to delete them.
+                    record['cleanup'] = f'interrupted; {leftovers(created)}'
+                    raise
     except KeyboardInterrupt:
-        record['error'], interrupted = 'interrupted', True
+        record['error'], interrupted = INTERRUPTED, True
     if 'run.json' in record['outputs'] and not interrupted:
-        result = runner([sys.executable, str(HERE/'summarize.py'), 'run.json'],
-                        capture_output=True, text=True, encoding='utf-8', cwd=out)
-        record['summarize_exit_code'] = result.returncode
-        (out/'summary.md').write_text(result.stdout, encoding='utf-8', newline='\n')
-        record['outputs'] += [file for file in ('run.results.json', 'summary.md') if (out/file).exists()]
-        print(result.stdout, end='')
-        if result.stderr:
-            print(result.stderr, end='', file=sys.stderr)
+        try:
+            result = runner([sys.executable, str(HERE/'summarize.py'), 'run.json'],
+                            capture_output=True, text=True, encoding='utf-8', cwd=out)
+            record['summarize_exit_code'] = result.returncode
+            (out/'summary.md').write_text(result.stdout, encoding='utf-8', newline='\n')
+            record['outputs'] += [file for file in ('run.results.json', 'summary.md') if (out/file).exists()]
+            print(result.stdout, end='')
+            if result.stderr:
+                print(result.stderr, end='', file=sys.stderr)
+        except KeyboardInterrupt:
+            # Cleanup has already run and run.json is kept; summarize.py can be run again by hand.
+            record['error'] = SUMMARIZE_INTERRUPTED
     return record
 
 
@@ -351,7 +369,7 @@ def main(argv=None, runner=subprocess.run, now=None, clock=time.monotonic, sleep
           f"cleanup {record['cleanup']}")
     if record['error']:
         print(f"FAIL k6 run {record['name']}: {record['error']}", file=sys.stderr)
-        return 130 if record['error'] == 'interrupted' else 1
+        return 130 if record['error'] in (INTERRUPTED, SUMMARIZE_INTERRUPTED) else 1
     if record['k6_exit_code']:
         return 1
     return record['summarize_exit_code']
