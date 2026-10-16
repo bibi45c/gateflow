@@ -149,7 +149,21 @@ it does not stop running resources and is not a hard spending ceiling.
 
 1. Stop load and export redacted results, versions/configuration and necessary
    ledger evidence to separately retained storage. Confirm the deletion/snapshot
-   mode and that no evidence relies solely on the database being deleted.
+   mode and that no evidence relies solely on the database being deleted. While
+   everything still exists, save the resource inventory that step 5 checks
+   against: write the output of
+   `terraform -chdir=deploy/terraform output -json` to the ignored
+   `.local/cloud-day/terraform-output.json`, then run
+
+```text
+python deploy/aws/leftovers.py inventory --terraform-output .local/cloud-day/terraform-output.json
+```
+
+   It records the VPC, subnets, security groups, EKS cluster, instances, volumes,
+   network interfaces, NAT gateways and Elastic IPs, load balancers, target groups,
+   `/aws/eks/<cluster>/` log groups, the RDS instance and the exact ARN of its
+   managed master secret in `.local/cloud-day/teardown-inventory.json`. Exit code 2
+   means a query failed; the file then lists it under `unchecked`.
 2. While the controller/cluster are alive, remove experiment Ingress/LoadBalancer
    objects and any dynamic volumes. Wait for AWS ALB/target-group/SG/volume cleanup;
    these resources are Kubernetes-owned and may not appear in Terraform state.
@@ -169,11 +183,24 @@ terraform -chdir=deploy/terraform plan -destroy -var-file=experiment.tfvars -out
 terraform -chdir=deploy/terraform apply destroy.tfplan
 ```
 
-5. Verify EKS, node EC2 instances, RDS, ALB, NAT, EIPs, EBS volumes and unintended
-   snapshots/secrets/log groups are gone. EKS service-generated SGs and NAT-related
-   interfaces must also be checked. AWS-created resources may not inherit every tag;
-   verify via state/output identifiers as well as Project/Environment tags.
-   Run `aws rds describe-db-instances` to confirm the database is gone.
+5. Check for leftovers against the saved inventory, polling while load balancers
+   and network interfaces are released:
+
+```text
+python deploy/aws/leftovers.py check --inventory .local/cloud-day/teardown-inventory.json --state-bucket <state bucket> --wait 1800
+```
+
+   Exit code 0 prints `no billable leftovers found`; 1 lists each leftover with
+   its type, ID, state and the reason it matched; 2 means at least one query
+   failed, shown as `unchecked`, which is never the same as absent. The state
+   bucket appears only as retained. The script covers what this step must confirm
+   gone: EKS, node EC2 instances, RDS instances and their manual and automated
+   snapshots, ALB/NLB and target groups, NAT gateways, Elastic IPs, EBS volumes
+   and snapshots, unintended secrets and log groups, EKS service-generated SGs and
+   NAT-related or other network interfaces. AWS-created resources may not inherit
+   every tag, so it matches on the inventory's identifiers and on VPC and cluster
+   association as well as on Project/Environment tags. Until it exits 0, keep the
+   kubeconfig and investigate; do not report the teardown as complete.
 6. Preserve the external state bucket and agreed evidence only, with explicit
    retention/cost. Reconcile billing after it updates. Escalate failed cleanup.
 
