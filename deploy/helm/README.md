@@ -73,6 +73,8 @@ in `monitoring/grafana-version.json`. It uses the Prometheus release from #72.
 It has no public Ingress, uses a random password in an existing Kubernetes Secret
 and stores its disposable SQLite data in an emptyDir. Export experiment data before
 daily teardown. Installing this dashboard does not install KEDA or alter its rules.
+Grafana requests 256 MiB and has a 1 GiB limit with a 768 MiB Go soft memory limit;
+the initial 512 MiB limit was insufficient during the real dashboard rehearsal.
 
 After #72's Prometheus is installed, upgrade the application chart from a checkout
 that includes the same autoscaling implementation as the installed release:

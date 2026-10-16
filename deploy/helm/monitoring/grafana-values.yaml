@@ -11,9 +11,11 @@ nodeSelector:
 resources:
   requests:
     cpu: 50m
-    memory: 128Mi
+    memory: 256Mi
   limits:
-    memory: 512Mi
+    memory: 1Gi
+env:
+  GOMEMLIMIT: 768MiB
 admin:
   existingSecret: gateflow-grafana-admin
   userKey: admin-user
