@@ -80,5 +80,17 @@
   "seedChannels": {
     "ollamaBaseURL": "http://ollama:11434",
     "ollamaModel": "qwen3:8b"
+  },
+  "autoscaling": {
+    "enabled": false,
+    "minReplicas": 2,
+    "maxReplicas": 4,
+    "targetPerReplica": 70,
+    "requestDurationSeconds": 20,
+    "scaleDownStabilizationSeconds": 60,
+    "serverAddress": "http://prometheus-server.monitoring.svc.cluster.local",
+    "job": "gateflow-gateway",
+    "rateWindow": "1m",
+    "maxSampleAgeSeconds": 30
   }
 }

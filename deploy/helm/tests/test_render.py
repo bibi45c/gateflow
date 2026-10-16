@@ -82,6 +82,64 @@ class ChartTests(unittest.TestCase):
         access=deployments['gf-access']['spec']['template']['spec']['containers'][0]
         self.assertEqual(access['resources']['requests']['cpu'],'50m')
 
+    def test_autoscaling_off_by_default(self):
+        for args in [(), ('-f',str(CHART.parent/'values-kind.yaml'))]:
+            with self.subTest(args=args):
+                docs=render(*args)
+                self.assertFalse(any(d['kind']=='ScaledObject' for d in docs))
+                deployments={d['metadata']['name']:d for d in docs if d['kind']=='Deployment'}
+                self.assertTrue(all(d['spec']['replicas']==1 for d in deployments.values()))
+
+    def test_scaled_object(self):
+        docs=render('--set','autoscaling.enabled=true','--set','autoscaling.targetPerReplica=5','--set','autoscaling.requestDurationSeconds=25')
+        scaled=[d for d in docs if d['kind']=='ScaledObject']
+        self.assertEqual(len(scaled),1)
+        spec=scaled[0]['spec']
+        self.assertEqual(scaled[0]['apiVersion'],'keda.sh/v1alpha1')
+        self.assertEqual(spec['scaleTargetRef'],{'name':'gf-gateway'})
+        self.assertEqual((spec['minReplicaCount'],spec['maxReplicaCount']),(2,4))
+        hpa=spec['advanced']['horizontalPodAutoscalerConfig']
+        self.assertEqual(hpa['name'],'gf-gateway')
+        self.assertEqual(hpa['behavior']['scaleDown']['stabilizationWindowSeconds'],60)
+        self.assertNotIn('fallback',spec)
+        triggers={t['name']:t for t in spec['triggers']}
+        self.assertEqual(set(triggers),{'active-admitted','eligible-demand'})
+        for trigger in triggers.values():
+            meta=trigger['metadata']
+            self.assertEqual((trigger['type'],trigger['metricType']),('prometheus','AverageValue'))
+            self.assertEqual(meta['threshold'],'5')
+            self.assertEqual(meta['ignoreNullValues'],'false')
+            self.assertEqual(meta['serverAddress'],'http://prometheus-server.monitoring.svc.cluster.local')
+            self.assertNotIn('vector(0)',meta['query'])
+            self.assertNotIn(' or ',meta['query'])
+            self.assertIn('and on() (min(up{job="gateflow-gateway"}) == 1)',meta['query'])
+            self.assertIn('and on() (max(time() - timestamp(up{job="gateflow-gateway"})) < 30)',meta['query'])
+        self.assertTrue(triggers['active-admitted']['metadata']['query'].startswith('sum(gateflow_gateway_active_admitted_requests{job="gateflow-gateway"}) and on()'))
+        self.assertIn('absent(up{job="gateflow-gateway"} unless on(instance) gateflow_gateway_active_admitted_requests{job="gateflow-gateway"})',
+                      triggers['active-admitted']['metadata']['query'])
+        self.assertTrue(triggers['eligible-demand']['metadata']['query'].startswith('sum(rate(gateflow_gateway_eligible_arrivals_total{job="gateflow-gateway"}[1m])) * 25 and on()'))
+        deployments={d['metadata']['name']:d for d in docs if d['kind']=='Deployment'}
+        self.assertNotIn('replicas',deployments['gf-gateway']['spec'])
+        for name in ['gf-access','gf-metering','gf-mock-upstream']:
+            self.assertEqual(deployments[name]['spec']['replicas'],1)
+
+    def test_scaled_object_on_aws_and_kind(self):
+        for values,threshold in [('values-aws.yaml','70'),('values-kind.yaml','4')]:
+            with self.subTest(values=values):
+                args=['-f',str(CHART.parent/values)]+(list(AWS_CIDRS) if values=='values-aws.yaml' else ['--set','autoscaling.enabled=true'])
+                docs=render(*args)
+                scaled=next(d for d in docs if d['kind']=='ScaledObject')
+                self.assertEqual({t['metadata']['threshold'] for t in scaled['spec']['triggers']},{threshold})
+                gateway=next(d for d in docs if d['kind']=='Deployment' and d['metadata']['name']=='gf-gateway')
+                self.assertNotIn('replicas',gateway['spec'])
+
+    def test_invalid_autoscaling_rejected(self):
+        for setting in ['autoscaling.maxReplicas=1','autoscaling.targetPerReplica=0','autoscaling.job=a"b',
+                        'autoscaling.rateWindow=1m]','autoscaling.serverAddress=prometheus:9090']:
+            with self.subTest(setting=setting):
+                p=subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set','autoscaling.enabled=true','--set',setting],capture_output=True,text=True)
+                self.assertNotEqual(p.returncode,0)
+
     def test_aws_requires_inbound_cidrs(self):
         for args in [['--set','environment=aws'],['-f',str(CHART.parent/'values-aws.yaml')]]:
             with self.subTest(args=args):

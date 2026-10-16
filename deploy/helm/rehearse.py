@@ -20,6 +20,8 @@ ROOT = HERE.parents[1]
 NODE_IMAGE = 'kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0'
 INGRESS = 'https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml'
 CREDENTIAL_KEYS = ['admin','superuser','access','metering','tokenAccess','tokenMetering','pepper']
+# The disposable seed secret the smoke suite expects; never used outside kind.
+SEED_SECRET = 'seed-secret-local-only'
 # Created by kind/postgres.yaml like the RDS master role: LOGIN CREATEROLE, database owner, not a superuser.
 BOOTSTRAP_USER = 'gateflow_admin'
 # A published gateway image built from 75da74a, older than the chart's default imageTag.
@@ -48,7 +50,7 @@ def secret(kube, namespace, name, values):
 
 
 def smoke_environment(environment, config):
-    return environment | {'KUBECONFIG':str(config), 'ACCESS_SEED_SECRET':'seed-secret-local-only'}
+    return environment | {'KUBECONFIG':str(config), 'ACCESS_SEED_SECRET':SEED_SECRET}
 
 
 def smoke_command(cluster, namespace, existing_cluster):
@@ -149,9 +151,15 @@ def main(argv=None):
     parser.add_argument('--existing-cluster', action='store_true')
     parser.add_argument('--deploy-check', action='store_true',
                         help='on an installed cluster, deploy one gateway digest with deploy.py and roll it back')
+    parser.add_argument('--autoscale-check', action='store_true',
+                        help='install Prometheus and KEDA and rehearse gateway autoscaling instead of the smoke suite')
     args=parser.parse_args(argv)
+    if args.deploy_check and args.autoscale_check:
+        parser.error('use --deploy-check or --autoscale-check, not both')
     if args.deploy_check and (not args.existing_cluster or args.prepare_only):
         parser.error('--deploy-check needs --existing-cluster with an installed release')
+    if args.autoscale_check and not args.existing_cluster:
+        parser.error('--autoscale-check requires --existing-cluster')
     kube=kube_command(args.cluster,args.kubeconfig)
     if args.deploy_check:
         return deploy_check(args,kube)
@@ -167,7 +175,7 @@ def main(argv=None):
     secret(kube,args.namespace,'gateflow-runtime',{'ACCESS_DATABASE_URL':f"postgres://access:{keys['access']}@postgres:5432/gateflow?sslmode=disable",
         'METERING_DATABASE_URL':f"postgres://metering:{keys['metering']}@postgres:5432/gateflow?sslmode=disable",
         'ACCESS_INTERNAL_TOKEN':keys['tokenAccess'],'METERING_INTERNAL_TOKEN':keys['tokenMetering'],
-        'ACCESS_KEY_PEPPER':keys['pepper'],'ACCESS_SEED_SECRET':'seed-secret-local-only'})
+        'ACCESS_KEY_PEPPER':keys['pepper'],'ACCESS_SEED_SECRET':SEED_SECRET})
     run([*kube,'-n',args.namespace,'apply','-f',str(HERE/'kind/postgres.yaml')])
     run([*kube,'-n',args.namespace,'wait','--for=condition=Ready','pod/postgres-0','--timeout=180s'])
     run([*kube,'apply','-f',INGRESS])
@@ -175,6 +183,10 @@ def main(argv=None):
     if args.prepare_only:
         return 0
     helm=['helm','--kubeconfig',str(args.kubeconfig),'--kube-context','kind-'+args.cluster]
+    if args.autoscale_check:
+        import autoscale
+        return autoscale.check(kube,helm,args.namespace,HERE/'gateflow',HERE/'values-kind.yaml',18071,SEED_SECRET,
+                               ROOT/'.local/autoscale',NODE_IMAGE)
     run([*helm,'upgrade','--install','gf',str(HERE/'gateflow'),'-n',args.namespace,'-f',str(HERE/'values-kind.yaml'),
          '--wait','--wait-for-jobs','--timeout','6m'])
     with ingress_forward(kube):

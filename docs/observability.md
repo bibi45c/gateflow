@@ -234,7 +234,8 @@ partial missing targets. See [the Prometheus scaler](https://keda.sh/docs/2.18/s
 Test A missing/B valid, B missing/A valid, both missing, genuine idle zeros, capacity
 saturation with rising arrivals, and draining requests. Record external metrics,
 HPA Conditions and desired/ready/admission-ready replicas; verify no unsafe downscale.
-No KEDA object, guard or cloud scaling result is implemented in this prototype.
+The ScaledObject, its target guards and a kind rehearsal are implemented by #72; see
+[Autoscaling](../deploy/helm/README.md#autoscaling). No cloud scaling result exists yet.
 
 ## One dashboard and acceptance evidence
 
