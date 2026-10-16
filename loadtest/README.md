@@ -7,7 +7,9 @@ Scheduled load on the gateway, following
 |---|---|
 | `messages.js` | k6 script: scheduled `POST /v1/messages` streams at fixed arrival rates, optionally paired with the same call straight to the mock |
 | `summarize.py` | Builds the results tables, per phase and per tenant, from the k6 JSON output |
+| `kube_run.py` | Runs `messages.js` in a Pod inside the cluster, copies the output back and runs `summarize.py` |
 | `test_summarize.py` | Unit tests of `summarize.py`; they need neither k6 nor a stack |
+| `test_kube_run.py` | Unit tests of `kube_run.py`; they need neither kubectl nor a cluster |
 
 ## Run
 
@@ -121,9 +123,83 @@ environment; verify its compose settings separately. The mock flushes headers
 before its first event, while the gateway flushes with the first event, so an
 upstream first-event delay would otherwise be attributed to the gateway.
 
+## Run inside the cluster
+
+On EKS, run k6 inside the cluster (#77). From a laptop through the ALB, the
+measurement includes the public internet, the ALB and the NAT, not the gateway
+alone. `kube_run.py` puts `messages.js` into a ConfigMap and runs k6 in a Pod on the
+load-generator node (it selects `gateflow.io/workload=load-generator` and tolerates
+that taint), aimed at the gateway Service `http://<release>-gateway:8080` in the same
+namespace. The Pod uses the pinned `grafana/k6:2.3.0` digest, runs as non-root
+without a service-account token, and reads `ACCESS_SEED_SECRET` from the
+`gateflow-runtime` Secret. When k6 ends, the script copies its JSON output back,
+deletes the Pod and the ConfigMap, also after an error or Ctrl-C, and runs
+`summarize.py` locally.
+
+You need kubectl, Python 3.13 or newer, an installed release and the
+`gateflow-runtime` Secret. The script never uses the default kubeconfig. From the
+repository root:
+
+```text
+python loadtest/kube_run.py --kubeconfig <EKS kubeconfig> --kube-context <EKS context> --env PAIRED=0
+```
+
+`--namespace` and `--release` default to `gateflow` and `gf`. Pass the
+[settings](#settings) with `--env NAME=value`; only those settings are accepted, and
+three are not: `GATEWAY_URL` and `MOCK_URL` follow from `--release`
+(`http://<release>-mock-upstream:8090` for the mock), and `ACCESS_SEED_SECRET` comes
+only from the Secret. `--timeout` defaults to the plan's length plus 15 minutes.
+k6 requests and is limited to 2 CPUs and 4 GiB (`--k6-cpu`, `--k6-memory`) of the
+c6i.xlarge's 4 vCPUs and 8 GiB, which leaves the rest of the node to the mock
+upstream. As locally, `wallet_empty_responses` must be 0.
+
+**Single-Pod calibration** (#73): fix the gateway at one replica before the run,
+and pause or delete any KEDA ScaledObject or HPA that targets it (the chart creates
+none), so that nothing changes the replica count during the run:
+
+```text
+helm --kubeconfig <EKS kubeconfig> --kube-context <EKS context> upgrade gf deploy/helm/gateflow -n gateflow --reuse-values --set services.gateway.replicas=1 --wait
+python loadtest/kube_run.py --kubeconfig <EKS kubeconfig> --kube-context <EKS context> --name calibration-1 --env PAIRED=0
+```
+
+The run record keeps the gateway Deployment's replicas and image before and after
+the run (`gateway`, `gateway_after`); both must show one replica.
+
+**Outputs** go to `.local/loadtest/<name>/` (`--out-dir`; `--name` defaults to the
+UTC time):
+
+| File | Contents |
+|---|---|
+| `run.json`, `exit` | k6's JSON output and exit code |
+| `k6.log` | k6's own output, for a failed run |
+| `summary.md`, `run.results.json` | the tables printed by `summarize.py` and its JSON |
+| `run-record.json` | time, context, namespace, release, k6 image digest, every setting, repository HEAD, the gateway's replicas and image, the k6 and `summarize.py` exit codes, and the cleanup |
+
+The script exits with 1 if the run failed or k6 exited non-zero, 130 after Ctrl-C,
+and otherwise with `summarize.py`'s exit code. To report a run on its issue, paste
+`summary.md` and `run-record.json` into a comment. The record holds no secret value
+and no local path; `ACCESS_SEED_SECRET` appears only as its Secret and key. Keep
+`run.json` with you rather than posting it.
+
+**Observer effect**: k6 and the mock upstream share the load-generator node, so a
+saturated node slows the mock as well as k6. Watch the node's CPU during a run, and
+read rising dropped iterations, VUs or direct-request durations as a generator limit,
+not as gateway capacity. Pairing (`PAIRED=1`) doubles the mock's load; keep it out of
+capacity runs here too.
+
+Rehearse on kind, with an installed release, using a short plan:
+
+```text
+python deploy/helm/rehearse.py --cluster <name> --kubeconfig <kind kubeconfig> --existing-cluster --load-check
+```
+
+It writes to `loadtest/rehearsal/` next to the kubeconfig and fails unless k6 and
+`summarize.py` exit with 0, the results have rows with requests sent, and the Pod and
+ConfigMap were deleted.
+
 ## Settings
 
-Pass each with `-e NAME=value`.
+Pass each with `-e NAME=value`, or with `--env NAME=value` to `kube_run.py`.
 
 | Name | Default | Meaning |
 |---|---|---|
