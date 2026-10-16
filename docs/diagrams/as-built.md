@@ -12,8 +12,9 @@ proposal, the difference is listed under [Deviations](#7-deviations-from-the-pro
 - **Scope:** S1 and S2 as built: `POST /v1/messages` and `POST /v1/responses` through
   the gateway, key verification by model and protocol, cost hold and settlement, and
   Prometheus metrics on every service. S3 as built: the Helm chart, KEDA autoscaling,
-  Prometheus, in-cluster k6 and the operator scripts, all run on kind; the AWS
-  environment is written as Terraform but not applied.
+  Prometheus, in-cluster k6 and `deploy.py`, all run on kind. The `deploy/aws`
+  scripts have not run against EKS or RDS; of them, `reset_db.py` has run on kind.
+  The AWS environment is written as Terraform but not applied.
 - **Legend:**
   - Solid box: built on `main` and run, locally, in CI or on kind.
   - Dotted box (`stroke-dasharray:2 2`): on `main` but not yet run where it is drawn.
@@ -21,7 +22,7 @@ proposal, the difference is listed under [Deviations](#7-deviations-from-the-pro
     **[TF]** Terraform written, not applied;
     **[kind]** run on kind, not yet on EKS;
     **[AWS only]** tested without AWS, but only the AWS path uses it, so it has
-    never run.
+    not yet run against EKS or RDS.
   - Dashed box (`stroke-dasharray:5 5`): planned, optional, or present but unused.
   - Solid arrow: the call runs today. Dotted arrow (`-.->`): it does not run yet,
     because it is planned, optional or, in the cloud view, not deployed.
@@ -265,7 +266,7 @@ flowchart LR
   subgraph ops["Operator and test tools, run from the operator's machine (not product components)"]
     TFC["terraform plan, apply<br/>deploy/terraform [TF]"]
     DEP["helm install, deploy/helm/deploy.py<br/>one service by digest, rollback record [kind]"]
-    AWSS["deploy/aws: secrets.py,<br/>reset_db.py, leftovers.py [AWS only]"]
+    AWSS["deploy/aws: reset_db.py [kind],<br/>secrets.py, leftovers.py [AWS only]"]
     LT["loadtest/kube_run.py [kind],<br/>prom_export.py, derive.py"]
   end
 
@@ -280,7 +281,7 @@ flowchart LR
           GW["gateway Pods, 2 to 4 [kind]<br/>1 vCPU, 2 GiB, request = limit"]
           ACM["access, metering<br/>one Pod each [kind]"]
           JOB["bootstrap and seed Jobs [kind]"]
-          PROM["Prometheus server, emptyDir, 6 h<br/>kube-state-metrics [kind]"]
+          PROM["Prometheus server, emptyDir, 6 h<br/>kube-state-metrics; cAdvisor from<br/>each kubelet via the API server [kind]"]
           KEDA["KEDA, gateway ScaledObject [kind]"]
         end
         subgraph gen["node group load-generator: 1 × c6i.xlarge, tainted [TF]"]
@@ -302,7 +303,7 @@ flowchart LR
   K6 -.->|"gf-gateway:8080,<br/>inside the cluster"| GW
   ACM -.->|"sslmode=require"| RDS
   JOB -.->|"roles, schemas, seed"| RDS
-  PROM -.->|"GET /metrics, cAdvisor"| GW
+  PROM -.->|"GET /metrics"| GW
   PROM -.->|"GET /metrics"| ACM
   KEDA -.->|"two triggers"| PROM
   KEDA -.->|"scales 2 to 4"| GW
@@ -348,7 +349,10 @@ flowchart LR
   AWS Load Balancer Controller, which the operator installs separately; Terraform
   creates only its IAM role. The chart refuses to render for AWS without
   `ingress.inboundCidrs`, and refuses any `/0` unless `ingress.allowAnySource=true`.
-  The `deploy/aws` scripts are unit-tested only.
+  In `deploy/aws`, `secrets.py` and `leftovers.py` are also [AWS only]:
+  `secrets.py` and `leftovers.py inventory` have only unit tests and have never run,
+  and `leftovers.py check` has run once, read-only, against an empty AWS account.
+  `reset_db.py` is [kind]: it has run on kind, not yet against RDS.
 - **Operator only:** bibi45c runs every operator tool from an allowed IP. GitHub
   holds no AWS credentials, and no workflow deploys to AWS. On EKS the smoke suite
   reads the ledger through a short-lived query Pod on a services node
