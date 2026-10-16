@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -67,3 +69,37 @@ class RehearsalTests(unittest.TestCase):
             self.assertEqual(set(keys),set(module.CREDENTIAL_KEYS))
             self.assertEqual(len(set(keys.values())),len(keys))
             self.assertEqual(module.load_credentials(path),keys)
+
+class DeployCheckTests(unittest.TestCase):
+    def records(self, digest):
+        before={name:f'ghcr.io/bibi45c/gateflow-{name}:de208ff' for name in ['gateway','access','metering','mock-upstream']}
+        after=before|{'gateway':f'ghcr.io/bibi45c/gateflow-gateway@{digest}'}
+        common={'service':'gateway','verified':True,'error':None,'smoke':{'result':'passed'}}
+        deployed=common|{'operation':'deploy','previous_digest':None,'new_digest':digest,'images_before':before,'images_after':after}
+        rolled_back=common|{'operation':'rollback','previous_digest':digest,'new_digest':None,'images_before':after,'images_after':before}
+        return deployed,rolled_back
+
+    def test_deploy_check_needs_an_installed_cluster(self):
+        module=load_rehearse()
+        for argv in [['--cluster','gateflow71','--kubeconfig','k','--deploy-check'],
+                     ['--cluster','gateflow71','--kubeconfig','k','--deploy-check','--existing-cluster','--prepare-only']]:
+            with self.subTest(argv=argv),contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
+                module.main(argv)
+
+    def test_good_records_pass(self):
+        module=load_rehearse()
+        digest=module.DEPLOY_CHECK_DIGEST
+        self.assertEqual(module.deploy_check_problems(*self.records(digest),'gateway',digest),[])
+
+    def test_extra_change_skipped_smoke_and_incomplete_rollback_fail(self):
+        module=load_rehearse()
+        digest=module.DEPLOY_CHECK_DIGEST
+        deployed,rolled_back=self.records(digest)
+        deployed['images_after']=deployed['images_after']|{'access':'other'}
+        rolled_back['smoke']={'result':'skipped'}
+        rolled_back['verified']=False
+        problems=module.deploy_check_problems(deployed,rolled_back,'gateway',digest)
+        self.assertTrue(any('not only gateway' in p for p in problems))
+        self.assertTrue(any('rollback record is not verified' in p for p in problems))
+        self.assertTrue(any('every image' in p for p in problems))
+        self.assertTrue(module.deploy_check_problems(*self.records('sha256:'+'0'*64),'gateway',digest))

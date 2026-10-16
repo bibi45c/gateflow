@@ -30,6 +30,8 @@ jobs:
         run: python deploy/helm/rehearse.py --cluster gateflow71ci --kubeconfig .local/kubeconfig
       - name: Verify upgrade
         run: python deploy/helm/rehearse.py --cluster gateflow71ci --kubeconfig .local/kubeconfig --existing-cluster
+      - name: Deploy one service and roll back
+        run: python deploy/helm/rehearse.py --cluster gateflow71ci --kubeconfig .local/kubeconfig --existing-cluster --deploy-check
       - name: Local cluster diagnostics
         if: failure()
         run: |

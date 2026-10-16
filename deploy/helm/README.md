@@ -47,6 +47,14 @@ python deploy/helm/rehearse.py --cluster gateflow71 --kubeconfig .local/kubeconf
 kubectl --kubeconfig .local/kubeconfig --context kind-gateflow71 -n gateflow get pods -o wide
 ```
 
+To rehearse a one-service deploy and its rollback on that installed cluster (CI
+runs this after the upgrade check; see
+[Deploy one service and roll back](#deploy-one-service-and-roll-back)):
+
+```text
+python deploy/helm/rehearse.py --cluster gateflow71 --kubeconfig .local/kubeconfig --existing-cluster --deploy-check
+```
+
 Only clean up the cluster created for this rehearsal:
 
 ```text
@@ -124,3 +132,79 @@ margin 10 seconds, with total Pod grace 85 seconds. All four processes receive
 SHUTDOWN_DRAIN_DELAY and SHUTDOWN_TIMEOUT; readiness is /readyz and liveness is
 /healthz. Native sleep works with the distroless images. Values that cannot fit the
 shutdown budget are rejected at render time.
+
+## Deploy one service and roll back
+
+deploy.py moves one service of an installed release to a published image digest
+and leaves the other three on the images they already run. The images workflow
+publishes `ghcr.io/bibi45c/gateflow-<service>` on every push to main, tagged with
+the full commit SHA, and lists each digest in its job summary. Take the digest
+from there. Digests must be sha256: followed by 64 lowercase hex digits.
+
+The operator, bibi45c, runs it from an allowed IP. GitHub holds no AWS credentials
+and no workflow deploys to AWS. Pass the kubeconfig and context explicitly; the
+script never uses the default kubeconfig. Pass values-aws.yaml again:
+
+```text
+python deploy/helm/deploy.py --kubeconfig <path> --kube-context <eks-context> -f deploy/helm/values-aws.yaml --service gateway --digest sha256:<64 hex> --smoke-host <alb-dns-name> --smoke-port 80
+```
+
+The script:
+
+1. Reads the release's values with helm get values --all and the four Deployment
+   images with kubectl.
+2. Runs helm upgrade --wait --wait-for-jobs with the chart from this checkout.
+   The deployed values are the base, then each -f file, then pins that keep
+   imageTag and the other three digests as deployed and set only the chosen
+   service's digest. It never runs helm install or helm rollback.
+3. Reads the four images again and fails if any other service's image changed,
+   or if the chosen service does not run the requested image.
+4. Runs test/e2e/smoke.py against --smoke-host and --smoke-port, then writes the
+   record. It exits non-zero if any step failed; the record says what failed.
+
+For the ALB, set --smoke-host to the Ingress address shown by kubectl get ingress
+gf and --smoke-port to 80. Export the private seed secret as ACCESS_SEED_SECRET in
+the shell first; never put it on the command line. The smoke suite's ledger and
+reservation checks read through the kind PostgreSQL fixture Pod
+(--smoke-postgres-pod) or Docker Compose. Neither exists on EKS, so against the
+ALB those checks fail and the record says failed. Report that result as it is.
+--skip-smoke records smoke as skipped and verified as false; a skipped record is
+not evidence that the deployment works.
+
+The record is JSON, written to `.local/deployments/<UTC time>-<service>.json`
+(ignored by Git) unless --record names another path. It holds the time,
+operation (deploy or rollback), the repository HEAD commit (null when Git cannot
+read it), release, namespace, context, service, previous_digest and new_digest,
+the chart, each -f file with its SHA-256, the image pins, the four images before
+and after, the changed services, the Helm revisions before and after, the smoke
+result and exit code, verified and any error. It does not copy the deployed
+values, Secret values, the kubeconfig or its path. Review it, then paste it into
+the issue as a fenced json block.
+
+To roll back, deploy the previous digest with the same command, or name the
+earlier record:
+
+```text
+python deploy/helm/deploy.py --kubeconfig <path> --kube-context <eks-context> -f deploy/helm/values-aws.yaml --rollback-from .local/deployments/<record>.json --smoke-host <alb-dns-name> --smoke-port 80
+```
+
+--rollback-from takes the service and previous_digest from the record. A null
+previous_digest means the service ran imageTag, so the digest is cleared. The
+record's release, namespace and context must match, and the service must still
+run the record's new_digest; otherwise the script refuses rather than undo a
+later deployment. Do not use helm rollback: it returns the whole release to an
+earlier revision, including changes to other services.
+
+Demonstration:
+
+1. Baseline v0.1.0: install the release with imageTag set to the full SHA of the
+   v0.1.0 commit and no digests, so every service runs the v0.1.0 images.
+2. v0.1.1 changes one service only. Deploy that service's new digest with
+   deploy.py and attach the record.
+3. Roll back with --rollback-from that record and attach the second record. It
+   must show every image back to the baseline.
+
+CI rehearses this on kind with rehearse.py --deploy-check: it moves the gateway to
+an older published digest, runs smoke, rolls back from the record, runs smoke
+again and checks that only the gateway's image changed in both records. Its
+records are written next to the rehearsal kubeconfig, in .local/deployments.
