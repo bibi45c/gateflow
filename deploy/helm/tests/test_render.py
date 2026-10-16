@@ -78,7 +78,8 @@ class ChartTests(unittest.TestCase):
         docs=render('-f',str(CHART.parent/'values-aws.yaml'),*AWS_CIDRS)
         deployments={d['metadata']['name']:d for d in docs if d['kind']=='Deployment'}
         gateway=deployments['gf-gateway']['spec']['template']['spec']['containers'][0]
-        self.assertEqual(gateway['resources'],{'requests':{'cpu':'1','memory':'2Gi'},'limits':{'memory':'2Gi'}})
+        # CPU limit = request (proposal 5.6), so a Pod cannot borrow idle node CPU.
+        self.assertEqual(gateway['resources'],{'requests':{'cpu':'1','memory':'2Gi'},'limits':{'cpu':'1','memory':'2Gi'}})
         access=deployments['gf-access']['spec']['template']['spec']['containers'][0]
         self.assertEqual(access['resources']['requests']['cpu'],'50m')
 
@@ -192,12 +193,15 @@ class SourceTests(unittest.TestCase):
         text=(CHART.parent/'values-aws.yaml').read_text(encoding='utf-8')
         block='''services:
   gateway:
-    # One vCPU and 2 GiB per gateway Pod (proposal 5.6).
+    # One vCPU and 2 GiB per gateway Pod (proposal 5.6). The CPU limit keeps a Pod
+    # from borrowing idle node CPU, so replica comparisons hold; frozen from before
+    # the single-Pod calibration, and every later run reuses it.
     resources:
       requests:
         cpu: "1"
         memory: 2Gi
       limits:
+        cpu: "1"
         memory: 2Gi
 '''
         self.assertIn(block,text)

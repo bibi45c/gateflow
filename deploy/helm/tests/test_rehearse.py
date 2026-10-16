@@ -132,3 +132,57 @@ class DeployCheckTests(unittest.TestCase):
         self.assertTrue(any('rollback record is not verified' in p for p in problems))
         self.assertTrue(any('every image' in p for p in problems))
         self.assertTrue(module.deploy_check_problems(*self.records('sha256:'+'0'*64),'gateway',digest))
+
+class LoadCheckTests(unittest.TestCase):
+    def good(self):
+        record={'error':None,'k6_exit_code':0,'summarize_exit_code':0,'cleanup':'deleted'}
+        results={'phases':[{'phase':'warmup','sent':10},{'phase':'hold','sent':40}]}
+        return record,results
+
+    def test_load_check_needs_an_installed_cluster_and_runs_alone(self):
+        module=load_rehearse()
+        for argv in [['--cluster','gateflow71','--kubeconfig','k','--load-check'],
+                     ['--cluster','gateflow71','--kubeconfig','k','--load-check','--existing-cluster','--prepare-only'],
+                     ['--cluster','gateflow71','--kubeconfig','k','--load-check','--existing-cluster','--deploy-check'],
+                     ['--cluster','gateflow71','--kubeconfig','k','--load-check','--existing-cluster','--autoscale-check']]:
+            with self.subTest(argv=argv),contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
+                module.main(argv)
+
+    def test_load_check_runs_only_kube_run_with_a_short_plan(self):
+        module=load_rehearse()
+        with tempfile.TemporaryDirectory() as directory:
+            config=Path(directory)/'kubeconfig'
+            folder=Path(directory)/'loadtest'/'rehearsal'
+            calls=[]
+            def run(command,**kwargs):
+                calls.append(command)
+                folder.mkdir(parents=True,exist_ok=True)
+                record,results=self.good()
+                (folder/'run-record.json').write_text(json.dumps(record),encoding='utf-8')
+                (folder/'run.results.json').write_text(json.dumps(results),encoding='utf-8')
+            with mock.patch.object(module.subprocess,'run',run),mock.patch.object(module,'run') as other, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(module.main(['--cluster','gateflow71','--kubeconfig',str(config),
+                                              '--existing-cluster','--load-check']),0)
+            other.assert_not_called()
+        command,=calls
+        self.assertTrue(command[1].endswith('kube_run.py'))
+        self.assertEqual(command[2:8],['--kubeconfig',str(config),'--kube-context','kind-gateflow71','--namespace','gateflow'])
+        self.assertEqual(command[command.index('--out-dir')+1],str(folder))
+        settings=[command[i+1] for i,word in enumerate(command) if word=='--env']
+        self.assertEqual(settings,['LEVELS=2','WARMUP_S=5','RAMP_S=5','HOLD_S=20','PAIRED=0'])
+
+    def test_good_run_passes(self):
+        module=load_rehearse()
+        self.assertEqual(module.load_check_problems(*self.good()),[])
+
+    def test_failed_summary_missing_rows_and_leftovers_fail(self):
+        module=load_rehearse()
+        record,results=self.good()
+        self.assertTrue(module.load_check_problems(record|{'summarize_exit_code':2},results))
+        self.assertTrue(module.load_check_problems(record|{'k6_exit_code':107},results))
+        self.assertTrue(module.load_check_problems(record|{'error':'interrupted'},results))
+        self.assertTrue(module.load_check_problems(record|{'cleanup':'kubectl delete exited with 1'},results))
+        self.assertTrue(module.load_check_problems(record,{'phases':[]}))
+        self.assertTrue(module.load_check_problems(record,{'phases':[{'phase':'hold','sent':0}]}))
+        self.assertTrue(module.load_check_problems(record,None))
