@@ -1,9 +1,13 @@
 import json
 from pathlib import Path
+import re
 import subprocess
 import unittest
 
 CHART = Path(__file__).resolve().parents[1] / 'gateflow'
+INBOUND = 'alb.ingress.kubernetes.io/inbound-cidrs'
+# Documentation address (RFC 5737); aws renders fail without inbound CIDRs.
+AWS_CIDRS = ('--set-json', 'ingress.inboundCidrs=["192.0.2.1/32"]')
 
 def render(*args):
     p = subprocess.run(['helm', 'template', 'gf', str(CHART), '--kube-version', '1.35.0', *args], capture_output=True, text=True, encoding='utf-8')
@@ -57,7 +61,7 @@ class ChartTests(unittest.TestCase):
         self.assertIn('grace',p.stderr)
 
     def test_aws_annotations_and_secret_references(self):
-        docs=render('--set','environment=aws')
+        docs=render('--set','environment=aws',*AWS_CIDRS)
         ingress=next(d for d in docs if d['kind']=='Ingress')
         self.assertIn('idle_timeout.timeout_seconds=300',ingress['metadata']['annotations']['alb.ingress.kubernetes.io/load-balancer-attributes'])
         access=next(d for d in docs if d['kind']=='Deployment' and d['metadata']['name']=='gf-access')
@@ -71,12 +75,48 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(init['securityContext']['runAsUser'],65532)
 
     def test_aws_gateway_resources(self):
-        docs=render('-f',str(CHART.parent/'values-aws.yaml'))
+        docs=render('-f',str(CHART.parent/'values-aws.yaml'),*AWS_CIDRS)
         deployments={d['metadata']['name']:d for d in docs if d['kind']=='Deployment'}
         gateway=deployments['gf-gateway']['spec']['template']['spec']['containers'][0]
         self.assertEqual(gateway['resources'],{'requests':{'cpu':'1','memory':'2Gi'},'limits':{'memory':'2Gi'}})
         access=deployments['gf-access']['spec']['template']['spec']['containers'][0]
         self.assertEqual(access['resources']['requests']['cpu'],'50m')
+
+    def test_aws_requires_inbound_cidrs(self):
+        for args in [['--set','environment=aws'],['-f',str(CHART.parent/'values-aws.yaml')]]:
+            with self.subTest(args=args):
+                p=subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0',*args],capture_output=True,text=True)
+                self.assertNotEqual(p.returncode,0)
+                self.assertIn('ingress.inboundCidrs',p.stderr)
+
+    def test_aws_inbound_cidrs_annotation(self):
+        docs=render('--set','environment=aws','--set-json','ingress.inboundCidrs=["198.51.100.7/32","203.0.113.0/24"]')
+        ingress=next(d for d in docs if d['kind']=='Ingress')
+        self.assertEqual(ingress['metadata']['annotations'][INBOUND],'198.51.100.7/32,203.0.113.0/24')
+        self.assertEqual(ingress['metadata']['annotations']['alb.ingress.kubernetes.io/scheme'],'internet-facing')
+
+    def test_aws_any_source_needs_explicit_switch(self):
+        args=['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set','environment=aws','--set-json','ingress.inboundCidrs=["198.51.100.7/32","0.0.0.0/0"]']
+        p=subprocess.run(args,capture_output=True,text=True)
+        self.assertNotEqual(p.returncode,0)
+        self.assertIn('allowAnySource',p.stderr)
+        docs=render(*args[6:],'--set','ingress.allowAnySource=true')
+        ingress=next(d for d in docs if d['kind']=='Ingress')
+        self.assertEqual(ingress['metadata']['annotations'][INBOUND],'198.51.100.7/32,0.0.0.0/0')
+
+    def test_invalid_inbound_cidrs_rejected(self):
+        for cidrs in ['["198.51.100.7"]','["2001:db8::/32"]','"198.51.100.7/32"']:
+            with self.subTest(cidrs=cidrs):
+                p=subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set','environment=aws','--set-json',f'ingress.inboundCidrs={cidrs}'],capture_output=True,text=True)
+                self.assertNotEqual(p.returncode,0)
+
+    def test_kind_has_no_inbound_cidrs(self):
+        for args in [[],['-f',str(CHART.parent/'values-kind.yaml')]]:
+            with self.subTest(args=args):
+                ingress=next(d for d in render(*args) if d['kind']=='Ingress')
+                self.assertEqual(ingress['spec']['ingressClassName'],'nginx')
+                self.assertNotIn(INBOUND,ingress['metadata']['annotations'])
+                self.assertFalse(any(k.startswith('alb.') for k in ingress['metadata']['annotations']))
 
 class SourceTests(unittest.TestCase):
     def test_bootstrap_grants_service_roles_before_schemas(self):
@@ -104,5 +144,37 @@ class SourceTests(unittest.TestCase):
 '''
         self.assertIn(block,text)
         self.assertIn('environment: aws\n',text)
+
+    def test_aws_values_keep_no_inbound_addresses(self):
+        text=(CHART.parent/'values-aws.yaml').read_text(encoding='utf-8')
+        self.assertIn("--set-json 'ingress.inboundCidrs=[\"<your IP>/32\"]'",text)
+        active=[line for line in text.splitlines() if not line.lstrip().startswith('#')]
+        self.assertFalse([line for line in active if re.search(r'\d+\.\d+\.\d+\.\d+',line) or 'inboundCidrs' in line])
+
+    def test_ingress_template_restricts_alb_sources(self):
+        text=(CHART/'templates/ingress.yaml').read_text(encoding='utf-8')
+        self.assertIn('"alb.ingress.kubernetes.io/inbound-cidrs" (join "," $cidrs)',text)
+        self.assertIn('{{- if not $cidrs -}}\n{{- fail `environment=aws requires ingress.inboundCidrs',text)
+        self.assertIn("--set-json 'ingress.inboundCidrs=[\"203.0.113.10/32\"]'",text)
+        self.assertIn('{{- if and (hasSuffix "/0" $cidr) (not $.Values.ingress.allowAnySource) -}}\n{{- fail',text)
+        self.assertIn('0.0.0.0/0',text)
+        # The CIDR checks sit inside the aws branch, so kind renders are unchanged.
+        aws=text.index('{{- if $aws -}}')
+        end=text.index('{{- end -}}\n{{- $paths')
+        for needle in ['inboundCidrs','hasSuffix','inbound-cidrs']:
+            self.assertTrue(aws<text.index(needle)<end,needle)
+
+    def test_values_default_to_no_inbound_sources(self):
+        values=json.loads((CHART/'values.yaml').read_text(encoding='utf-8'))
+        self.assertEqual(values['ingress'],{'inboundCidrs':[],'allowAnySource':False})
+        schema=json.loads((CHART/'values.schema.json').read_text(encoding='utf-8'))['properties']['ingress']['properties']
+        self.assertEqual(schema['allowAnySource'],{'type':'boolean'})
+        self.assertEqual(schema['inboundCidrs']['type'],'array')
+        self.assertEqual(schema['inboundCidrs']['items']['type'],'string')
+        pattern=re.compile(schema['inboundCidrs']['items']['pattern'])
+        for cidr in ['198.51.100.7/32','203.0.113.0/24','0.0.0.0/0','10.0.0.0/8']:
+            self.assertRegex(cidr,pattern)
+        for cidr in ['198.51.100.7','198.51.100.7/33','2001:db8::/32','198.51.100.7/32,203.0.113.0/24','']:
+            self.assertNotRegex(cidr,pattern)
 
 if __name__=='__main__': unittest.main()
