@@ -10,6 +10,8 @@ Scheduled load on the gateway, following
 | `kube_run.py` | Runs `messages.js` in a Pod inside the cluster, copies the output back and runs `summarize.py` |
 | `test_summarize.py` | Unit tests of `summarize.py`; they need neither k6 nor a stack |
 | `test_kube_run.py` | Unit tests of `kube_run.py`; they need neither kubectl nor a cluster |
+| `prom_export.py` | Exports the Prometheus series of a run window through a port-forward |
+| `test_prom_export.py` | Unit tests of `prom_export.py`, with a fake port-forward and Prometheus |
 
 ## Run
 
@@ -209,6 +211,39 @@ python deploy/helm/rehearse.py --cluster <name> --kubeconfig <kind kubeconfig> -
 It writes to `loadtest/rehearsal/` next to the kubeconfig and fails unless k6 and
 `summarize.py` exit with 0, the results have rows with requests sent, and the Pod and
 ConfigMap were deleted.
+
+## Export the Prometheus series
+
+After each in-cluster run, and before the monitoring stack or the Ingress is
+deleted, export the run's series with `prom_export.py`:
+
+```text
+python loadtest/prom_export.py --kubeconfig <EKS kubeconfig> --kube-context <EKS context> --record .local/loadtest/<name>/run-record.json
+```
+
+It opens `kubectl port-forward svc/prometheus-server <free local port>:80` in the
+`monitoring` namespace (`--service`, `--monitoring-namespace`), runs the fixed
+query list of the report template (Part 0.4) over `load_start` to `load_end` of the
+record plus `--tail-seconds` (default 120), with `--step` (default `15s`), and stops
+the port-forward on every exit. Instead of `--record`, give `--start` and `--end`
+as RFC 3339 times with an offset, and `--out-dir`. If the end of the window is still
+to come, the script prints how long it waits and waits, so the tail samples exist;
+for `auto` runs, raise `--tail-seconds` to cover the scale-down.
+
+Besides the template's queries it exports `access_results` and `metering_results`
+(the `results` rate of those services, by route and result) and the raw counters
+`gateway_duration_sum` and `gateway_duration_count` of gateway `/v1/messages`
+durations, so that D can be recomputed over any hold window. The namespace and
+release in the `cpu_by_pod`, `mem_by_pod`, `net_by_pod`, `replicas` and `hpa_*`
+queries come from the record (`--namespace`, `--release` otherwise).
+
+Each response is written unchanged to `prom/<name>.json` next to the record
+(`--out-dir`), and `prom/index.json` lists each query, the window, the step and the
+number of series and samples it returned. An earlier export is kept unless
+`--overwrite` is given. The script exits with 2 when a query returned no series (the
+others are still written, and the index marks it `empty`), and with 1 on an HTTP,
+connection or port-forward error. Without autoscaling, leave out the HPA queries
+with `--skip hpa_desired --skip hpa_conditions`.
 
 ## Settings
 
