@@ -64,6 +64,65 @@ helm --kubeconfig .local/kubeconfig --kube-context kind-gateflow71 uninstall gf 
 kind delete cluster --name gateflow71 --kubeconfig .local/kubeconfig
 ```
 
+## Load and scaling dashboard (#74)
+
+The opt-in `dashboard.enabled` value provisions the dashboard JSON from
+`gateflow/files/gateflow-dashboard.json` as a ConfigMap in the application release
+namespace. Grafana is a separate release, pinned to chart 14.0.0 / Grafana 13.2.4
+in `monitoring/grafana-version.json`. It uses the Prometheus release from #72.
+It has no public Ingress, uses a random password in an existing Kubernetes Secret
+and stores its disposable SQLite data in an emptyDir. Export experiment data before
+daily teardown. Installing this dashboard does not install KEDA or alter its rules.
+
+After #72's Prometheus is installed, upgrade the application chart from a checkout
+that includes the same autoscaling implementation as the installed release:
+
+```text
+helm --kubeconfig .local/kubeconfig --kube-context kind-gateflow74 upgrade gf deploy/helm/gateflow -n gateflow --reuse-values --set dashboard.enabled=true --wait --wait-for-jobs --timeout 6m
+python deploy/helm/dashboard.py --kubeconfig .local/kubeconfig --kube-context kind-gateflow74
+kubectl --kubeconfig .local/kubeconfig --context kind-gateflow74 -n gateflow port-forward service/grafana 13000:80
+```
+
+The installer preserves #72's gateway scrape configuration and adds
+`monitoring/dashboard-prometheus-values.yaml`: kube-state-metrics and a dedicated
+scrape job. Desired/available Deployment replicas come from that exporter; the
+number of scraped targets is shown separately because it includes draining Pods.
+The overlay assumes monitoring release `prometheus` in namespace `monitoring`,
+matching #72. Review the overlay and datasource URL when changing those names.
+The Grafana release is installed in the application namespace, so its mounted
+dashboard ConfigMap is in the same namespace. A non-default application release
+name is supported by `dashboard.py --release`.
+
+Open `http://127.0.0.1:13000/d/gateflow-load-scaling`. Read `admin-user` and
+`admin-password` from the `gateflow-grafana-admin` Secret in a local terminal or
+Kubernetes client, decode the base64 values and sign in. Never publish those values,
+the kubeconfig, credentials file or seed logs. The installer preserves an existing
+admin Secret. Dashboard JSON is read-only in Grafana; update it through Git.
+
+For kind acceptance, run `loadtest/messages.js` from #73 against the same cluster
+through a localhost ingress port-forward. Record the exact head, Helm values,
+versions, UTC start/end, k6 output and `summarize.py` result. A short demonstration
+can set `LEVELS=5`, `WARMUP_S=10`, `HOLD_S=30`, `TENANTS=10`, `PAIRED=0`; it verifies
+dashboard wiring, not capacity. Keep `--no-usage-report`. Set the dashboard time
+range to that run and take a screenshot showing nonempty throughput, latency,
+demand and replica panels. Check `/api/health`, datasource health and the dashboard
+API as supporting evidence; an API response does not replace the screenshot.
+
+The Run, Profile and Configuration text boxes are experiment notes, not labels
+that filter Prometheus data. Select the matching UTC interval, namespace and
+application release. D is the measured mean workload duration; the default 20 s
+is provisional. The dashboard aggregates histogram buckets across Pods before
+calculating quantiles. Missing samples remain missing, and idle completion is
+undefined. Its completed share uses observed terminal requests and is not the
+proposal's completion SLO over scheduled valid arrivals. k6 supplies scheduled
+load, client latency and formal completion; ledger queries supply money evidence.
+Unimplemented pool, outbox, tenant and resource metrics are not shown as zeros.
+
+Recovery: uninstall only the `grafana` release, remove the dashboard override from
+the application release and restore the previous Prometheus values. Keep KEDA's
+gateway scrape job running. The local admin Secret can be retained for a repeat
+run. For the disposable kind test, save evidence and delete only its named cluster.
+
 ## Chart inputs and Jobs
 
 Set imageTag to a published full commit SHA or set services.<name>.digest to pin
