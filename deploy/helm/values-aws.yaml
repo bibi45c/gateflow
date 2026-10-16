@@ -1,0 +1,11 @@
+environment: aws
+# URLs in gateflow-runtime must use sslmode=require.
+services:
+  gateway:
+    # One vCPU and 2 GiB per gateway Pod (proposal 5.6).
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        memory: 2Gi

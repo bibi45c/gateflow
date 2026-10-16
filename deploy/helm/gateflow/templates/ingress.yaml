@@ -1,0 +1,10 @@
+{{- $aws := eq .Values.environment "aws" -}}
+{{- $a := dict "nginx.ingress.kubernetes.io/proxy-buffering" "off" "nginx.ingress.kubernetes.io/proxy-request-buffering" "off" "nginx.ingress.kubernetes.io/proxy-read-timeout" "300" "nginx.ingress.kubernetes.io/proxy-send-timeout" "300" "nginx.ingress.kubernetes.io/proxy-body-size" "4m" -}}
+{{- if $aws -}}
+{{- $a = dict "alb.ingress.kubernetes.io/scheme" "internet-facing" "alb.ingress.kubernetes.io/target-type" "ip" "alb.ingress.kubernetes.io/load-balancer-attributes" "idle_timeout.timeout_seconds=300" "alb.ingress.kubernetes.io/target-group-attributes" "deregistration_delay.timeout_seconds=60" "alb.ingress.kubernetes.io/healthcheck-path" "/readyz" "alb.ingress.kubernetes.io/tags" "Project=gateflow,Environment=s3" -}}
+{{- end -}}
+{{- $paths := list -}}
+{{- range $path := list "/v1/messages" "/v1/responses" -}}
+{{- $paths = append $paths (dict "path" $path "pathType" "Exact" "backend" (dict "service" (dict "name" (printf "%s-gateway" $.Release.Name) "port" (dict "number" 8080)))) -}}
+{{- end }}
+{{ dict "apiVersion" "networking.k8s.io/v1" "kind" "Ingress" "metadata" (dict "name" .Release.Name "annotations" $a) "spec" (dict "ingressClassName" (ternary "alb" "nginx" $aws) "rules" (list (dict "http" (dict "paths" $paths)))) | toJson }}

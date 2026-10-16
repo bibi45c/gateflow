@@ -1,0 +1,20 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    labels:
+      ingress-ready: "true"
+  - role: worker
+    labels:
+      gateflow.io/workload: services
+  - role: worker
+    labels:
+      gateflow.io/workload: load-generator
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          taints:
+            - key: gateflow.io/workload
+              value: load-generator
+              effect: NoSchedule

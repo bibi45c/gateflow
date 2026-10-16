@@ -1,0 +1,5 @@
+{{- range $name, $service := .Values.services -}}
+{{- $labels := merge (dict "app.kubernetes.io/component" $name) (include "gf.labels" $ | fromJson) }}
+---
+{{ dict "apiVersion" "v1" "kind" "Service" "metadata" (dict "name" (printf "%s-%s" $.Release.Name $name) "labels" $labels) "spec" (dict "type" "ClusterIP" "selector" $labels "ports" (list (dict "name" "http" "port" $service.port "targetPort" "http"))) | toJson }}
+{{ end -}}

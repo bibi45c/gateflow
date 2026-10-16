@@ -1,0 +1,122 @@
+{
+  "apiVersion": "v1",
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "postgres-init"
+  },
+  "data": {
+    "10-gateflow-admin.sh": "# Mirror the RDS master role: owns the database and may create roles, but is not a superuser.\npsql -X -v ON_ERROR_STOP=1 --username \"$POSTGRES_USER\" --dbname \"$POSTGRES_DB\" <<'SQL'\n\\getenv admin_password GATEFLOW_ADMIN_PASSWORD\nCREATE ROLE gateflow_admin LOGIN CREATEROLE NOSUPERUSER PASSWORD :'admin_password';\nALTER DATABASE gateflow OWNER TO gateflow_admin;\nSQL\n"
+  }
+}
+---
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "postgres-0",
+    "labels": {
+      "app": "gf-postgres"
+    }
+  },
+  "spec": {
+    "nodeSelector": {
+      "gateflow.io/workload": "services"
+    },
+    "automountServiceAccountToken": false,
+    "containers": [
+      {
+        "name": "postgres",
+        "image": "postgres:17",
+        "env": [
+          {
+            "name": "POSTGRES_USER",
+            "value": "gateflow"
+          },
+          {
+            "name": "POSTGRES_DB",
+            "value": "gateflow"
+          },
+          {
+            "name": "POSTGRES_PASSWORD",
+            "valueFrom": {
+              "secretKeyRef": {
+                "name": "gateflow-postgres",
+                "key": "POSTGRES_PASSWORD"
+              }
+            }
+          },
+          {
+            "name": "GATEFLOW_ADMIN_PASSWORD",
+            "valueFrom": {
+              "secretKeyRef": {
+                "name": "gateflow-bootstrap",
+                "key": "PGPASSWORD"
+              }
+            }
+          }
+        ],
+        "ports": [
+          {
+            "containerPort": 5432
+          }
+        ],
+        "volumeMounts": [
+          {
+            "name": "init",
+            "mountPath": "/docker-entrypoint-initdb.d",
+            "readOnly": true
+          }
+        ],
+        "readinessProbe": {
+          "exec": {
+            "command": [
+              "pg_isready",
+              "-h",
+              "127.0.0.1",
+              "-U",
+              "gateflow",
+              "-d",
+              "gateflow"
+            ]
+          },
+          "periodSeconds": 2
+        },
+        "resources": {
+          "requests": {
+            "cpu": "100m",
+            "memory": "128Mi"
+          },
+          "limits": {
+            "memory": "512Mi"
+          }
+        }
+      }
+    ],
+    "volumes": [
+      {
+        "name": "init",
+        "configMap": {
+          "name": "postgres-init"
+        }
+      }
+    ]
+  }
+}
+---
+{
+  "apiVersion": "v1",
+  "kind": "Service",
+  "metadata": {
+    "name": "postgres"
+  },
+  "spec": {
+    "selector": {
+      "app": "gf-postgres"
+    },
+    "ports": [
+      {
+        "port": 5432
+      }
+    ]
+  }
+}

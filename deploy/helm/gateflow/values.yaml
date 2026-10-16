@@ -1,0 +1,80 @@
+{
+  "environment": "kind",
+  "imageTag": "de208ffb766a70706c108c98fa10e00bce37d266",
+  "secretName": "gateflow-runtime",
+  "bootstrapSecretName": "gateflow-bootstrap",
+  "postgresImage": "postgres:17",
+  "shutdown": {
+    "preStop": 5,
+    "drain": 10,
+    "timeout": 60,
+    "margin": 10,
+    "grace": 85
+  },
+  "services": {
+    "gateway": {
+      "port": 8080,
+      "replicas": 1,
+      "image": "ghcr.io/bibi45c/gateflow-gateway",
+      "digest": "",
+      "resources": {
+        "requests": {
+          "cpu": "50m",
+          "memory": "64Mi"
+        },
+        "limits": {
+          "memory": "256Mi"
+        }
+      }
+    },
+    "access": {
+      "port": 8081,
+      "replicas": 1,
+      "image": "ghcr.io/bibi45c/gateflow-access",
+      "digest": "",
+      "resources": {
+        "requests": {
+          "cpu": "50m",
+          "memory": "64Mi"
+        },
+        "limits": {
+          "memory": "256Mi"
+        }
+      }
+    },
+    "metering": {
+      "port": 8082,
+      "replicas": 1,
+      "image": "ghcr.io/bibi45c/gateflow-metering",
+      "digest": "",
+      "resources": {
+        "requests": {
+          "cpu": "50m",
+          "memory": "64Mi"
+        },
+        "limits": {
+          "memory": "256Mi"
+        }
+      }
+    },
+    "mock-upstream": {
+      "port": 8090,
+      "replicas": 1,
+      "image": "ghcr.io/bibi45c/gateflow-mock-upstream",
+      "digest": "",
+      "resources": {
+        "requests": {
+          "cpu": "50m",
+          "memory": "64Mi"
+        },
+        "limits": {
+          "memory": "256Mi"
+        }
+      }
+    }
+  },
+  "seedChannels": {
+    "ollamaBaseURL": "http://ollama:11434",
+    "ollamaModel": "qwen3:8b"
+  }
+}

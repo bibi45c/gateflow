@@ -1,0 +1,10 @@
+{{- range $index, $name := list "access" "metering" -}}
+{{- $svc := index $.Values.services $name -}}
+{{- $env := include "gf.env" (dict "root" $ "name" $name) | fromJsonArray -}}
+{{- $c := dict "name" "seed" "image" (include "gf.image" (dict "root" $ "service" $svc)) "args" (list "seed") "env" $env -}}
+{{- $pod := include "gf.jobPod" $ | fromJson -}}
+{{- $_ := set $pod "containers" (list $c) -}}
+{{- $_ := set $pod "securityContext" (dict "runAsNonRoot" true) }}
+---
+{{ dict "apiVersion" "batch/v1" "kind" "Job" "metadata" (dict "name" (printf "%s-seed-%s" $.Release.Name $name) "annotations" (dict "helm.sh/hook" "post-install,post-upgrade" "helm.sh/hook-weight" (printf "%d" (mul 10 (add 1 $index))) "helm.sh/hook-delete-policy" "before-hook-creation,hook-succeeded")) "spec" (dict "activeDeadlineSeconds" 180 "backoffLimit" 3 "template" (dict "spec" $pod)) | toJson }}
+{{ end -}}
