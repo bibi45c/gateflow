@@ -5,11 +5,14 @@ They are drawn from the code, and every diagram names the files it was checked
 against, so a reviewer can compare the two. Where the build differs from the
 proposal, the difference is listed under [Deviations](#7-deviations-from-the-proposal).
 
-- **Snapshot:** `main` at `31d5c4a` (14 October 2026). The views are checked again at
-  the freeze on 19 October, before they go into the slides (#17).
-- **Scope:** S1 as built: `POST /v1/messages` through the gateway, key verification,
-  cost hold and settlement. S2 (`/v1/responses`, #61 to #66) and the S3 cloud
-  environment are still in progress; where they appear, they are marked *planned*.
+- **Snapshot:** `main` at `de208ff` (15 October 2026). The first version was drawn at
+  `31d5c4a` (14 October). The views are checked again at the freeze on 19 October,
+  before they go into the slides (#17).
+- **Scope:** S1 and S2 as built: `POST /v1/messages` and `POST /v1/responses` through
+  the gateway, key verification by model and protocol, cost hold and settlement, and
+  Prometheus metrics on every service. The S3 cloud environment is written as
+  Terraform and the images are published, but nothing is deployed yet; the cloud
+  view marks what is *planned*.
 - **Legend:** solid lines and boxes are built and on `main`; dashed ones are planned
   or present but unused.
 - The earlier diagrams in [index.html](index.html) were drawn from the plans before
@@ -36,11 +39,11 @@ service's tables.
 flowchart TB
   subgraph clients["Coding tools"]
     OC["OpenCode<br/>Anthropic provider"]
-    CX["Codex CLI<br/>(planned, S2)"]
+    CX["Codex CLI<br/>Responses provider"]
   end
 
   subgraph gw["gateway :8080"]
-    RL["relay<br/>request checks, SSE relay,<br/>usage and outcome"]
+    RL["relay<br/>Messages and Responses:<br/>request checks, SSE relay,<br/>usage and outcome"]
     AD["admission<br/>verify, channel check,<br/>reserve, settle"]
     RL --> AD
   end
@@ -71,34 +74,43 @@ flowchart TB
   end
 
   OC -->|"POST /v1/messages<br/>gateway key"| RL
-  CX -.->|"POST /v1/responses"| RL
-  AD -->|"POST /internal/v1/keys/verify"| AAPI
+  CX -->|"POST /v1/responses<br/>gateway key"| RL
+  AD -->|"POST /internal/v1/keys/verify<br/>key, model, protocol"| AAPI
   AD -->|"POST /internal/v1/reservations<br/>and .../settle"| MAPI
   PC -->|"GET /internal/v1/price-versions/{id}"| AAPI
-  RL -->|"POST /v1/messages<br/>body unchanged"| MU
+  RL -->|"same endpoint as the client<br/>body unchanged"| MU
   RL -->|"same, for the ollama channel"| OL
   AAPI --> SA
   MAPI --> SC
 
+  PR["Prometheus<br/>(planned, S3)"]
+  PR -.->|"GET /metrics"| gw
+  PR -.-> ac
+  PR -.-> me
+
   classDef planned stroke-dasharray:5 5
-  class CX,RD planned
+  class RD,PR planned
 ```
 
 | Call | Authentication | Timeout and retries |
 |---|---|---|
-| tool → gateway | gateway key in `x-api-key` or `Authorization: Bearer` | none on the reply; upstream connect 10 s |
-| gateway → access, verify | `Bearer ACCESS_INTERNAL_TOKEN` | 2 s, no retry |
+| tool → gateway, `/v1/messages` or `/v1/responses` | gateway key in `x-api-key` or `Authorization: Bearer` | none on the reply; upstream connect 10 s |
+| gateway → access, verify | `Bearer ACCESS_INTERNAL_TOKEN`; the body names the protocol for Responses, and a missing protocol means Messages | 2 s, no retry |
 | gateway → metering, reserve | `Bearer METERING_INTERNAL_TOKEN` | 2 s, retried once on a timeout, 5xx or connection error |
 | gateway → metering, settle | `Bearer METERING_INTERNAL_TOKEN` | 2 s per attempt, up to 2 retries, with a fresh context |
 | metering → access, price version | `Bearer ACCESS_INTERNAL_TOKEN` | 1 s; each version is cached for the life of the process |
-| gateway → upstream | none for the mock and Ollama; otherwise the channel's `credential_env` value as `x-api-key` | connect 10 s; forwards only `content-type`, `anthropic-version` and `anthropic-beta` |
+| gateway → upstream, Messages | none for the mock and Ollama; otherwise the channel's `credential_env` value as `x-api-key` | connect 10 s; forwards only `content-type`, `anthropic-version` and `anthropic-beta` |
+| gateway → upstream, Responses | the same credential as `Authorization: Bearer` | connect 10 s; forwards only `content-type` |
+| scraper → every service, `GET /metrics` | none; for scrapes inside the cluster only, never routed by the ingress | — |
 
 Every internal call carries `X-Request-Id`, the gateway's `req_<uuid>`, and every
 internal error uses the body in [api/errors.md](../../api/errors.md).
 
 Checked against: `services/gateway/main.go`,
 `services/gateway/internal/admission/admission.go`, `.../admission/settle.go`,
-`.../internalapi/caller.go`, `.../relay/relay.go`, `.../relay/upstream.go`,
+`.../internalapi/caller.go`, `.../relay/relay.go`, `.../relay/protocol.go`,
+`.../relay/messages.go`, `.../relay/responses.go`, `.../relay/upstream.go`,
+`.../accessclient/client.go`, `services/access/main.go`,
 `services/metering/main.go`, `services/metering/internal/accessclient/accessclient.go`,
 `services/access/internal/httpapi/httpapi.go`.
 
@@ -118,7 +130,7 @@ flowchart LR
 
   subgraph accessSvc["access service"]
     TA["Tenant and access<br/>Tenant, ApiKey"]
-    CC["Channel catalogue<br/>Channel, ChannelModel,<br/>PriceVersion"]
+    CC["Channel catalogue<br/>Channel by protocol,<br/>ChannelModel, PriceVersion"]
   end
 
   subgraph gatewaySvc["gateway service"]
@@ -213,27 +225,56 @@ Checked against: `deploy/compose/compose.yaml`, `deploy/compose/postgres-init.sq
 
 ## 4. Physical view: cloud
 
-*Planned, not built.* S3 moves the stack to AWS: one region, EKS for the services,
-RDS PostgreSQL for both schemas, images from GitHub Container Registry, and KEDA to
-scale the gateway. Redis is not used until a feature needs it, so no ElastiCache is
-created ([feasibility plan](../feasibility-plan.md)). The details are in #30
-(Terraform), #71 (Helm), #72 (KEDA and Prometheus) and #76 (deployment workflow).
-This view is redrawn from those files once they are on `main`.
+*Written, not deployed.* The S3 environment exists as Terraform on `main` (#90), and
+CI publishes a versioned image of every service (#83), but nothing has been applied
+to AWS yet. Only bibi45c runs `terraform apply`, after the spend is approved. The
+Helm chart (#71), KEDA with Prometheus (#72) and the deployment script (#76) are
+still to come, so the Pods, the ingress and the scaling are dashed.
 
 ```mermaid
 flowchart LR
-  T["Coding tools"] --> ALB["ALB ingress"]
-  subgraph aws["AWS, one region (planned)"]
-    ALB --> GWp["gateway Pods<br/>1, 2 or 4 replicas, KEDA"]
-    GWp --> SVp["access and metering Pods"]
-    SVp --> RDS[("RDS PostgreSQL<br/>schemas access, accounting")]
-    GWp --> MUp["mock-upstream Pods"]
+  T["Coding tools,<br/>k6 load"] -.-> ALB
+  subgraph aws["AWS ap-southeast-1, one VPC across two AZs (Terraform, not applied)"]
+    subgraph pub["Public subnets"]
+      ALB["ALB<br/>load balancer controller IAM"]
+      NAT["one NAT gateway"]
+    end
+    subgraph priv["Private subnets"]
+      subgraph eks["EKS 1.35"]
+        SVC["node group services<br/>2 × m6i.xlarge"]
+        GEN["node group load-generator<br/>1 × c6i.xlarge, tainted"]
+        PODS["gateway, access, metering,<br/>mock-upstream Pods<br/>(planned, Helm #71)"]
+        KEDA["KEDA and Prometheus<br/>(planned, #72)"]
+      end
+      RDS[("RDS PostgreSQL 17<br/>db.t4g.small<br/>schemas access, accounting")]
+    end
   end
-  GHCR[("GHCR images<br/>tagged by commit")] -.-> GWp
+  GHCR[("GHCR<br/>ghcr.io/bibi45c/gateflow-*<br/>tagged by commit, public")]
+  GA["GitHub Actions<br/>images.yml on push to main"]
+
+  ALB -.-> PODS
+  PODS -.-> RDS
+  SVC -.-|"runs on"| PODS
+  KEDA -.->|"scales the gateway"| PODS
+  GA --> GHCR
+  GHCR -.->|"anonymous pull"| PODS
 
   classDef planned stroke-dasharray:5 5
-  class T,ALB,GWp,SVp,RDS,MUp,GHCR planned
+  class ALB,NAT,SVC,GEN,RDS,PODS,KEDA,T planned
 ```
+
+- **Built:** the image pipeline. Every push to `main` publishes four images tagged with
+  the commit, with OCI source and revision labels, and records their digests in the
+  job summary; pull requests build without pushing. The images pull without a login
+  (being checked on team machines in #21).
+- **Written and tested without AWS:** the Terraform modules `network`, `cluster` and
+  `database`, checked in CI with `terraform validate` and `terraform test` against
+  mocked providers. Redis is left out, so no ElastiCache is created.
+- **Planned:** applying it, the workloads, autoscaling and the scripted deployment with
+  rollback.
+
+Checked against: `deploy/terraform/` (`main.tf`, `variables.tf`, `modules/*`, `README.md`),
+`.github/workflows/images.yml`, `deploy/docker/README.md`, #21.
 
 ## 5. Persistence view
 
@@ -277,8 +318,8 @@ erDiagram
     text channel_id PK
   }
   channels {
-    text id PK "mock, ollama"
-    text protocol "anthropic-messages"
+    text id PK "mock, mock-responses, ollama, ollama-responses"
+    text protocol "anthropic-messages or openai-responses"
     text base_url "scheme, host, optional port"
     text credential_env "empty, or UPSTREAM_CREDENTIAL_*"
     timestamptz created_at
@@ -293,6 +334,11 @@ erDiagram
   index on `key_hmac`.
 - A credential is only allowed over `https`: a check constraint refuses a
   `credential_env` on an `http` channel.
+- Migration `0002` widened the protocol check to `anthropic-messages` and
+  `openai-responses`, without changing a row. The seed gives each upstream a Messages
+  channel and a Responses twin (`mock-responses`, `ollama-responses`) that serve the
+  same models, and verify picks among the key's channels that speak the requested
+  protocol.
 
 ### Schema accounting (role metering)
 
@@ -345,14 +391,16 @@ erDiagram
   `settled` row to have an outcome, a charge and a time.
 - `ledger_entries` is append-only: a correction is a new entry.
 
-Checked against: `services/access/migrations/0001_init.sql`,
+Checked against: `services/access/migrations/0001_init.sql`, `.../0002_channel_protocols.sql`,
+`services/access/internal/seed/seed.go`, `services/access/internal/store/queries.go`,
 `services/metering/migrations/0001_init.sql`, `deploy/compose/postgres-init.sql`,
 `pkg/pgmigrate/pgmigrate.go`, `services/metering/main.go`.
 
 ## 6. Use case design: reserve and settle one call
 
 The representative use case is **UC6, reserve and settle simulated usage**, as it
-runs inside **UC4**, one `POST /v1/messages` call. It crosses all three services and
+runs inside **UC4**, one `POST /v1/messages` call. The `/v1/responses` call follows
+the same steps; its differences are listed below the sequence. It crosses all three services and
 both schemas, and it carries most of the S1 rules: the order of checks, the
 idempotent internal calls and the charge rule.
 
@@ -398,6 +446,19 @@ Refusals end the call before the upstream is reached, and leave no ledger entry:
 | verify or reserve | timeout, unreachable, `dependency_unavailable` | 503 `api_error` |
 | anything else | any other code | 500 `api_error`, logged |
 
+### The same flow on `/v1/responses`
+
+`POST /v1/responses` (S2, #65) runs the same admission, reserve, relay and settle
+steps; only the wire format differs:
+
+| Step | `/v1/messages` | `/v1/responses` |
+|---|---|---|
+| Verify | protocol left out, so `anthropic-messages` | protocol `openai-responses`, so a `*-responses` channel |
+| Output bound held | `max_tokens`, required, 1 to 32,768 | `max_output_tokens`, 1 to 32,768; when absent, the gateway sets it to 32,768 in the body it forwards and holds that |
+| Refused before admission | — | `previous_response_id`, with 400: the gateway keeps no response state |
+| Usage source | `message_start` and `message_delta`, cache tokens added to input | `response.completed` usage; cached input tokens are part of `input_tokens` |
+| Public errors | Anthropic error body | OpenAI error body |
+
 ### Reservation states
 
 ```mermaid
@@ -433,7 +494,8 @@ micro-units per token), a call with 6,328 input and 449 output tokens is charged
 Checked against: `services/gateway/internal/relay/relay.go`, `.../relay/request.go`,
 `.../relay/result.go`, `services/gateway/internal/admission/`,
 `services/metering/internal/api/`, `services/metering/internal/billing/billing.go`,
-`services/metering/internal/store/reservations.go`, [api/metering.yaml](../../api/metering.yaml).
+`services/metering/internal/store/reservations.go`, `services/gateway/internal/relay/responses.go`,
+[api/metering.yaml](../../api/metering.yaml).
 
 ## 7. Deviations from the proposal
 
@@ -445,7 +507,9 @@ Recorded in #18, the gate record (#20) and the [feasibility plan](../feasibility
 | A pending reservation waits for recovery when usage is unknown | An unknown count is charged at its maximum; a hold whose settle fails stays held until UC6 | No recovery process in S1 |
 | Redis for limits and the key cache | Redis runs in compose, but no service uses it; no key cache | Not needed until rate limits or caching land |
 | Keys and channels created through APIs (UC1, UC2) | Seed commands write each service's own schema | The key and channel APIs come later |
-| Separate prices for cache and reasoning tokens | Cache tokens are charged at the full input price; thinking tokens arrive in `output_tokens` | One price pair per version in S1 |
+| Separate prices for cache and reasoning tokens | Cache tokens are charged at the full input price, on Messages and on Responses (where cached tokens are inside `input_tokens`); thinking tokens arrive in `output_tokens` | One price pair per version in S1 |
+| Conversation state through the gateway | `/v1/responses` is stateless: `previous_response_id` is refused, and clients resend the conversation | The gateway keeps no response state |
 | Per-caller internal identities | One shared token for access; metering trusts the gateway's `tenant_id` and `price_version_id` | mTLS and workload identity are out of S1 |
-| Claude Code and Codex CLI as the acceptance clients (UC3) | OpenCode for validation; Codex in S2 (#66) | Claude Code needs a Claude service |
-| Aurora, Argo CD, Cognito and CloudFront (section 5.5) | Plain RDS, GHCR and a GitHub Actions deployment (planned, S3) | Cost and time |
+| Claude Code and Codex CLI as the acceptance clients (UC3) | OpenCode on Messages; Codex CLI on Responses (guide #103) | Claude Code needs a Claude service |
+| Aurora, Argo CD, Cognito and CloudFront (section 5.5) | Plain RDS PostgreSQL in Terraform, images in GHCR instead of ECR, a scripted deployment (planned, #76) | Cost and time |
+| Distributed tracing (UC15) | Prometheus metrics and JSON logs only (`docs/observability.md`) | Tracing is optional and its overhead unmeasured |
