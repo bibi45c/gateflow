@@ -4,13 +4,13 @@
 
 | Check | Command, from the repository root | Required for merge |
 |---|---|---|
-| Repository tests | `python -m unittest discover -s tools/repo/tests -v` | Yes: CI jobs `Tests (ubuntu-latest)`, `Tests (macos-latest)` and `Tests (windows-latest)` |
+| Repository tests | `python -m unittest discover -s tools/repo/tests -v` | Yes: CI jobs `Tests (ubuntu-24.04)`, `Tests (macos-latest)` and `Tests (windows-latest)` |
 | Service image builds | PR run of `.github/workflows/images.yml`, building all four targets without publishing | Yes for image workflow changes: CI jobs `Image build (gateway)`, `Image build (access)`, `Image build (metering)` and `Image build (mock-upstream)` |
 | Terraform configuration | `terraform -chdir=deploy/terraform fmt -check -recursive`, `terraform -chdir=deploy/terraform init -backend=false -input=false -lockfile=readonly`, `terraform -chdir=deploy/terraform validate`, `terraform -chdir=deploy/terraform test` (mock providers only) | Yes for Terraform changes: CI job `Terraform validation`; no AWS credentials or real plan/apply |
 | Helm deployment | `helm lint deploy/helm/gateflow`, `python -m unittest discover -s deploy/helm/tests -v`, then `python deploy/helm/rehearse.py --cluster gateflow71ci --kubeconfig .local/kubeconfig` and repeat with `--existing-cluster` | Yes for Helm/smoke changes: CI job `Helm kind smoke`; disposable local cluster, no AWS |
-| Load test tools | `python -m unittest discover -s loadtest -v` | Yes: CI jobs `Tests (ubuntu-latest)`, `Tests (macos-latest)` and `Tests (windows-latest)` |
-| Go checks | `go vet ./...`, then `go test ./...`, then `go build ./...` | Yes: CI jobs `Go (ubuntu-latest)`, `Go (macos-latest)` and `Go (windows-latest)` |
-| Go integration tests | With `GATEFLOW_TEST_POSTGRES_URL` set to a Postgres superuser URL, `go test -count=1 ./...` | Yes: CI job `Go integration (ubuntu-latest)` |
+| Load test tools | `python -m unittest discover -s loadtest -v` | Yes: CI jobs `Tests (ubuntu-24.04)`, `Tests (macos-latest)` and `Tests (windows-latest)` |
+| Go checks | `go vet ./...`, then `go test ./...`, then `go build ./...` | Yes: CI jobs `Go (ubuntu-24.04)`, `Go (macos-latest)` and `Go (windows-latest)` |
+| Go integration tests | With `GATEFLOW_TEST_POSTGRES_URL` set to a Postgres superuser URL, `go test -count=1 ./...` | Yes: CI job `Go integration (ubuntu-24.04)` |
 | Compose smoke test | `docker compose -p <worktree-name> -f deploy/compose/compose.yaml up --build --detach`, then open `http://localhost:<port>/healthz` for ports 8080, 8081, 8082 and 8090, then `docker compose -p <worktree-name> -f deploy/compose/compose.yaml down --volumes` | Yes: CI job `Compose smoke test` |
 | End-to-end test | With the compose stack up, `python -m unittest discover -s test/e2e -v`, then `python test/e2e/smoke.py --project <worktree-name>` | Yes: CI job `Compose smoke test` |
 

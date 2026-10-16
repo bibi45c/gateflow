@@ -194,7 +194,7 @@ flowchart LR
       J2["Go ×3 OS<br/>gofmt（仅 Linux）<br/>vet、test、build"]
       J4["Compose smoke test<br/>up --build<br/>探测 4 个 /healthz"]
     end
-    J3["Go integration<br/>ubuntu-latest<br/>postgres:17，禁止跳过"]
+    J3["Go integration<br/>ubuntu-24.04<br/>postgres:17，禁止跳过"]
   end
   RQ["main 必需检查<br/>docs/testing.md"]
   T2["issues opened / edited<br/>label created / edited / deleted<br/>（仅 area: 标签全量复查）<br/>workflow_dispatch"]
@@ -795,7 +795,7 @@ flowchart LR
       J2["Go ×3 OS<br/>gofmt (Linux only)<br/>vet, test, build"]
       J4["Compose smoke test<br/>up --build<br/>probe 4 /healthz"]
     end
-    J3["Go integration<br/>ubuntu-latest<br/>postgres:17, no skips"]
+    J3["Go integration<br/>ubuntu-24.04<br/>postgres:17, no skips"]
   end
   RQ["Required checks on main<br/>docs/testing.md"]
   T2["issues opened / edited<br/>label created / edited / deleted<br/>(full recheck on area: labels only)<br/>workflow_dispatch"]
