@@ -5,16 +5,26 @@ They are drawn from the code, and every diagram names the files it was checked
 against, so a reviewer can compare the two. Where the build differs from the
 proposal, the difference is listed under [Deviations](#7-deviations-from-the-proposal).
 
-- **Snapshot:** `main` at `de208ff` (15 October 2026). The first version was drawn at
-  `31d5c4a` (14 October). The views are checked again at the freeze on 19 October,
-  before they go into the slides (#17).
+- **Snapshot:** `main` at `467167c` (16 October 2026). Earlier versions were drawn at
+  `31d5c4a` (14 October) and `de208ff` (15 October). The S3 cloud runs have not
+  happened yet; the first is on 17 October. The views are checked again at the
+  freeze on 19 October, before they go into the slides (#17).
 - **Scope:** S1 and S2 as built: `POST /v1/messages` and `POST /v1/responses` through
   the gateway, key verification by model and protocol, cost hold and settlement, and
-  Prometheus metrics on every service. The S3 cloud environment is written as
-  Terraform and the images are published, but nothing is deployed yet; the cloud
-  view marks what is *planned*.
-- **Legend:** solid lines and boxes are built and on `main`; dashed ones are planned
-  or present but unused.
+  Prometheus metrics on every service. S3 as built: the Helm chart, KEDA autoscaling,
+  Prometheus, in-cluster k6 and the operator scripts, all run on kind; the AWS
+  environment is written as Terraform but not applied.
+- **Legend:**
+  - Solid box: built on `main` and run, locally, in CI or on kind.
+  - Dotted box (`stroke-dasharray:2 2`): on `main` but not yet run where it is drawn.
+    Only the cloud view uses it, with a tag in the label:
+    **[TF]** Terraform written, not applied;
+    **[kind]** run on kind, not yet on EKS;
+    **[AWS only]** tested without AWS, but only the AWS path uses it, so it has
+    never run.
+  - Dashed box (`stroke-dasharray:5 5`): planned, optional, or present but unused.
+  - Solid arrow: the call runs today. Dotted arrow (`-.->`): it does not run yet,
+    because it is planned, optional or, in the cloud view, not deployed.
 - The earlier diagrams in [index.html](index.html) were drawn from the plans before
   the code existed. Where the two disagree, this page follows the code.
 
@@ -34,6 +44,12 @@ Three business services, each with its own process, configuration and data. Codi
 tools call only the gateway. The gateway calls access and metering through their
 internal HTTP APIs, and metering calls access for prices. No service reads another
 service's tables.
+
+In the cluster, Prometheus scrapes the three services, and a KEDA ScaledObject scales
+the gateway on two Prometheus signals. The chart turns autoscaling on with
+`values-aws.yaml` and in the kind autoscale check; otherwise the gateway runs a
+fixed replica count. Operator scripts and k6 are not shown here: they are tools for
+operating and testing, not product components (see the cloud view).
 
 ```mermaid
 flowchart TB
@@ -83,13 +99,19 @@ flowchart TB
   AAPI --> SA
   MAPI --> SC
 
-  PR["Prometheus<br/>(planned, S3)"]
-  PR -.->|"GET /metrics"| gw
-  PR -.-> ac
-  PR -.-> me
+  subgraph plat["Cluster platform (Helm on kind; not in compose)"]
+    PR["Prometheus<br/>scrapes every 10 s"]
+    SO["KEDA ScaledObject<br/>two Prometheus triggers"]
+  end
+
+  PR -->|"GET /metrics"| gw
+  PR -->|"GET /metrics"| ac
+  PR -->|"GET /metrics"| me
+  SO -->|"PromQL: active admitted,<br/>arrival rate × D"| PR
+  SO -->|"scales replicas 2 to 4,<br/>through its HPA"| gw
 
   classDef planned stroke-dasharray:5 5
-  class RD,PR planned
+  class RD planned
 ```
 
 | Call | Authentication | Timeout and retries |
@@ -101,7 +123,8 @@ flowchart TB
 | metering → access, price version | `Bearer ACCESS_INTERNAL_TOKEN` | 1 s; each version is cached for the life of the process |
 | gateway → upstream, Messages | none for the mock and Ollama; otherwise the channel's `credential_env` value as `x-api-key` | connect 10 s; forwards only `content-type`, `anthropic-version` and `anthropic-beta` |
 | gateway → upstream, Responses | the same credential as `Authorization: Bearer` | connect 10 s; forwards only `content-type` |
-| scraper → every service, `GET /metrics` | none; for scrapes inside the cluster only, never routed by the ingress | — |
+| Prometheus → gateway, access, metering, `GET /metrics` | none; for scrapes inside the cluster only, never routed by the ingress | scrape every 10 s, timeout 5 s |
+| KEDA → Prometheus, two queries | none; inside the cluster | a query is empty unless every gateway target is up and fresh; KEDA then reports an error, never a zero, and the HPA does not scale down on it |
 
 Every internal call carries `X-Request-Id`, the gateway's `req_<uuid>`, and every
 internal error uses the body in [api/errors.md](../../api/errors.md).
@@ -112,7 +135,10 @@ Checked against: `services/gateway/main.go`,
 `.../relay/messages.go`, `.../relay/responses.go`, `.../relay/upstream.go`,
 `.../accessclient/client.go`, `services/access/main.go`,
 `services/metering/main.go`, `services/metering/internal/accessclient/accessclient.go`,
-`services/access/internal/httpapi/httpapi.go`.
+`services/access/internal/httpapi/httpapi.go`,
+`deploy/helm/gateflow/templates/scaledobject.yaml`, `deploy/helm/gateflow/values.yaml`,
+`deploy/helm/values-aws.yaml`, `deploy/helm/monitoring/prometheus-values.yaml`,
+`deploy/helm/README.md` (Autoscaling).
 
 ## 2. Context map
 
@@ -225,56 +251,116 @@ Checked against: `deploy/compose/compose.yaml`, `deploy/compose/postgres-init.sq
 
 ## 4. Physical view: cloud
 
-*Written, not deployed.* The S3 environment exists as Terraform on `main` (#90), and
-CI publishes a versioned image of every service (#83), but nothing has been applied
-to AWS yet. Only bibi45c runs `terraform apply`, after the spend is approved. The
-Helm chart (#71), KEDA with Prometheus (#72) and the deployment script (#76) are
-still to come, so the Pods, the ingress and the scaling are dashed.
+*Written, not deployed.* Everything in AWS is on `main` but has not run yet. The
+Terraform (#90) is not applied; the first apply is on 17 October, and only bibi45c
+runs it. The Helm chart (#106), KEDA with Prometheus (#112, #118), the in-cluster k6
+(#117, #119) and the deployment script (#111) run on kind, not yet on EKS. Only the
+image pipeline (#83) and GHCR run today. So every AWS box is dotted, with a tag for
+its state (see the legend).
 
 ```mermaid
 flowchart LR
-  T["Coding tools,<br/>k6 load"] -.-> ALB
-  subgraph aws["AWS ap-southeast-1, one VPC across two AZs (Terraform, not applied)"]
-    subgraph pub["Public subnets"]
-      ALB["ALB<br/>load balancer controller IAM"]
-      NAT["one NAT gateway"]
+  OPR["Operator, bibi45c<br/>coding tools, smoke checks"]
+
+  subgraph ops["Operator and test tools, run from the operator's machine (not product components)"]
+    TFC["terraform plan, apply<br/>deploy/terraform [TF]"]
+    DEP["helm install, deploy/helm/deploy.py<br/>one service by digest, rollback record [kind]"]
+    AWSS["deploy/aws: secrets.py,<br/>reset_db.py, leftovers.py [AWS only]"]
+    LT["loadtest/kube_run.py [kind],<br/>prom_export.py, derive.py"]
+  end
+
+  subgraph aws["AWS ap-southeast-1, one VPC, two AZs [TF]"]
+    subgraph pub["Public subnets [TF]"]
+      ALB["ALB from the chart's Ingress [AWS only]<br/>plain HTTP, no TLS<br/>inbound-cidrs: the operator's /32<br/>/v1/messages, /v1/responses"]
+      NAT["one NAT gateway [TF]"]
     end
-    subgraph priv["Private subnets"]
-      subgraph eks["EKS 1.35"]
-        SVC["node group services<br/>2 × m6i.xlarge"]
-        GEN["node group load-generator<br/>1 × c6i.xlarge, tainted"]
-        PODS["gateway, access, metering,<br/>mock-upstream Pods<br/>(planned, Helm #71)"]
-        KEDA["KEDA and Prometheus<br/>(planned, #72)"]
+    subgraph priv["Private subnets [TF]"]
+      subgraph eks["EKS 1.35, API open to operator CIDRs [TF]"]
+        subgraph svc["node group services: 2 × m6i.xlarge [TF]"]
+          GW["gateway Pods, 2 to 4 [kind]<br/>1 vCPU, 2 GiB, request = limit"]
+          ACM["access, metering<br/>one Pod each [kind]"]
+          JOB["bootstrap and seed Jobs [kind]"]
+          PROM["Prometheus server, emptyDir, 6 h<br/>kube-state-metrics [kind]"]
+          KEDA["KEDA, gateway ScaledObject [kind]"]
+        end
+        subgraph gen["node group load-generator: 1 × c6i.xlarge, tainted [TF]"]
+          MU["mock-upstream Pod [kind]"]
+          K6["k6 Pod, one per run [kind]"]
+        end
       end
-      RDS[("RDS PostgreSQL 17<br/>db.t4g.small<br/>schemas access, accounting")]
+      RDS[("RDS PostgreSQL 17, db.t4g.small [TF]<br/>Single-AZ, 5432 from service nodes<br/>schemas access, accounting")]
     end
   end
-  GHCR[("GHCR<br/>ghcr.io/bibi45c/gateflow-*<br/>tagged by commit, public")]
+
   GA["GitHub Actions<br/>images.yml on push to main"]
+  GHCR[("GHCR<br/>ghcr.io/bibi45c/gateflow-*<br/>tagged by commit, public")]
 
-  ALB -.-> PODS
-  PODS -.-> RDS
-  SVC -.-|"runs on"| PODS
-  KEDA -.->|"scales the gateway"| PODS
+  OPR -.->|"HTTP :80, from the /32 only"| ALB
+  ALB -.->|"IP targets, /readyz"| GW
+  GW -.->|"verify, reserve, settle"| ACM
+  GW -.->|"mock channels"| MU
+  K6 -.->|"gf-gateway:8080,<br/>inside the cluster"| GW
+  ACM -.->|"sslmode=require"| RDS
+  JOB -.->|"roles, schemas, seed"| RDS
+  PROM -.->|"GET /metrics, cAdvisor"| GW
+  PROM -.->|"GET /metrics"| ACM
+  KEDA -.->|"two triggers"| PROM
+  KEDA -.->|"scales 2 to 4"| GW
+  TFC -.->|"creates"| aws
+  ops -.->|"EKS API: helm, kubectl"| eks
   GA --> GHCR
-  GHCR -.->|"anonymous pull"| PODS
+  svc -.->|"image pulls"| NAT
+  NAT -.->|"anonymous pull"| GHCR
 
-  classDef planned stroke-dasharray:5 5
-  class ALB,NAT,SVC,GEN,RDS,PODS,KEDA,T planned
+  classDef notrun stroke-dasharray:2 2
+  class TFC,DEP,AWSS,LT,ALB,NAT,GW,ACM,JOB,PROM,KEDA,MU,K6,RDS notrun
+  style aws stroke-dasharray:2 2
+  style pub stroke-dasharray:2 2
+  style priv stroke-dasharray:2 2
+  style eks stroke-dasharray:2 2
+  style svc stroke-dasharray:2 2
+  style gen stroke-dasharray:2 2
 ```
 
-- **Built:** the image pipeline. Every push to `main` publishes four images tagged with
-  the commit, with OCI source and revision labels, and records their digests in the
-  job summary; pull requests build without pushing. The images pull without a login
-  (being checked on team machines in #21).
-- **Written and tested without AWS:** the Terraform modules `network`, `cluster` and
-  `database`, checked in CI with `terraform validate` and `terraform test` against
-  mocked providers. Redis is left out, so no ElastiCache is created.
-- **Planned:** applying it, the workloads, autoscaling and the scripted deployment with
-  rollback.
+- **Runs today:** the image pipeline. Every push to `main` publishes four images
+  tagged with the commit, with OCI source and revision labels, and records their
+  digests in the job summary; pull requests build without pushing. The images pull
+  without a login (being checked on team machines in #21).
+- **[TF], written and tested without AWS:** the Terraform modules `network`,
+  `cluster` and `database`, checked in CI with `terraform validate` and
+  `terraform test` against mocked providers. Redis is left out, so no ElastiCache is
+  created. The load-generator node group carries the
+  `gateflow.io/workload=load-generator:NoSchedule` taint.
+- **[kind], run on kind, not yet on EKS:** CI installs the chart on kind, upgrades it
+  and rehearses a one-service deploy and rollback with `deploy.py`
+  (`.github/workflows/helm.yml`). The KEDA scale-up and scale-down check and the k6
+  load check are kind rehearsals run by hand, not in CI
+  (`rehearse.py --autoscale-check`, `--load-check`).
+- **Pod placement:** gateway, access, metering, the bootstrap and seed Jobs,
+  Prometheus, kube-state-metrics and KEDA select `gateflow.io/workload=services`.
+  mock-upstream and k6 select `gateflow.io/workload=load-generator` and tolerate its
+  taint, so they share the one generator node.
+- **Scaling:** with `values-aws.yaml`, KEDA's HPA owns the gateway's replica count,
+  between 2 and 4. T is 70 and D is 20 s, provisional until the 17 October single-Pod
+  calibration (#73). access and metering stay at one replica.
+- **[AWS only]:** the ALB annotations and the database TLS init check are rendered
+  in the chart tests, but only `environment=aws` uses them. The ALB comes from the
+  AWS Load Balancer Controller, which the operator installs separately; Terraform
+  creates only its IAM role. The chart refuses to render for AWS without
+  `ingress.inboundCidrs`, and refuses any `/0` unless `ingress.allowAnySource=true`.
+  The `deploy/aws` scripts are unit-tested only.
+- **Operator only:** bibi45c runs every operator tool from an allowed IP. GitHub
+  holds no AWS credentials, and no workflow deploys to AWS. On EKS the smoke suite
+  reads the ledger through a short-lived query Pod on a services node
+  (`--smoke-db-secret`), because there is no database Pod.
 
 Checked against: `deploy/terraform/` (`main.tf`, `variables.tf`, `modules/*`, `README.md`),
-`.github/workflows/images.yml`, `deploy/docker/README.md`, #21.
+`deploy/helm/gateflow/` (`values.yaml`, `templates/deployments.yaml`,
+`templates/ingress.yaml`, `templates/scaledobject.yaml`), `deploy/helm/values-aws.yaml`,
+`deploy/helm/monitoring/`, `deploy/helm/README.md`, `deploy/helm/deploy.py`,
+`deploy/aws/`, `loadtest/kube_run.py`, `loadtest/README.md`,
+`.github/workflows/images.yml`, `.github/workflows/helm.yml`,
+`deploy/docker/README.md`, #21.
 
 ## 5. Persistence view
 
@@ -500,16 +586,23 @@ Checked against: `services/gateway/internal/relay/relay.go`, `.../relay/request.
 ## 7. Deviations from the proposal
 
 Recorded in #18, the gate record (#20) and the [feasibility plan](../feasibility-plan.md).
+The S3 rows come from [deploy/helm/README.md](../../deploy/helm/README.md),
+[loadtest/README.md](../../loadtest/README.md) and
+[docs/observability.md](../observability.md).
 
 | Proposal | As built | Why |
 |---|---|---|
 | Transactional outbox, SQS and idempotent consumers for usage views (sections 5.1, 5.4) | Reservation and settlement in PostgreSQL transactions only; no outbox, no queue | Keeps S1 small; planned with UC6 after the gate |
 | A pending reservation waits for recovery when usage is unknown | An unknown count is charged at its maximum; a hold whose settle fails stays held until UC6 | No recovery process in S1 |
-| Redis for limits and the key cache | Redis runs in compose, but no service uses it; no key cache | Not needed until rate limits or caching land |
+| Redis for limits and the key cache | Redis runs in compose, but no service uses it; the chart and Terraform leave it out; no key cache | Not needed until rate limits or caching land |
 | Keys and channels created through APIs (UC1, UC2) | Seed commands write each service's own schema | The key and channel APIs come later |
 | Separate prices for cache and reasoning tokens | Cache tokens are charged at the full input price, on Messages and on Responses (where cached tokens are inside `input_tokens`); thinking tokens arrive in `output_tokens` | One price pair per version in S1 |
 | Conversation state through the gateway | `/v1/responses` is stateless: `previous_response_id` is refused, and clients resend the conversation | The gateway keeps no response state |
 | Per-caller internal identities | One shared token for access; metering trusts the gateway's `tenant_id` and `price_version_id` | mTLS and workload identity are out of S1 |
 | Claude Code and Codex CLI as the acceptance clients (UC3) | OpenCode on Messages; Codex CLI on Responses (guide #103) | Claude Code needs a Claude service |
-| Aurora, Argo CD, Cognito and CloudFront (section 5.5) | Plain RDS PostgreSQL in Terraform, images in GHCR instead of ECR, a scripted deployment (planned, #76) | Cost and time |
+| Aurora, Argo CD, Cognito and CloudFront (section 5.5) | Plain RDS PostgreSQL in Terraform, images in GHCR instead of ECR, and the operator-run `deploy/helm/deploy.py` instead of Argo CD: one service by digest, rolled back from its record (#111) | Cost and time |
 | Distributed tracing (UC15) | Prometheus metrics and JSON logs only (`docs/observability.md`) | Tracing is optional and its overhead unmeasured |
+| Public HTTPS ingress (section 5.5) | The ALB listens on plain HTTP, with no TLS. It admits only `ingress.inboundCidrs`, the operator's /32; the chart refuses an empty list, and any `/0` unless `ingress.allowAnySource=true` (#116) | HTTPS has not landed; the source allow-list is the stopgap, and keys still cross the internet in clear text |
+| Prometheus and one Grafana dashboard (section 5.5) | The Prometheus server runs on an `emptyDir` with 6 h retention, so its data is lost with the Pod; `loadtest/prom_export.py` exports each run's series before teardown. No Grafana dashboard is on `main` | Terraform installs no EBS CSI driver, so a volume claim would stay Pending; the scaling queries need only the last minutes |
+| Generator and simulator compute isolated from the relay nodes (section 5.6) | Isolated from the services nodes, but k6 and mock-upstream share one c6i.xlarge load-generator node | Cost; a saturated node slows both, so rising dropped iterations read as a generator limit, not gateway capacity |
+| A calibrated per-Pod admission cap C, with capacity rejections (section 5.6) | No admission cap: every call whose cost is held is admitted, so eligible arrivals equal admitted ones. C is measured, as the mean active requests of the single-Pod calibration (`loadtest/derive.py`), and sets T = floor(0.7 × C); nothing enforces it | The capacity gate is not built yet |
