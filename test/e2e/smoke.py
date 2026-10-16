@@ -12,8 +12,16 @@ with psql inside the compose postgres container. The seeded keys are derived fro
 ACCESS_SEED_SECRET (default: the compose default) exactly as `access seed` derives
 them. Each check prints one PASS or FAIL line; the exit code is 0 only when every
 check passed. Only the standard library is used.
+
+On Kubernetes, --kube-context and --namespace with --postgres-pod read the ledger
+through psql in a PostgreSQL Pod as the gateflow superuser. With --db-secret instead,
+the smoke test creates a short-lived query Pod on a services node whose DATABASE_URL
+comes from that Secret (key METERING_DATABASE_URL by default), runs psql there with
+the URL as it is, sslmode included, and deletes the Pod afterwards. The URL never
+reaches this process.
 """
 import argparse
+import contextlib
 from dataclasses import dataclass
 import base64
 import hashlib
@@ -23,6 +31,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import select
 import subprocess
 import sys
@@ -35,6 +44,15 @@ HOST = "127.0.0.1"
 HTTP_TIMEOUT = 30  # seconds, for every request and for each psql call
 LEDGER_WAIT = 5  # seconds to wait for the ledger entries of the relayed calls
 MAX_BODY_BYTES = 2 << 20  # the gateway's request body limit
+DEFAULT_DB_SECRET_KEY = "METERING_DATABASE_URL"
+DEFAULT_QUERY_IMAGE = "postgres:17"
+QUERY_POD_PREFIX = "gateflow-smoke-db"
+QUERY_POD_LABELS = {"app.kubernetes.io/name": "gateflow-smoke", "app.kubernetes.io/component": "db-query"}
+QUERY_POD_LIFETIME = 900  # seconds the query Pod sleeps before it ends by itself
+QUERY_POD_READY_TIMEOUT = 180  # seconds to wait for the query Pod to become Ready
+# The user and password of a database URL, and a password parameter, which no output may carry.
+URL_CREDENTIALS = re.compile(r"(postgres(?:ql)?://)\S*@", re.IGNORECASE)
+URL_PASSWORD = re.compile(r"(password=)[^&\s'\"]*", re.IGNORECASE)
 MESSAGES_PATH = "/v1/messages"
 RESPONSES_PATH = "/v1/responses"
 # The output bound the gateway holds, and sends upstream, for a Responses request
@@ -150,7 +168,102 @@ class KubernetesDatabase:
     pod: str
 
 
+@dataclass(frozen=True)
+class QueryPod:
+    """A short-lived Pod that runs psql with a database URL it reads from a Secret."""
+    context: str
+    namespace: str
+    pod: str
+
+
+def redact(text):
+    """text without the user and password of any postgres:// or postgresql:// URL."""
+    return URL_PASSWORD.sub(r"\1<redacted>", URL_CREDENTIALS.sub(r"\1<redacted>@", text))
+
+
+def kubectl(database, *args):
+    return ["kubectl", "--context", database.context, "--namespace", database.namespace, *args]
+
+
+def query_pod_name():
+    return f"{QUERY_POD_PREFIX}-{secrets.token_hex(4)}"
+
+
+def query_pod_spec(name, secret, key=DEFAULT_DB_SECRET_KEY, image=DEFAULT_QUERY_IMAGE):
+    """The query Pod: it only sleeps, on a services node, as a non-root user, with
+    DATABASE_URL taken from key of secret by Kubernetes, never from this process."""
+    container = {
+        "name": "psql", "image": image, "command": ["sleep", str(QUERY_POD_LIFETIME)],
+        "env": [{"name": "DATABASE_URL", "valueFrom": {"secretKeyRef": {"name": secret, "key": key}}},
+                {"name": "HOME", "value": "/tmp"}],
+        "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
+        "resources": {"requests": {"cpu": "10m", "memory": "32Mi"}, "limits": {"memory": "128Mi"}},
+    }
+    return {
+        "apiVersion": "v1", "kind": "Pod",
+        "metadata": {"name": name, "labels": dict(QUERY_POD_LABELS)},
+        "spec": {
+            "containers": [container], "restartPolicy": "Never",
+            "automountServiceAccountToken": False, "terminationGracePeriodSeconds": 1,
+            "nodeSelector": {"gateflow.io/workload": "services"},
+            "securityContext": {"runAsNonRoot": True, "runAsUser": 65532, "runAsGroup": 65532,
+                                "seccompProfile": {"type": "RuntimeDefault"}},
+        },
+    }
+
+
+def run_kubectl(command, timeout=HTTP_TIMEOUT, **kwargs):
+    """Runs a kubectl command; raises RuntimeError, with database URLs redacted, when it fails."""
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=timeout, check=False, **kwargs)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(redact(f"kubectl {command[5]} failed: {error}")) from error
+    if result.returncode != 0:
+        raise RuntimeError(redact(f"kubectl {command[5]} exited with {result.returncode}: "
+                                  f"{result.stderr.strip()}"))
+    return result.stdout
+
+
+def start_query_pod(database, secret, key=DEFAULT_DB_SECRET_KEY, image=DEFAULT_QUERY_IMAGE):
+    """Creates the query Pod and waits until it is Ready; raises RuntimeError when it cannot."""
+    spec = json.dumps(query_pod_spec(database.pod, secret, key, image))
+    run_kubectl(kubectl(database, "create", "-f", "-"), input=spec)
+    run_kubectl(kubectl(database, "wait", "--for=condition=Ready", f"pod/{database.pod}",
+                        f"--timeout={QUERY_POD_READY_TIMEOUT}s"),
+                timeout=QUERY_POD_READY_TIMEOUT + HTTP_TIMEOUT)
+
+
+def delete_query_pod(database):
+    """Deletes the query Pod without waiting; returns why it could not, or None."""
+    try:
+        run_kubectl(kubectl(database, "delete", "pod", database.pod, "--wait=false",
+                            "--ignore-not-found"))
+    except RuntimeError as error:
+        return str(error)
+    return None
+
+
+@contextlib.contextmanager
+def query_pod(context, namespace, secret, key=DEFAULT_DB_SECRET_KEY, image=DEFAULT_QUERY_IMAGE):
+    """Yields a ready QueryPod and deletes it afterwards, however the block ends, even
+    when the Pod never became ready."""
+    database = QueryPod(context, namespace, query_pod_name())
+    try:
+        start_query_pod(database, secret, key, image)
+        yield database
+    finally:
+        problem = delete_query_pod(database)
+        if problem:
+            print(f"WARNING could not delete query Pod {database.pod}: {problem}",
+                  file=sys.stderr, flush=True)
+
+
 def psql_command(project, sql):
+    if isinstance(project, QueryPod):
+        # The URL stays inside the Pod; the SQL is an argument, never part of the script.
+        return kubectl(project, "exec", project.pod, "--", "sh", "-c",
+                       'exec psql -X -tAc "$1" "$DATABASE_URL"', "smoke", sql)
     if isinstance(project, KubernetesDatabase):
         return ['kubectl', '--context', project.context, '--namespace', project.namespace,
                 'exec', project.pod, '--', 'psql', '-U', 'gateflow', '-d', 'gateflow', '-tAc', sql]
@@ -159,15 +272,16 @@ def psql_command(project, sql):
 
 
 def run_psql(project, sql):
-    """Returns the output of sql run by psql; raises RuntimeError when psql fails."""
+    """Returns the output of sql run by psql; raises RuntimeError when psql fails.
+    Database URLs in the error are redacted."""
     command = psql_command(project, sql)
     try:
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
                                 errors="replace", timeout=HTTP_TIMEOUT, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise RuntimeError(f"database exec failed: {error}") from error
+        raise RuntimeError(redact(f"database exec failed: {error}")) from error
     if result.returncode != 0:
-        raise RuntimeError(f"psql exited with {result.returncode}: {result.stderr.strip()}")
+        raise RuntimeError(redact(f"psql exited with {result.returncode}: {result.stderr.strip()}"))
     return result.stdout
 
 
@@ -654,13 +768,23 @@ def main(argv=None):
     parser.add_argument('--kube-context', help='explicit context for local Kubernetes database checks')
     parser.add_argument('--namespace', help='Kubernetes namespace')
     parser.add_argument('--postgres-pod', help='local PostgreSQL fixture Pod')
+    parser.add_argument('--db-secret', help='Secret whose database URL a short-lived query Pod uses')
+    parser.add_argument('--db-secret-key', help=f'key of the URL in --db-secret (default: {DEFAULT_DB_SECRET_KEY})')
+    parser.add_argument('--query-image', help=f'image of the query Pod (default: {DEFAULT_QUERY_IMAGE})')
     parser.add_argument('--host', default='127.0.0.1', help='ingress host (default: localhost)')
     parser.add_argument('--port', type=int, help='ingress port (default: GATEWAY_PORT or 8080)')
     args = parser.parse_args(argv)
-    kube_options = (args.kube_context, args.namespace, args.postgres_pod)
-    if any(kube_options) and (not all(kube_options) or args.project):
-        parser.error('Kubernetes requires --kube-context, --namespace and --postgres-pod, without --project')
-    database = KubernetesDatabase(*kube_options) if all(kube_options) else args.project
+    if (args.db_secret_key is not None or args.query_image is not None) and not args.db_secret:
+        parser.error('--db-secret-key and --query-image require --db-secret')
+    if args.db_secret is not None:
+        if args.postgres_pod or args.project:
+            parser.error('--db-secret excludes --postgres-pod and --project')
+        if not (args.db_secret and args.kube_context and args.namespace):
+            parser.error('--db-secret requires --kube-context and --namespace')
+    else:
+        kube_options = (args.kube_context, args.namespace, args.postgres_pod)
+        if any(kube_options) and (not all(kube_options) or args.project):
+            parser.error('Kubernetes requires --kube-context, --namespace and --postgres-pod, without --project')
     global HOST
     HOST = args.host
     try:
@@ -670,6 +794,25 @@ def main(argv=None):
         return 1
     secret = (os.environ.get("ACCESS_SEED_SECRET") or DEFAULT_SEED_SECRET).encode("utf-8")
 
+    with contextlib.ExitStack() as stack:
+        if args.db_secret:
+            try:
+                database = stack.enter_context(query_pod(
+                    args.kube_context, args.namespace, args.db_secret,
+                    args.db_secret_key or DEFAULT_DB_SECRET_KEY, args.query_image or DEFAULT_QUERY_IMAGE))
+            except RuntimeError as error:
+                print(f"FAIL setup: query Pod: {error}", flush=True)
+                return 1
+        elif args.postgres_pod:
+            database = KubernetesDatabase(args.kube_context, args.namespace, args.postgres_pod)
+        else:
+            database = args.project
+        return run_checks(port, secret, database)
+
+
+def run_checks(port, secret, database):
+    """Sends every request, checks the ledger and reservations in database and
+    returns the exit code."""
     run = Run()
     send_requests(run, port, secret)
     send_responses_requests(run, port, secret)
