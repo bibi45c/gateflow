@@ -173,7 +173,20 @@ UTC time):
 | `run.json`, `exit` | k6's JSON output and exit code |
 | `k6.log` | k6's own output, saved for successful and failed runs alike |
 | `summary.md`, `run.results.json` | the tables printed by `summarize.py` and its JSON |
-| `run-record.json` | time, context, namespace, release, k6 image digest, every setting, repository HEAD, the gateway's replicas and image, the k6 and `summarize.py` exit codes, and the cleanup |
+| `run-record.json` | time, context, namespace, release, k6 image digest, every setting, repository HEAD, the gateway's replicas and image, the k6 and `summarize.py` exit codes, the cleanup, and the run's UTC timeline (below) |
+
+The record's timeline fields are UTC ISO 8601 times with milliseconds:
+
+| Field | Meaning |
+|---|---|
+| `op_start`, `op_end` | when the script started, and when it had deleted the Pod and ConfigMap |
+| `load_start` | k6's time zero: the `gateflow_start` point in `run.json`, written by the first iteration |
+| `plan_end` | `load_start` plus the planned stages (warm-up, ramps, holds), without the graceful stop |
+| `load_end` | the last point k6 wrote, after the graceful stop |
+| `phases` | each phase of the plan, from its `gateflow_plan` point: `phase`, `level_rps`, offsets `start_s` and `end_s`, and UTC `start` and `end` |
+
+They are `null`, with the reason in `timeline_problem`, when `run.json` has no
+`gateflow_start` point or cannot be read; the run itself is still summarized.
 
 The script exits with 1 if the run failed or k6 exited non-zero, 130 after Ctrl-C,
 and otherwise with `summarize.py`'s exit code. To report a run on its issue, paste
