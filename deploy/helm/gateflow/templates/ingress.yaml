@@ -2,6 +2,17 @@
 {{- $a := dict "nginx.ingress.kubernetes.io/proxy-buffering" "off" "nginx.ingress.kubernetes.io/proxy-request-buffering" "off" "nginx.ingress.kubernetes.io/proxy-read-timeout" "300" "nginx.ingress.kubernetes.io/proxy-send-timeout" "300" "nginx.ingress.kubernetes.io/proxy-body-size" "4m" -}}
 {{- if $aws -}}
 {{- $a = dict "alb.ingress.kubernetes.io/scheme" "internet-facing" "alb.ingress.kubernetes.io/target-type" "ip" "alb.ingress.kubernetes.io/load-balancer-attributes" "idle_timeout.timeout_seconds=300" "alb.ingress.kubernetes.io/target-group-attributes" "deregistration_delay.timeout_seconds=60" "alb.ingress.kubernetes.io/healthcheck-path" "/readyz" "alb.ingress.kubernetes.io/tags" "Project=gateflow,Environment=s3" -}}
+{{- /* The ALB carries gateway keys over plain HTTP, so it only admits listed sources. */ -}}
+{{- $cidrs := .Values.ingress.inboundCidrs | default list -}}
+{{- if not $cidrs -}}
+{{- fail `environment=aws requires ingress.inboundCidrs so the public ALB is not open to every source; for example --set-json 'ingress.inboundCidrs=["203.0.113.10/32"]'` -}}
+{{- end -}}
+{{- range $cidr := $cidrs -}}
+{{- if and (hasSuffix "/0" $cidr) (not $.Values.ingress.allowAnySource) -}}
+{{- fail (printf "ingress.inboundCidrs contains %s, which admits any source such as 0.0.0.0/0; list specific CIDRs or set ingress.allowAnySource=true" $cidr) -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $a "alb.ingress.kubernetes.io/inbound-cidrs" (join "," $cidrs) -}}
 {{- end -}}
 {{- $paths := list -}}
 {{- range $path := list "/v1/messages" "/v1/responses" -}}
