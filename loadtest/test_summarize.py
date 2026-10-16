@@ -29,11 +29,13 @@ def plan(*phases):
     return lines + [point("gateflow_start", 0)]
 
 
-def request(seconds, phase, level, status=200, result="completed", waiting=20.0, duration=1600.0):
+def request(seconds, phase, level, status=200, result="completed", waiting=20.0, duration=1600.0,
+            tenant=None):
     """The points k6 writes for one request: http_reqs, the timings and the result counter."""
-    tags = {"phase": phase, "level": str(level), "status": str(status)}
+    sent = {"phase": phase, "level": str(level), **({"tenant": tenant} if tenant else {})}
+    tags = {**sent, "status": str(status)}
     http = {**tags, "path": "gateway"}
-    return [point("gateflow_sent", seconds - 0.1, phase=phase, level=str(level)),
+    return [point("gateflow_sent", seconds - 0.1, **sent),
             point("http_reqs", seconds, **http),
             point("http_req_waiting", seconds, waiting, **http),
             point("http_req_duration", seconds, duration, **http),
@@ -186,6 +188,94 @@ class SummarizeTests(unittest.TestCase):
             summarize.summarize(request(1, "warmup", 2))
         with self.assertRaisesRegex(ValueError, "gateflow_start"):
             summarize.summarize(TWO_PHASES[:-1])
+
+
+class TenantTests(unittest.TestCase):
+    def test_rows_per_phase_and_tenant(self):
+        lines = TWO_PHASES + request(1, "warmup", 2, tenant="tenant-02")
+        lines += request(11, "hold", 2, waiting=30.0, tenant="tenant-02")
+        lines += request(12, "hold", 2, status=429, result="rejected", tenant="tenant-02")
+        lines += request(13, "hold", 2, status=0, result="timed_out", tenant="tenant-01")
+        lines += request(14, "hold", 2, status=500, result="failed", tenant="tenant-01")
+        lines += request(15, "hold", 2, waiting=10.0, tenant="tenant-01")
+        rows = summarize.summarize(lines)["tenants"]
+        self.assertEqual([(r["phase"], r["tenant"]) for r in rows],
+                         [("warmup", "tenant-02"), ("hold", "tenant-01"), ("hold", "tenant-02")])
+        one, two = rows[1], rows[2]
+        self.assertEqual((one["sent"], one["completed"], one["rejected"], one["timed_out"], one["failed"]),
+                         (3, 1, 0, 1, 1))
+        self.assertEqual((two["sent"], two["completed"], two["rejected"]), (2, 1, 1))
+        self.assertEqual((one["completion_rate"], two["completion_rate"]), (round(1 / 3, 4), 0.5))
+        # Only HTTP 200 responses count for TTFB, as in the phase table.
+        self.assertEqual((one["ttfb_ms"]["p95"], two["ttfb_ms"]["p95"]), (10.0, 30.0))
+
+    def test_tenant_rows_add_up_to_the_phase_row(self):
+        lines = TWO_PHASES
+        for i in range(6):
+            lines = lines + request(11 + i, "hold", 2, tenant=f"tenant-0{i % 3 + 1}")
+        summary = summarize.summarize(lines)
+        hold = [r for r in summary["tenants"] if r["phase"] == "hold"]
+        self.assertEqual(sum(r["sent"] for r in hold), summary["phases"][1]["sent"])
+        self.assertEqual([r["sent"] for r in hold], [2, 2, 2])
+
+    def test_direct_calls_and_untagged_points_stay_out_of_tenants(self):
+        lines = TWO_PHASES + request(11, "hold", 2, tenant="tenant-01")
+        lines += [point("http_reqs", 11, phase="hold", level="2", status="200", path="direct",
+                        tenant="tenant-01")]
+        lines += request(12, "hold", 2)
+        rows = summarize.summarize(lines)["tenants"]
+        self.assertEqual([(r["tenant"], r["sent"]) for r in rows], [("tenant-01", 1)])
+
+    def test_spread_gives_min_max_and_ratio(self):
+        lines = TWO_PHASES + request(11, "hold", 2, waiting=10.0, tenant="tenant-01")
+        lines += request(12, "hold", 2, waiting=40.0, tenant="tenant-02")
+        lines += request(13, "hold", 2, status=503, result="rejected", tenant="tenant-02")
+        (spread,) = summarize.summarize(lines)["tenant_spread"]
+        self.assertEqual(spread, {
+            "phase": "hold", "level_rps": 2.0, "tenants": 2, "min_sent": 1, "max_sent": 2,
+            "min_completion_rate": 0.5, "max_completion_rate": 1.0,
+            "min_ttfb_p95_ms": 10.0, "max_ttfb_p95_ms": 40.0, "ttfb_p95_ratio": 4.0,
+        })
+
+    def test_spread_without_ttfb_has_no_ratio(self):
+        lines = TWO_PHASES + request(11, "hold", 2, status=503, result="rejected", tenant="tenant-01")
+        (spread,) = summarize.summarize(lines)["tenant_spread"]
+        self.assertEqual((spread["min_ttfb_p95_ms"], spread["ttfb_p95_ratio"]), (None, None))
+        self.assertEqual(spread["max_completion_rate"], 0.0)
+
+    def test_single_shared_tenant_has_one_row_per_phase(self):
+        lines = TWO_PHASES + request(1, "warmup", 2, tenant="tenant-01")
+        lines += request(11, "hold", 2, tenant="tenant-01")
+        summary = summarize.summarize(lines)
+        self.assertEqual([r["tenant"] for r in summary["tenants"]], ["tenant-01", "tenant-01"])
+        self.assertEqual([s["tenants"] for s in summary["tenant_spread"]], [1, 1])
+        self.assertEqual(summary["tenant_spread"][1]["ttfb_p95_ratio"], 1.0)
+
+    def test_legacy_recordings_count_tenants_from_http_reqs(self):
+        lines = TWO_PHASES + request(11, "hold", 2, tenant="tenant-01")
+        lines = [line for line in lines if json.loads(line)["metric"] != "gateflow_sent"]
+        (row,) = summarize.summarize(lines)["tenants"]
+        self.assertEqual((row["sent"], row["completion_rate"]), (1, 1.0))
+
+    def test_markdown_tenant_tables_only_with_tenant_tags(self):
+        self.assertNotIn("Per tenant", summarize.markdown(
+            summarize.summarize(TWO_PHASES + request(11, "hold", 2))))
+        lines = TWO_PHASES + request(11, "hold", 2, tenant="tenant-01")
+        lines += request(12, "hold", 2, waiting=40.0, tenant="tenant-02")
+        text = summarize.markdown(summarize.summarize(lines))
+        self.assertIn("| hold | 2 | tenant-01 | 1 | 1 | 0 | 0 | 0 | 100.00% | 20.0 / 20.0 |", text)
+        self.assertIn("| hold | 2 | 2 | 1 / 1 | 100.00% / 100.00% | 20.0 / 40.0 | 2.0 |", text)
+        for block in text.split("\n\n"):
+            rows = [line for line in block.splitlines() if line.startswith("|")]
+            self.assertLessEqual(len({row.count("|") for row in rows}), 1)
+
+    def test_tenant_results_do_not_change_the_exit_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "run.json"
+            lines = TWO_PHASES + request(11, "hold", 2, status=503, result="rejected", tenant="tenant-01")
+            source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(summarize.main([str(source)]), 0)
 
 
 class OutputTests(unittest.TestCase):
