@@ -5,6 +5,8 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,6 +77,38 @@ func TestSettleReportsTheOutcomeAndUsage(t *testing.T) {
 			checkJSON(t, "settle body", settle[0].Body, tc.settle)
 		})
 	}
+}
+
+// The unreachable channel stays unreachable however many servers start after its
+// URL is taken, the harness's own upstream among them (#109).
+func TestClosedPortURLIsNeverReused(t *testing.T) {
+	url := closedPortURL(t)
+	for range 8 {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("a test server answered the unreachable URL")
+		}))
+		t.Cleanup(server.Close)
+	}
+	h := start(t, setup{verify: verifyOK(channelJSON{ID: "mock", Protocol: "anthropic-messages", BaseURL: url})})
+
+	if resp, err := http.Post(url+"/v1/messages", "application/json", strings.NewReader(messagesBody)); err == nil {
+		resp.Body.Close()
+		t.Fatalf("POST %s got %d, want a dial error", url, resp.StatusCode)
+	}
+	resp := h.post(context.Background(), nil)
+	readBody(t, resp)
+	h.finish()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", resp.StatusCode)
+	}
+	if got := h.upstream.requests(); len(got) != 0 {
+		t.Errorf("the harness upstream got %d requests, want 0", len(got))
+	}
+	settle := h.settle.requests()
+	if len(settle) != 1 {
+		t.Fatalf("%d settle calls, want 1", len(settle))
+	}
+	checkJSON(t, "settle body", settle[0].Body, `{"input_tokens":0,"output_tokens":0,"outcome":"not_dispatched"}`)
 }
 
 // A client that leaves mid-stream is still charged: settle does not use the
