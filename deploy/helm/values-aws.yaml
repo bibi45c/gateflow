@@ -9,3 +9,10 @@ services:
         memory: 2Gi
       limits:
         memory: 2Gi
+# KEDA and Prometheus must be installed first; see README.md, Autoscaling.
+autoscaling:
+  enabled: true
+  # Provisional until the #17 calibration: T = 0.7 * C, with C the per-Pod admission
+  # cap, and D the measured mean request duration in seconds.
+  targetPerReplica: 70
+  requestDurationSeconds: 20

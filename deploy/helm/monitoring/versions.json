@@ -1,0 +1,18 @@
+{
+  "prometheus": {
+    "repository": "https://prometheus-community.github.io/helm-charts",
+    "chart": "prometheus",
+    "version": "27.11.0",
+    "release": "prometheus",
+    "namespace": "monitoring",
+    "values": "prometheus-values.yaml"
+  },
+  "keda": {
+    "repository": "https://kedacore.github.io/charts",
+    "chart": "keda",
+    "version": "2.20.0",
+    "release": "keda",
+    "namespace": "keda",
+    "values": "keda-values.yaml"
+  }
+}

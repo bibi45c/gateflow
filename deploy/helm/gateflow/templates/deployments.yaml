@@ -23,7 +23,12 @@ test "$(psql -X -tAc 'SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()' "$
 {{- if eq $name "mock-upstream" -}}
 {{- $_ := set $pod "nodeSelector" (dict "gateflow.io/workload" "load-generator") -}}
 {{- $_ := set $pod "tolerations" (list (dict "key" "gateflow.io/workload" "operator" "Equal" "value" "load-generator" "effect" "NoSchedule")) -}}
+{{- end -}}
+{{- $spec := dict "selector" (dict "matchLabels" $labels) "template" (dict "metadata" (dict "labels" $labels) "spec" $pod) -}}
+{{- /* With autoscaling, KEDA's HPA owns the gateway's replica count; a fixed value would fight it. */ -}}
+{{- if not (and (eq $name "gateway") $.Values.autoscaling.enabled) -}}
+{{- $_ := set $spec "replicas" $service.replicas -}}
 {{- end }}
 ---
-{{ dict "apiVersion" "apps/v1" "kind" "Deployment" "metadata" (dict "name" (printf "%s-%s" $.Release.Name $name) "labels" $labels) "spec" (dict "replicas" $service.replicas "selector" (dict "matchLabels" $labels) "template" (dict "metadata" (dict "labels" $labels) "spec" $pod)) | toJson }}
+{{ dict "apiVersion" "apps/v1" "kind" "Deployment" "metadata" (dict "name" (printf "%s-%s" $.Release.Name $name) "labels" $labels) "spec" $spec | toJson }}
 {{ end -}}
