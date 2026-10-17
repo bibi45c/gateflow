@@ -1,5 +1,34 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "probe": {
+      "type": "object",
+      "properties": {
+        "periodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "failureThreshold": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "probes": {
+      "type": "object",
+      "properties": {
+        "readiness": { "$ref": "#/definitions/probe" },
+        "liveness": { "$ref": "#/definitions/probe" },
+        "startup": { "$ref": "#/definitions/probe" }
+      },
+      "additionalProperties": false
+    }
+  },
   "type": "object",
   "properties": {
     "dashboard": {
@@ -80,10 +109,12 @@
           "replicas": {
             "type": "integer",
             "minimum": 1
-          }
+          },
+          "probes": { "$ref": "#/definitions/probes" }
         }
       }
     },
+    "probes": { "$ref": "#/definitions/probes" },
     "autoscaling": {
       "type": "object",
       "properties": {
