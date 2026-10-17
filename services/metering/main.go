@@ -2,7 +2,8 @@
 // reservations, settlements and the ledger, and answers usage queries.
 //
 // At startup it requires DATABASE_URL, ACCESS_URL, ACCESS_INTERNAL_TOKEN and
-// METERING_INTERNAL_TOKEN, and applies its migrations before serving the reserve
+// METERING_INTERNAL_TOKEN, reads DATABASE_MAX_CONNS when set to cap its database
+// pool, and applies its migrations before serving the reserve
 // and settle operations under /internal/v1, and its Prometheus metrics on GET
 // /metrics, for scrapes inside the cluster only. Run as
 // `metering seed [--balance N] [--tenants N]`, it instead creates the missing test
@@ -52,7 +53,7 @@ func main() {
 	// server.Main's, without the attribute that server.Main adds to its own.
 	observer, err := api.NewObserver(prometheus.NewRegistry(), slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	exitOnError(err)
-	pool, err := store.Open(context.Background(), cfg.DatabaseURL)
+	pool, err := store.Open(context.Background(), cfg.DatabaseURL, cfg.DatabaseMaxConns)
 	exitOnError(err)
 	defer pool.Close()
 	prices := accessclient.New(cfg.AccessURL, cfg.AccessInternalToken)
@@ -90,7 +91,8 @@ func seed(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	pool, err := store.Open(ctx, databaseURL)
+	// The seed keeps pgx's default pool size.
+	pool, err := store.Open(ctx, databaseURL, 0)
 	if err != nil {
 		return err
 	}

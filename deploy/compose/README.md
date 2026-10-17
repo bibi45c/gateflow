@@ -7,7 +7,7 @@ stop commands are at the top of that file; the checks are in
 ## Configuration
 
 Every service reads its settings from these variables. Compose sets all of them
-except the `SHUTDOWN_*` pair, `MODEL_ALIASES` and `UPSTREAM_MAX_IDLE_CONNS`, whose
+except the `SHUTDOWN_*` pair, `MODEL_ALIASES`, `UPSTREAM_MAX_IDLE_CONNS` and `DATABASE_MAX_CONNS`, whose
 defaults suit it, so a service issue adds code that reads a variable, not a compose
 change. The defaults
 are local-only test values, not credentials: never reuse them outside this stack.
@@ -16,6 +16,7 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | Variable | Read by | Local default | Meaning |
 |---|---|---|---|
 | `DATABASE_URL` | access, metering | The service's own role on database `gateflow` | Postgres connection; each service logs in as its own role |
+| `DATABASE_MAX_CONNS` | access, metering; compose leaves it unset | pgx's default, the larger of 4 and the CPU count | Most database connections the service's pool opens, a whole number of at least 1; a separate variable because `psql` rejects `pool_max_conns` in `DATABASE_URL`. The seed commands keep the default |
 | `ACCESS_URL` | gateway, metering | `http://access:8081` | Internal base URL of access |
 | `METERING_URL` | gateway | `http://metering:8082` | Internal base URL of metering |
 | `ACCESS_INTERNAL_TOKEN` | access (accepts); gateway, metering (send) | `access-token-local-only` | Bearer token for calls to access |
