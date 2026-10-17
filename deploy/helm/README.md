@@ -151,6 +151,10 @@ run. For the disposable kind test, save evidence and delete only its named clust
 Set imageTag to a published full commit SHA or set services.<name>.digest to pin
 an OCI digest. The kind fixture and chart use the same GHCR images; no login is
 required. Per-service replicas and resources are configurable.
+services.access.databaseMaxConns and services.metering.databaseMaxConns, whole
+numbers of at least 1, cap that service's database pool through DATABASE_MAX_CONNS;
+unset, the variable is not rendered and pgx's default applies. DATABASE_URL, and so
+the AWS TLS check's psql, is unchanged.
 
 Create Secrets in the release namespace before Helm install:
 
