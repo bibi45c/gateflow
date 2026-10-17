@@ -78,13 +78,14 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 <main class="lang-block" data-lang="zh" lang="zh-CN" aria-hidden="false">
 
 <h1>GateFlow 图解</h1>
-<p>本页用图表概括 GateFlow 仓库（产品名 FlowGate）的团队工作流、架构、部署、S1 请求与计费规则、数据库设计、依赖与时间线，便于负责人和团队快速了解项目全貌。内容依据 2026 年 10 月 12 日 <code>main</code> 提交 <code>7dbdd4e</code>，以及当日的开放 issue 和 PR。</p>
+<p>本页用图表概括 GateFlow 仓库（产品名 FlowGate）的团队工作流、架构、部署、S1 请求与计费规则、数据库设计、依赖与时间线，便于负责人和团队快速了解项目全貌。内容依据 2026 年 10 月 12 日 <code>main</code> 提交 <code>7dbdd4e</code>，以及当日的开放 issue 和 PR。例外：5b 已按 <code>main</code> 提交 <code>ea0f9b5</code> 和 10 月 17 日的上云记录更新，与 <a href="as-built.md#4-physical-view-cloud">as-built.md 云物理视图</a>一致。</p>
 <p class="muted">阅读顺序：A 团队流程 → B 架构与部署 → C 一次 S1 请求与计费 → D 数据库 → E 计划与门禁。每张图都沿一个方向阅读（从上到下或从左到右），虚线箭头表示回退、计划或提案。</p>
 
 <div class="legend">
 <strong>图例</strong>
 <ul>
-<li><span class="tag planned">计划中</span>写在可行性计划或 issue 里，但尚未实现（例如 S3 云环境、Redis 限流）。</li>
+<li><span class="tag planned">计划中</span>写在可行性计划或 issue 里，但尚未实现（例如 Redis 限流）。</li>
+<li><span class="tag">已在 EKS 上运行过</span>2026-10-17 在 AWS 上运行过，每天拆除（operator 记录，10 月 17 日）。只用于 5b；5b 中的虚线框表示可选（Grafana：已构建、在 kind 上验证；云上可选），虚线箭头表示该记录未涵盖的调用。</li>
 <li><span class="tag proposed">提案</span>写在尚未合并的 PR 或尚未批准的设计修订里，可能还会改（例如 PR #33、#18 修订 3、#26/#27 的表设计）。</li>
 <li>未标注的内容已在 <code>main</code> 上，或是已生效的规则。图中的虚线框和虚线箭头表示“计划中”“提案”或回退。</li>
 </ul>
@@ -290,36 +291,45 @@ flowchart TB
 </section>
 
 <section id="zh-5b">
-<h3>5b. 物理部署：S3 云环境 <span class="tag planned">计划中</span></h3>
-<p>上方一行是请求路径（从左到右），下方是构建与发布路径。GitHub Actions 在 main 合并或 <code>v*</code> tag 时构建镜像并推送到 GHCR，部署到 EKS；gateway 用 1、2、4 个副本对比并由 KEDA 自动扩缩；数据库用 RDS PostgreSQL，缓存用 ElastiCache Redis，VPC 跨两个可用区。全部尚未创建；<code>terraform apply</code> 需要门禁通过且 owner 批准花费。来源：#21、#30、<code>docs/feasibility-plan.md</code>。</p>
+<h3>5b. 物理部署：S3 云环境 <span class="tag">已在 EKS 上运行过</span></h3>
+<p>左边是运维者，中间是 AWS，右边是镜像的构建与发布。2026 年 10 月 17 日，<code>deploy/terraform</code> 第一次 apply 到 ap-southeast-1，当天 destroy；同日第二次 apply，生成器节点换为 m6i.2xlarge。两次都部署了 chart、Prometheus、KEDA 和 AWS Load Balancer Controller，并在集群内跑了 k6（operator 记录，10 月 17 日）。第二次运行时 gateway 每个 Pod 限 0.25 vCPU，以 <code>--set</code> 和 overlay 传入；仓库里的 <code>values-aws.yaml</code> 仍是 1 vCPU。测得的数字和报告尚未发布，图中不含测量值。与计划不同：没有 ElastiCache，chart 和 Terraform 都不含 Redis；GitHub Actions 只构建并推送镜像，不部署到 AWS，部署由运维者在本机执行。该记录未涵盖经 ALB 的流量，所以 ALB 的箭头是虚线。来源：<code>deploy/terraform/</code>、<code>deploy/helm/</code>、<a href="as-built.md#4-physical-view-cloud">as-built.md</a>、operator 记录（10 月 17 日）。</p>
 <div class="diagram"><pre class="mermaid">
 flowchart LR
-  USR["客户端"]
-  subgraph AWS["AWS（计划，#30，未 apply）"]
-    subgraph VPC["VPC，跨两个可用区"]
-      ALB["ALB ingress"]
-      subgraph EKS["EKS 托管节点组"]
-        KE["KEDA<br/>Prometheus<br/>活跃请求指标"]
-        GWp["gateway Pod<br/>1 / 2 / 4 副本"]
-        SVp["access、metering<br/>mock-upstream Pod"]
+  OPR["运维者<br/>本机运行 terraform、helm"]
+  subgraph AWS["AWS ap-southeast-1，一个 VPC，两个可用区"]
+    ALB["ALB，由 chart 的 Ingress 创建<br/>明文 HTTP，只允许运维者的 /32"]
+    NAT["一个 NAT gateway"]
+    subgraph EKS["EKS 1.35"]
+      subgraph SVC["节点组 services：2 × m6i.xlarge"]
+        GWp["gateway Pod，2 到 4 个<br/>values-aws.yaml：1 vCPU<br/>第二次 apply：限 0.25 vCPU"]
+        SVp["access、metering<br/>各一个 Pod"]
+        MON["Prometheus、KEDA"]
+        GF["Grafana，可选<br/>已在 kind 上验证"]
       end
-      subgraph PRIV["私有子网"]
-        RDS[("RDS<br/>PostgreSQL")]
-        EC[("ElastiCache<br/>Redis")]
+      subgraph GEN["节点组 load-generator：1 × c6i.xlarge（第二次 apply 为 m6i.2xlarge），有 taint"]
+        LG["mock-upstream Pod<br/>k6 Pod"]
       end
     end
+    RDS[("RDS PostgreSQL 17<br/>schema access、accounting")]
   end
-  subgraph GH["GitHub（计划，#21）"]
-    GA["GitHub Actions<br/>main 合并或 v* tag"]
+  subgraph GH["GitHub"]
+    GA["GitHub Actions<br/>push 到 main"]
     GR[("GHCR<br/>ghcr.io/bibi45c/gateflow-*<br/>tag 为 commit SHA")]
   end
-  USR --> ALB --> GWp --> SVp --> RDS
-  GWp --> EC
-  KE -.->|"扩缩"| GWp
+  OPR -->|"apply、destroy、helm"| AWS
+  OPR -.->|"HTTP :80"| ALB
+  ALB -.-> GWp
+  LG -->|"集群内压测"| GWp
+  GWp -->|"验 key、预留、结算"| SVp
+  GWp -->|"mock 渠道"| LG
+  SVp --> RDS
+  MON -->|"抓取指标、扩缩"| GWp
+  GF -.->|"PromQL"| MON
   GA --> GR
-  GR -->|"匿名拉取镜像"| EKS
-  classDef planned stroke-dasharray:5 5
-  class USR,ALB,KE,GWp,SVp,RDS,EC,GA,GR planned
+  EKS -->|"拉取镜像"| NAT
+  NAT -->|"匿名拉取"| GR
+  classDef optional stroke-dasharray:5 5
+  class GF optional
 </pre></div>
 </section>
 
@@ -679,13 +689,14 @@ flowchart TB
 <main class="lang-block lang-off" data-lang="en" lang="en" aria-hidden="true">
 
 <h1>GateFlow Diagrams</h1>
-<p>This page sums up the GateFlow repository (product name FlowGate) in diagrams: team workflow, architecture, deployment, S1 request and charging rules, database design, dependencies and timeline. It helps the owner and the team see the whole project quickly. It reflects <code>main</code> commit <code>7dbdd4e</code> on 12 October 2026 and the issues and PRs open that day.</p>
+<p>This page sums up the GateFlow repository (product name FlowGate) in diagrams: team workflow, architecture, deployment, S1 request and charging rules, database design, dependencies and timeline. It helps the owner and the team see the whole project quickly. It reflects <code>main</code> commit <code>7dbdd4e</code> on 12 October 2026 and the issues and PRs open that day. The exception is 5b, updated to <code>main</code> at <code>ea0f9b5</code> and the cloud runs of 17 October, to match the <a href="as-built.md#4-physical-view-cloud">as-built cloud view</a>.</p>
 <p class="muted">Reading order: A team process → B architecture and deployment → C one S1 request and its charge → D database → E plan and gate. Each diagram reads in one direction (top to bottom or left to right). Dotted arrows mean a loop back, planned or proposed.</p>
 
 <div class="legend">
 <strong>Legend</strong>
 <ul>
-<li><span class="tag planned">Planned</span>Written in the feasibility plan or an issue but not implemented yet (for example the S3 cloud environment, Redis rate limits).</li>
+<li><span class="tag planned">Planned</span>Written in the feasibility plan or an issue but not implemented yet (for example Redis rate limits).</li>
+<li><span class="tag">Ran on EKS</span>Ran in AWS on 17 October 2026, torn down daily (operator record, 17 Oct). Used only in 5b; there a dotted box means optional (Grafana: built and verified on kind, optional in the cloud), and a dotted arrow a call that record does not cover.</li>
 <li><span class="tag proposed">Proposed</span>Written in an unmerged PR or an unapproved design revision and may still change (for example PR #33, #18 revision 3, the table design in #26/#27).</li>
 <li>Unmarked content is on <code>main</code> or is a rule in force. Dotted boxes and dotted arrows mean planned, proposed or a loop back.</li>
 </ul>
@@ -891,36 +902,45 @@ flowchart TB
 </section>
 
 <section id="en-5b">
-<h3>5b. Physical deployment: S3 cloud <span class="tag planned">Planned</span></h3>
-<p>The top row is the request path (left to right); below it is the build and release path. GitHub Actions builds images on a merge to main or a <code>v*</code> tag, pushes them to GHCR and deploys to EKS. The gateway is compared at 1, 2 and 4 replicas and autoscaled by KEDA. The database is RDS PostgreSQL, the cache ElastiCache Redis, and the VPC spans two availability zones. Nothing exists yet; <code>terraform apply</code> needs a passed gate and the owner's approval of the spend. Sources: #21, #30, <code>docs/feasibility-plan.md</code>.</p>
+<h3>5b. Physical deployment: S3 cloud <span class="tag">Ran on EKS</span></h3>
+<p>The operator is on the left, AWS in the middle, and the image build and release on the right. On 17 October 2026, <code>deploy/terraform</code> was applied to ap-southeast-1 and destroyed the same day. A second apply that day used m6i.2xlarge for the generator node. Both times the chart, Prometheus, KEDA and the AWS Load Balancer Controller were installed, and k6 ran inside the cluster (operator record, 17 Oct). In the second run each gateway Pod was limited to 0.25 vCPU, passed with <code>--set</code> and an overlay; <code>values-aws.yaml</code> in the repository still sets 1 vCPU. The measured results and the report are not published yet, so the diagram shows no measured value. Unlike the plan, there is no ElastiCache: neither the chart nor the Terraform includes Redis. GitHub Actions only builds and pushes images and never deploys to AWS; the operator deploys from their own machine. The record does not cover traffic through the ALB, so the ALB arrows are dotted. Sources: <code>deploy/terraform/</code>, <code>deploy/helm/</code>, <a href="as-built.md#4-physical-view-cloud">as-built.md</a>, operator record (17 Oct).</p>
 <div class="diagram"><pre class="mermaid">
 flowchart LR
-  USR["Clients"]
-  subgraph AWS["AWS (planned, #30, not applied)"]
-    subgraph VPC["VPC across two AZs"]
-      ALB["ALB ingress"]
-      subgraph EKS["EKS managed node group"]
-        KE["KEDA<br/>Prometheus<br/>active requests"]
-        GWp["gateway Pods<br/>1 / 2 / 4 replicas"]
-        SVp["access, metering<br/>mock-upstream Pods"]
+  OPR["Operator<br/>runs terraform and helm locally"]
+  subgraph AWS["AWS ap-southeast-1, one VPC, two AZs"]
+    ALB["ALB from the chart's Ingress<br/>plain HTTP, the operator's /32 only"]
+    NAT["one NAT gateway"]
+    subgraph EKS["EKS 1.35"]
+      subgraph SVC["node group services: 2 × m6i.xlarge"]
+        GWp["gateway Pods, 2 to 4<br/>values-aws.yaml: 1 vCPU<br/>second apply: 0.25 vCPU limit"]
+        SVp["access, metering<br/>one Pod each"]
+        MON["Prometheus, KEDA"]
+        GF["Grafana, optional<br/>verified on kind"]
       end
-      subgraph PRIV["Private subnets"]
-        RDS[("RDS<br/>PostgreSQL")]
-        EC[("ElastiCache<br/>Redis")]
+      subgraph GEN["node group load-generator: 1 × c6i.xlarge (m6i.2xlarge in the second apply), tainted"]
+        LG["mock-upstream Pod<br/>k6 Pod"]
       end
     end
+    RDS[("RDS PostgreSQL 17<br/>schemas access, accounting")]
   end
-  subgraph GH["GitHub (planned, #21)"]
-    GA["GitHub Actions<br/>main merge or v* tag"]
+  subgraph GH["GitHub"]
+    GA["GitHub Actions<br/>push to main"]
     GR[("GHCR<br/>ghcr.io/bibi45c/gateflow-*<br/>tagged by commit SHA")]
   end
-  USR --> ALB --> GWp --> SVp --> RDS
-  GWp --> EC
-  KE -.->|"scales"| GWp
+  OPR -->|"apply, destroy, helm"| AWS
+  OPR -.->|"HTTP :80"| ALB
+  ALB -.-> GWp
+  LG -->|"load, inside the cluster"| GWp
+  GWp -->|"verify, reserve, settle"| SVp
+  GWp -->|"mock channels"| LG
+  SVp --> RDS
+  MON -->|"scrapes, scales"| GWp
+  GF -.->|"PromQL"| MON
   GA --> GR
-  GR -->|"anonymous image pull"| EKS
-  classDef planned stroke-dasharray:5 5
-  class USR,ALB,KE,GWp,SVp,RDS,EC,GA,GR planned
+  EKS -->|"image pulls"| NAT
+  NAT -->|"anonymous pull"| GR
+  classDef optional stroke-dasharray:5 5
+  class GF optional
 </pre></div>
 </section>
 
