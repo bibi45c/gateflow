@@ -23,7 +23,7 @@ const (
 func NewObserver(registry *prometheus.Registry, logger *slog.Logger) (*observability.Observer, error) {
 	return observability.New(observability.Options{
 		Service:  "metering",
-		Routes:   []string{reserveRoute, settleRoute},
+		Routes:   []string{reserveRoute, settleRoute, walletsRoute, usageRoute, adjustmentsRoute},
 		Registry: registry,
 		Logger:   logger,
 	})

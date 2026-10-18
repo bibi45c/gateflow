@@ -22,6 +22,10 @@ const (
 	EnvOllamaModel   = "OLLAMA_MODEL"
 	// EnvDatabaseMaxConns is optional.
 	EnvDatabaseMaxConns = "DATABASE_MAX_CONNS"
+	// The console users' passwords are optional; the seed skips a user whose
+	// password is unset.
+	EnvConsoleAdminPassword = "CONSOLE_ADMIN_PASSWORD"
+	EnvConsoleDemoPassword  = "CONSOLE_DEMO_PASSWORD"
 )
 
 // Service is what the service needs to serve requests.
@@ -75,6 +79,9 @@ type Seed struct {
 	MockBaseURL   string
 	OllamaBaseURL string
 	OllamaModel   string
+	// AdminPassword and DemoPassword are the console users' passwords, or empty.
+	AdminPassword string
+	DemoPassword  string
 }
 
 // LoadSeed reads the seed settings. It fails when DATABASE_URL, ACCESS_KEY_PEPPER or
@@ -90,6 +97,8 @@ func LoadSeed(getenv func(string) string) (Seed, error) {
 		MockBaseURL:   getenv(EnvMockBaseURL),
 		OllamaBaseURL: getenv(EnvOllamaBaseURL),
 		OllamaModel:   getenv(EnvOllamaModel),
+		AdminPassword: getenv(EnvConsoleAdminPassword),
+		DemoPassword:  getenv(EnvConsoleDemoPassword),
 	}, nil
 }
 

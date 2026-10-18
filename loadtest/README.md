@@ -14,6 +14,8 @@ Scheduled load on the gateway, following
 | `test_prom_export.py` | Unit tests of `prom_export.py`, with a fake port-forward and Prometheus |
 | `derive.py` | Derives L, C, D and T from the single-Pod calibration repeats |
 | `test_derive.py` | Unit tests of `derive.py`, on run folders built by the tests |
+| `bundle.py` | Builds the Part C data bundle of a cloud day from a manifest |
+| `test_bundle.py` | Unit tests of `bundle.py`, on a day built by the tests, with a fake aws CLI |
 
 ## Run
 
@@ -152,7 +154,9 @@ python loadtest/kube_run.py --kubeconfig <EKS kubeconfig> --kube-context <EKS co
 [settings](#settings) with `--env NAME=value`; only those settings are accepted, and
 three are not: `GATEWAY_URL` and `MOCK_URL` follow from `--release`
 (`http://<release>-mock-upstream:8090` for the mock), and `ACCESS_SEED_SECRET` comes
-only from the Secret. `--timeout` defaults to the plan's length plus 15 minutes.
+only from the Secret. `PREALLOC_VUS` is set with `--prealloc-vus N`, which must be
+a whole number from 1 to `MAX_VUS` (4000 unless set with `--env`); it is left unset
+when not given. `--timeout` defaults to the plan's length plus 15 minutes.
 k6 requests and is limited to 2 CPUs and 4 GiB (`--k6-cpu`, `--k6-memory`) of the
 c6i.xlarge's 4 vCPUs and 8 GiB, which leaves the rest of the node to the mock
 upstream. As locally, `wallet_empty_responses` must be 0.
@@ -279,6 +283,56 @@ prints a Markdown summary, writes the JSON to `--out`, and exits with 2 when no 
 is valid or no level passes, with 1 when an input is missing, and otherwise with 0,
 also when the cross-check is off; then record why.
 
+## Build the data bundle
+
+After a cloud day, `bundle.py` turns its run folders into the Part C data bundle:
+per run the results, the record, the raw k6 output gzipped, the Prometheus export,
+the RDS values from CloudWatch and a Part B `summary.md` with charts; for the day a
+runs CSV, `SHA256SUMS` and a zip. The operator (bibi45c) runs it, signed in to AWS,
+because the RDS values come from `aws cloudwatch get-metric-statistics` (read-only):
+
+```text
+python loadtest/bundle.py --manifest .local/cloud-day/day2-manifest.json
+```
+
+The manifest describes the day. Every run ID starts with `d<day>-`; `condition`
+`auto` or `burst` marks an autoscaling run, `calib` a calibration repeat:
+
+```json
+{
+  "day": "2", "date": "2026-10-18", "commit": "<deployed commit>", "derived": "derived-day2.json",
+  "generator_allocatable_cpu": 3.92, "gateway_resources": {"cpu": "1", "memory": "2Gi"},
+  "configs": {"cfg-A": "values-aws.yaml, autoscaling off, chart defaults"},
+  "database_reset": "`deploy/aws/reset_db.py --balance 1000000000000` before each condition",
+  "extra_files": ["teardown-inventory.json", "leftovers-day2.txt"],
+  "runs": {"d2-rep1-r1": {"condition": "rep1", "repeat": 1, "config": "cfg-A", "purpose": "1 replica, ladder 32-52", "notes": ""}}
+}
+```
+
+- Inputs: the run folders in `--runs` (default `.local/loadtest/`), or a folder with
+  only `ABORTED.txt` for a run the operator stopped; in `--evidence` (default: the
+  manifest's folder) each run's `check_live.py` output (`live_pattern`, default
+  `live-{run}.json`), the derived file and `extra_files`; and `<out>/day<N>-config/`
+  from `deploy/aws/collect_config.py` with `images.json`, `nodes.json` and
+  `tf-output.json`.
+- The gateway's resources, and an auto run's min, max, T and D, come from the live
+  check; a run's `gateway_resources` and `autoscaling`, then the manifest's
+  `gateway_resources`, are the fallback. The generator criterion uses the
+  load-generator node's allocatable CPU from `nodes.json`, then
+  `generator_allocatable_cpu`.
+- Before anything is deleted, it refuses mixed or renamed input (a run ID of another
+  day, a record naming another run, a record time not on `date`, a phase outside the
+  load window, another commit, a run without record or `ABORTED.txt`, a derived run
+  that is not a calib run), AWS not reachable, a live check with problems, an auto
+  run without min, max, T and D, a failed CloudWatch query, and an existing bundle
+  without `--rebuild`. `day<N>-config/` is always kept.
+- `--out` defaults to `<evidence>/day<N>/`, `--zip` to `<out>.zip`, `--region` to
+  ap-southeast-1.
+
+Charts need matplotlib, the only package outside the standard library. Without it
+the bundle is still built; the output and every summary say the charts were
+skipped. The script exits with 0 when the bundle is built and with 1 otherwise.
+
 ## Settings
 
 Pass each with `-e NAME=value`, or with `--env NAME=value` to `kube_run.py`.
@@ -299,7 +353,16 @@ Pass each with `-e NAME=value`, or with `--env NAME=value` to `kube_run.py`.
 | `TTFB_DEADLINE_MS` | `10000` | Time-to-first-byte deadline; this does not measure the first model content delta |
 | `TOTAL_DEADLINE_S` | `60` | Total deadline of a request |
 | `STREAM_S` | `25` | Seconds a request is expected to last; the highest level times this is the number of VUs k6 starts before the run |
+| `PREALLOC_VUS` | unset | VUs k6 starts before the run, replacing the highest level times `STREAM_S`; a whole number from 1 to `MAX_VUS`, otherwise k6 refuses to start. With `kube_run.py`, pass `--prealloc-vus N` instead of `--env` |
 | `MAX_VUS` | `4000` | VU ceiling; k6 can drop arrivals when every VU is occupied |
+
+Set `PREALLOC_VUS` when a failing level's requests last longer than `STREAM_S`:
+when their duration times the level's rate exceeds the default preallocation
+(`min(MAX_VUS, ceil(highest level × STREAM_S))`), k6 has to start VUs during the
+run, cannot start them fast enough, and drops iterations, which makes the run
+invalid. For example, 150 requests per second lasting 45 seconds keep 6,750 VUs
+busy: raise `MAX_VUS` to at least that and pass `--prealloc-vus 6750`. Leave
+`STREAM_S` at the expected stream length rather than raising it to get more VUs.
 
 Requests are sent on schedule even when replies slow down (`ramping-arrival-rate`).
 Each VU holds about 1 MB while its stream lasts, so 50 requests per second of 20-second

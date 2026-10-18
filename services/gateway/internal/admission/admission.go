@@ -149,6 +149,7 @@ func (a *Admission) reserve(ctx context.Context, call relay.Call, verified acces
 		PriceVersionID:  verified.PriceVersionID,
 		MaxInputTokens:  call.BodyBytes,
 		MaxOutputTokens: call.MaxTokens,
+		Model:           call.Model,
 	}
 	// A client that leaves does not cancel a hold under way: a hold that was made is
 	// released by the not_dispatched settle that follows.
