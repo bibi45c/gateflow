@@ -20,12 +20,26 @@ const Schema = "access"
 // instead of hanging it.
 const OpenTimeout = 30 * time.Second
 
-// Open connects to the database at url, applies the pending migrations and returns
-// the pool, which the caller closes. Errors never show the password.
-func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
+// PoolConfig parses url into the pool configuration Open uses. A maxConns above 0
+// caps the pool's connections; 0 keeps pgx's default. Errors never show the URL.
+func PoolConfig(url string, maxConns int32) (*pgxpool.Config, error) {
+	cfg, err := pgurl.ParseConfig(url)
+	if err != nil {
+		return nil, err
+	}
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
+	}
+	return cfg, nil
+}
+
+// Open connects to the database at url with at most maxConns connections, or pgx's
+// default when maxConns is 0, applies the pending migrations and returns the pool,
+// which the caller closes. Errors never show the password.
+func Open(ctx context.Context, url string, maxConns int32) (*pgxpool.Pool, error) {
 	ctx, cancel := context.WithTimeout(ctx, OpenTimeout)
 	defer cancel()
-	cfg, err := pgurl.ParseConfig(url)
+	cfg, err := PoolConfig(url, maxConns)
 	if err != nil {
 		return nil, fmt.Errorf("connect to the database: %w", err)
 	}
