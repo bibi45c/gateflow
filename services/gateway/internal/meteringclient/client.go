@@ -31,6 +31,9 @@ type ReserveRequest struct {
 	PriceVersionID  string `json:"price_version_id"`
 	MaxInputTokens  int64  `json:"max_input_tokens"`
 	MaxOutputTokens int64  `json:"max_output_tokens"`
+	// Model is recorded for the usage log only; it is not part of the idempotency
+	// content.
+	Model string `json:"model,omitempty"`
 }
 
 // Reservation is the answer to a reserve call.

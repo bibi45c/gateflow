@@ -148,6 +148,10 @@ func storeErrorCode(err error) string {
 		return CodeModelNotAllowed
 	case errors.Is(err, store.ErrPriceVersionNotFound):
 		return CodePriceVersionNotFound
+	case errors.Is(err, store.ErrTenantNotFound):
+		return CodeTenantNotFound
+	case errors.Is(err, store.ErrKeyNotFound):
+		return CodeKeyNotFound
 	case errors.Is(err, store.ErrUnavailable), errors.Is(err, context.DeadlineExceeded):
 		return CodeDependencyUnavailable
 	}

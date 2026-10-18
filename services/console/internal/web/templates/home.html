@@ -1,0 +1,19 @@
+{{define "content"}}
+{{with .Data}}
+<div class="tiles">
+  <div class="tile"><span>Available balance</span><strong>{{usd .Wallet.Available}}</strong>
+    <small>balance {{usd .Wallet.Balance}}, held {{usd .Wallet.Held}}</small></div>
+  <div class="tile"><span>Requests today</span><strong>{{.Summary.Requests}}</strong>
+    <small>since {{when .Summary.Since}}</small></div>
+  <div class="tile"><span>Spent today</span><strong>{{usd .Summary.Charged}}</strong>
+    <small>{{.Summary.InputTokens}} input, {{.Summary.OutputTokens}} output tokens</small></div>
+</div>
+<h2>Latest calls</h2>
+{{template "calls" .Items}}
+<p><a href="/usage">Full usage log</a></p>
+{{else}}
+<p class="card">Your tenant has no wallet yet. Ask an admin to top it up.</p>
+{{end}}
+<p class="hint">New here? Create a key under <a href="/keys">API keys</a>, then try the
+<a href="/playground">playground</a> or the <a href="/quickstart">quick start</a>.</p>
+{{end}}

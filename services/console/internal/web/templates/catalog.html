@@ -1,0 +1,21 @@
+{{define "content"}}
+<p>Read-only. Channels and prices change through the access seed or the database, never here.</p>
+<table>
+  <thead><tr><th>Channel</th><th>Protocol</th><th>Upstream</th><th>Models</th></tr></thead>
+  <tbody>
+  {{range .Data.Channels}}
+  <tr><td>{{.ID}}</td><td>{{.Protocol}}</td><td><code>{{.BaseURL}}</code></td>
+    <td>{{range $i, $m := .Models}}{{if $i}}, {{end}}<code>{{$m}}</code>{{end}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+<h2>Price versions</h2>
+<table>
+  <thead><tr><th>Price version</th><th class="num">Input</th><th class="num">Output</th><th>Created</th></tr></thead>
+  <tbody>
+  {{range .Data.Prices}}
+  <tr><td>{{.ID}}</td><td class="num">{{perMillion .InputMicroPerToken}}</td><td class="num">{{perMillion .OutputMicroPerToken}}</td><td>{{when .CreatedAt}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}

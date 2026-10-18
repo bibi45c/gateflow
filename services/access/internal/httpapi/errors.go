@@ -12,6 +12,9 @@ const (
 	CodeInvalidKey            = "invalid_key"
 	CodeModelNotAllowed       = "model_not_allowed"
 	CodePriceVersionNotFound  = "price_version_not_found"
+	CodeInvalidCredentials    = "invalid_credentials"
+	CodeTenantNotFound        = "tenant_not_found"
+	CodeKeyNotFound           = "key_not_found"
 	CodeDependencyUnavailable = "dependency_unavailable"
 	CodeInternalError         = "internal_error"
 )
@@ -27,6 +30,9 @@ var errorKinds = map[string]struct {
 	CodeInvalidKey:            {http.StatusUnauthorized, "The key is unknown or revoked."},
 	CodeModelNotAllowed:       {http.StatusForbidden, "The key may not use this model."},
 	CodePriceVersionNotFound:  {http.StatusNotFound, "The price version does not exist."},
+	CodeInvalidCredentials:    {http.StatusUnauthorized, "The username or password is wrong."},
+	CodeTenantNotFound:        {http.StatusNotFound, "The tenant does not exist."},
+	CodeKeyNotFound:           {http.StatusNotFound, "The tenant has no such key."},
 	CodeDependencyUnavailable: {http.StatusServiceUnavailable, "A dependency is unavailable. Try again later."},
 	CodeInternalError:         {http.StatusInternalServerError, "An internal error occurred."},
 }

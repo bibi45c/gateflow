@@ -18,7 +18,7 @@ import (
 	"github.com/bibi45c/gateflow/services/access/migrations"
 )
 
-var tables = []string{"api_key_channels", "api_keys", "channel_models", "channels", "price_versions", "tenants"}
+var tables = []string{"api_key_channels", "api_keys", "channel_models", "channels", "console_users", "price_versions", "tenants"}
 
 // previousChannelSQL is, verbatim, the channel query of the access image before
 // migration 0002, which knew one protocol and so filtered on none.
@@ -59,8 +59,8 @@ func previousChannel(t *testing.T, pool *pgxpool.Pool, keyID, model string) (fou
 func TestMigrateTwiceAppliesOnce(t *testing.T) {
 	pool := pgtest.New(t).Pool(t, "access")
 	ctx := context.Background()
-	// 0001 and 0002 on the first run, nothing on the second.
-	for run, want := range []int{2, 0} {
+	// 0001 to 0003 on the first run, nothing on the second.
+	for run, want := range []int{3, 0} {
 		ran, err := store.Migrate(ctx, pool)
 		if err != nil || ran != want {
 			t.Fatalf("run %d: applied %d, want %d, err %v", run+1, ran, want, err)

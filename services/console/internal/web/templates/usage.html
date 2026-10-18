@@ -1,0 +1,9 @@
+{{define "content"}}
+{{if .Data.Wallet.TenantID}}
+<p>Available balance <strong>{{usd .Data.Wallet.Available}}</strong> · today {{.Data.Summary.Requests}} calls, {{usd .Data.Summary.Charged}}.
+Costs settle when a call ends; an open call holds its most possible cost.</p>
+{{template "calls" .Data.Items}}
+{{else}}
+<p class="card">Your tenant has no wallet yet. Ask an admin to top it up.</p>
+{{end}}
+{{end}}

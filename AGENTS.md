@@ -76,7 +76,7 @@ This file holds only what every session needs. Each detailed rule lives in one p
 | `services/metering/` | metering | Wallets, reservations, settlement, ledger and usage |
 | `test/mock-upstream/` | mock | Controllable fake model provider for load and failure tests |
 | `clients/` | client | Reference client applications (planned) |
-| `console/` | console | Management console (planned) |
+| `services/console/` | console | Web console: user portal and admin area, over the internal APIs |
 | `deploy/` | infra | Dockerfile and local compose stack; Helm charts and Terraform (planned) |
 | `loadtest/` | loadtest | Load scenarios (planned) |
 | `pkg/` | repo | Shared technical helpers and public protocol wire types |

@@ -6,8 +6,8 @@
 // pool, and applies its migrations before serving the reserve
 // and settle operations under /internal/v1, and its Prometheus metrics on GET
 // /metrics, for scrapes inside the cluster only. Run as
-// `metering seed [--balance N] [--tenants N]`, it instead creates the missing test
-// wallets and exits.
+// `metering seed [--balance N] [--tenants N] [--extra-tenants a,b]`, it instead
+// creates the missing test wallets and exits.
 package main
 
 import (
@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/bibi45c/gateflow/pkg/observability"
@@ -57,7 +58,8 @@ func main() {
 	exitOnError(err)
 	defer pool.Close()
 	prices := accessclient.New(cfg.AccessURL, cfg.AccessInternalToken)
-	handler := api.New(store.NewReservations(pool), prices, cfg.MeteringInternalToken, observer)
+	handler := api.New(store.NewReservations(pool), prices, cfg.MeteringInternalToken, observer).
+		WithConsole(store.NewConsole(pool))
 	server.Main(name, defaultAddr, routes(handler, observer))
 }
 
@@ -76,6 +78,7 @@ func seed(args []string) error {
 	flags := flag.NewFlagSet(name+" seed", flag.ContinueOnError)
 	balance := flags.Int64("balance", 100_000_000, "balance of each seeded wallet but tenant-00, in micro-units")
 	tenants := flags.Int("tenants", 10, "seed tenant-00 to tenant-NN, where NN is this number")
+	extra := flags.String("extra-tenants", "", "comma-separated tenant ids that also get a wallet with --balance")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -102,6 +105,14 @@ func seed(args []string) error {
 		return err
 	}
 	fmt.Printf("%s seed: created %d of %d wallets\n", name, created, *tenants+1)
+	if *extra != "" {
+		ids := strings.Split(*extra, ",")
+		created, err := store.SeedExtra(ctx, pool, *balance, ids)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s seed: created %d of %d extra wallets\n", name, created, len(ids))
+	}
 	return nil
 }
 
