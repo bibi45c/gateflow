@@ -44,7 +44,7 @@ func main() {
 	// One metrics registry for the process, never the global one.
 	observer, err := httpapi.NewObserver(prometheus.NewRegistry())
 	exitOn(err)
-	pool, err := store.Open(context.Background(), cfg.DatabaseURL)
+	pool, err := store.Open(context.Background(), cfg.DatabaseURL, cfg.DatabaseMaxConns)
 	exitOn(err)
 	defer pool.Close()
 	server.Main("access", ":8081", routes(store.New(pool), cfg, observer))
