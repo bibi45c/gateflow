@@ -70,6 +70,46 @@ func TestLoadNamesEveryEmptyVariable(t *testing.T) {
 	}
 }
 
+// withMaxConns returns a getenv over complete with DATABASE_MAX_CONNS set to value.
+func withMaxConns(value string) func(string) string {
+	return func(key string) string {
+		if key == config.EnvDatabaseMaxConns {
+			return value
+		}
+		return complete[key]
+	}
+}
+
+func TestLoadReadsDatabaseMaxConns(t *testing.T) {
+	got, err := config.Load(env(""))
+	if err != nil || got.DatabaseMaxConns != 0 {
+		t.Errorf("%s unset: got %d, %v, want 0", config.EnvDatabaseMaxConns, got.DatabaseMaxConns, err)
+	}
+	got, err = config.Load(withMaxConns("20"))
+	if err != nil || got.DatabaseMaxConns != 20 {
+		t.Errorf("%s=20: got %d, %v, want 20", config.EnvDatabaseMaxConns, got.DatabaseMaxConns, err)
+	}
+}
+
+func TestLoadRejectsInvalidDatabaseMaxConns(t *testing.T) {
+	for _, value := range []string{"0", "-1", "abc", "2147483648", "20 "} {
+		_, err := config.Load(withMaxConns(value))
+		if err == nil {
+			t.Errorf("%s=%q: no error", config.EnvDatabaseMaxConns, value)
+			continue
+		}
+		if !strings.Contains(err.Error(), config.EnvDatabaseMaxConns) {
+			t.Errorf("%s=%q: error %q does not name it", config.EnvDatabaseMaxConns, value, err)
+		}
+		for _, secret := range []string{complete[config.EnvDatabaseURL], "db-password",
+			complete[config.EnvAccessInternalToken], complete[config.EnvMeteringInternalToken]} {
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("%s=%q: error %q shows %q", config.EnvDatabaseMaxConns, value, err, secret)
+			}
+		}
+	}
+}
+
 func TestLoadSeedNeedsOnlyTheDatabaseURL(t *testing.T) {
 	onlyURL := func(key string) string {
 		if key == config.EnvDatabaseURL {

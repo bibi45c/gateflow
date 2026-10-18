@@ -6,6 +6,8 @@ package config
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 )
 
@@ -18,26 +20,50 @@ const (
 	EnvMockBaseURL   = "MOCK_UPSTREAM_BASE_URL"
 	EnvOllamaBaseURL = "OLLAMA_BASE_URL"
 	EnvOllamaModel   = "OLLAMA_MODEL"
+	// EnvDatabaseMaxConns is optional.
+	EnvDatabaseMaxConns = "DATABASE_MAX_CONNS"
 )
 
 // Service is what the service needs to serve requests.
 type Service struct {
-	DatabaseURL   string
-	KeyPepper     []byte
-	InternalToken string
+	DatabaseURL string
+	// DatabaseMaxConns caps the database pool. 0, when DATABASE_MAX_CONNS is unset,
+	// means pgx's default.
+	DatabaseMaxConns int32
+	KeyPepper        []byte
+	InternalToken    string
 }
 
 // LoadService reads the service settings. It fails when DATABASE_URL,
-// ACCESS_KEY_PEPPER or ACCESS_INTERNAL_TOKEN is empty.
+// ACCESS_KEY_PEPPER or ACCESS_INTERNAL_TOKEN is empty, or when DATABASE_MAX_CONNS
+// is set but not a whole number of at least 1.
 func LoadService(getenv func(string) string) (Service, error) {
 	if err := require(getenv, EnvDatabaseURL, EnvKeyPepper, EnvInternalToken); err != nil {
 		return Service{}, err
 	}
+	maxConns, err := databaseMaxConns(getenv(EnvDatabaseMaxConns))
+	if err != nil {
+		return Service{}, err
+	}
 	return Service{
-		DatabaseURL:   getenv(EnvDatabaseURL),
-		KeyPepper:     []byte(getenv(EnvKeyPepper)),
-		InternalToken: getenv(EnvInternalToken),
+		DatabaseURL:      getenv(EnvDatabaseURL),
+		DatabaseMaxConns: maxConns,
+		KeyPepper:        []byte(getenv(EnvKeyPepper)),
+		InternalToken:    getenv(EnvInternalToken),
 	}, nil
+}
+
+// databaseMaxConns reads a whole number of connections. An empty value means 0,
+// pgx's default.
+func databaseMaxConns(value string) (int32, error) {
+	if value == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(value, 10, 32)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("%s must be a whole number from 1 to %d", EnvDatabaseMaxConns, math.MaxInt32)
+	}
+	return int32(n), nil
 }
 
 // Seed is what the seed command needs. The channel settings are checked by the
