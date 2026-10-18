@@ -3,7 +3,7 @@
 <p>Base URL: <code>{{$base}}</code>. FlowGate speaks the Anthropic Messages API
 (<code>POST /v1/messages</code>) and the OpenAI Responses API (<code>POST /v1/responses</code>).
 Create a key under <a href="/keys">API keys</a> and put it in <code>GATEFLOW_API_KEY</code>.
-The mock models (<code>mock-*</code>) answer instantly; see <a href="/models">Models</a> for the rest.</p>
+<code>mock-text</code> answers at once and <code>mock-load</code> streams slowly for about 20 s; see <a href="/models">Models</a> for the rest.</p>
 
 <h2>curl</h2>
 <pre>export GATEFLOW_API_KEY=gf_...
@@ -11,7 +11,7 @@ curl -N {{$base}}/v1/messages \
   -H "x-api-key: $GATEFLOW_API_KEY" \
   -H "anthropic-version: 2023-06-01" \
   -H "content-type: application/json" \
-  -d '{"model":"mock-small","max_tokens":64,"stream":true,
+  -d '{"model":"mock-text","max_tokens":64,"stream":true,
        "messages":[{"role":"user","content":"Hello"}]}'</pre>
 
 <h2>Codex CLI</h2>
