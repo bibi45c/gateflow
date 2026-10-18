@@ -28,7 +28,8 @@ func (s *Server) playground(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "list the models", err)
 		return
 	}
-	s.render(w, r, http.StatusOK, "playground", "Playground", catalogModels(channels))
+	rows := catalogModels(channels)
+	s.render(w, r, http.StatusOK, "playground", "Playground", modelsData{Models: rows, Mock: servedMocks(rows)})
 }
 
 // playgroundStream sends one streamed Messages call through the real gateway with

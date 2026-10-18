@@ -143,7 +143,7 @@ func TestEveryPageRendersForItsRole(t *testing.T) {
 	userCookie, _ := h.as(demo)
 	for path, want := range map[string]string{
 		"/": "$4.500000", "/keys": "gf_abcdefg", "/usage": "mock-small", "/models": "$15 / 1M tokens",
-		"/quickstart": "http://localhost:8080/v1", "/playground": "pg-key",
+		"/quickstart": "http://localhost:8080/v1", "/playground": `value="mock-chat"`,
 	} {
 		resp, body := h.do("GET", path, userCookie, nil)
 		if resp.StatusCode != 200 || !strings.Contains(body, want) {
@@ -163,6 +163,22 @@ func TestEveryPageRendersForItsRole(t *testing.T) {
 		if f != "tenant-demo" {
 			t.Errorf("asked about %s for the demo user", f)
 		}
+	}
+}
+
+func TestMockModelsAreListedWhenAChannelServesThem(t *testing.T) {
+	h := newHarness(t, Options{})
+	cookie, _ := h.as(demo)
+	_, body := h.do("GET", "/models", cookie, nil)
+	if !strings.Contains(body, "<code>mock-chat</code>") || !strings.Contains(body, "Mock models") {
+		t.Error("the models page does not list mock-chat")
+	}
+	_, body = h.do("GET", "/playground", cookie, nil)
+	if !strings.Contains(body, `<option value="mock-chat">`) {
+		t.Error("the playground does not offer mock-chat")
+	}
+	if servedMocks([]modelRow{{Pattern: "qwen3:8b"}}) != nil {
+		t.Error("mock models listed without a mock channel")
 	}
 }
 
