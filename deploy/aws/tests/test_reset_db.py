@@ -35,9 +35,14 @@ METERING_POD = {
 class FakeKube:
     """Stands in for kubectl against one release with a stateful gateway and database."""
 
-    def __init__(self, keda=False, pause=None, fail=None, seed_phase='Succeeded', verify=None, csv_rows=None):
+    def __init__(self, keda=False, pause=None, fail=None, seed_phase='Succeeded', verify=None, csv_rows=None,
+                 ready_lag=0, paused_lag=0):
         self.keda, self.pause, self.fail = keda, pause, fail or set()
         self.seed_phase, self.verify, self.csv_rows = seed_phase, verify, csv_rows
+        # Gateway reads that still see 0 ready Pods after a resize, and ScaledObject reads that
+        # still report Paused after the annotation is removed.
+        self.ready_lag, self.paused_lag = ready_lag, paused_lag
+        self.ready_lag_left = self.paused_lag_left = 0
         self.replicas = {'gateway': 2, 'access': 1, 'metering': 1}
         self.gateway_pods = 2
         self.pods, self.deleted, self.created = {}, [], []
@@ -55,6 +60,9 @@ class FakeKube:
         item = {'metadata': {'name': f'gf-{name}'}, 'spec': {'replicas': self.replicas[name], 'template': {
             'spec': METERING_POD if name == 'metering' else {'containers': [{'name': name, 'image': name}]}}},
             'status': {'readyReplicas': self.replicas[name]}}
+        if name == 'gateway' and self.ready_lag_left:
+            self.ready_lag_left -= 1
+            item['status']['readyReplicas'] = 0
         return item
 
     def __call__(self, command, **kwargs):
@@ -76,22 +84,34 @@ class FakeKube:
             return self.event(f'get deployment {" ".join(names)}', command, stdout=json.dumps(document))
         if verb == 'get' and args[1] == 'scaledobject.keda.sh':
             annotations = {reset_db.KEDA_PAUSE: self.pause} if self.pause else {}
-            return self.event('get scaledobject', command,
-                              stdout=json.dumps({'metadata': {'name': args[2], 'annotations': annotations}}))
+            paused = self.pause is not None
+            if not paused and self.paused_lag_left:
+                self.paused_lag_left -= 1
+                paused = True
+            status = {'conditions': [{'type': 'Ready', 'status': 'True'},
+                                     {'type': 'Paused', 'status': 'True' if paused else 'False'}]}
+            return self.event('get scaledobject', command, stdout=json.dumps(
+                {'metadata': {'name': args[2], 'annotations': annotations}, 'status': status}))
         if verb == 'scale':
             replicas = int(args[3].split('=')[1])
             result = self.event(f'scale {replicas}', command)
             if not result.returncode:
                 self.replicas['gateway'] = replicas
                 self.gateway_pods = replicas
+                self.ready_lag_left = self.ready_lag
             return result
         if verb == 'annotate':
             result = self.event(f'annotate {" ".join(args[3:])}', command)
             if not result.returncode:
-                if args[3] == f'{reset_db.KEDA_PAUSE}=0':
-                    self.gateway_pods = 0
+                if args[3] == f'{reset_db.KEDA_PAUSE}-':
+                    # As on EKS: with no gateway Pod the triggers have no metric, so resuming
+                    # KEDA leaves the gateway at whatever count it was paused at.
+                    self.pause = None
+                    self.paused_lag_left = self.paused_lag
                 else:
-                    self.replicas['gateway'] = self.gateway_pods = 2
+                    self.pause = args[3].split('=')[1]
+                    self.replicas['gateway'] = self.gateway_pods = int(self.pause)
+                    self.ready_lag_left = self.ready_lag
             return result
         if verb == 'get' and args[1] == 'pods':
             items = [{'metadata': {'name': f'gf-gateway-{n}'}} for n in range(self.gateway_pods)]
@@ -260,6 +280,55 @@ class ResetTest(unittest.TestCase):
         self.assertEqual(kube.events[-2], f'annotate {reset_db.KEDA_PAUSE}-')
         self.assertIn('KEDA ScaledObject gf-gateway paused', out)
         self.assertIn('KEDA resumed', out)
+
+    def test_keda_resume_brings_the_gateway_back_before_unpausing(self):
+        # Removing the annotation alone leaves the gateway at 0 (day 2 on EKS): KEDA must hold
+        # the recorded count until those Pods are Ready, and only then be resumed.
+        kube = FakeKube(keda=True)
+        code, out, err = self.run_reset(kube, '--yes')
+        self.assertEqual(code, 0, err)
+        self.assertEqual(kube.events[kube.events.index('delete db-query') + 1:], [
+            f'annotate {reset_db.KEDA_PAUSE}=2 --overwrite', 'get deployment gateway',
+            f'annotate {reset_db.KEDA_PAUSE}-', 'get scaledobject'])
+        self.assert_cleaned_up(kube)
+        self.assertEqual(kube.gateway_pods, 2)
+        self.assertIsNone(kube.pause)
+        self.assertIn(f'KEDA holding gf-gateway at 2 ({reset_db.KEDA_PAUSE}=2)', out)
+        self.assertIn('with 2 ready gateway Pods', out)
+        self.assertIn('reset complete', out)
+
+    def test_keda_resume_waits_for_ready_pods_and_the_paused_state_to_clear(self):
+        kube = FakeKube(keda=True, ready_lag=2, paused_lag=1)
+        code, _, err = self.run_reset(kube, '--yes')
+        self.assertEqual(code, 0, err)
+        self.assertEqual(kube.events[kube.events.index('delete db-query') + 1:], [
+            f'annotate {reset_db.KEDA_PAUSE}=2 --overwrite', 'get deployment gateway', 'get deployment gateway',
+            'get deployment gateway', f'annotate {reset_db.KEDA_PAUSE}-', 'get scaledobject', 'get scaledobject'])
+        self.assert_cleaned_up(kube)
+
+    def test_keda_ready_timeout_fails_and_leaves_keda_holding_the_count(self):
+        kube = FakeKube(keda=True, ready_lag=10**6)
+        code, out, err = self.run_reset(kube, '--yes')
+        self.assertEqual(code, 1)
+        self.assertNotIn(f'annotate {reset_db.KEDA_PAUSE}-', kube.events)
+        self.assertEqual(kube.pause, '2')
+        self.assertIn(f'FAIL restoring the gateway: timed out after 300s waiting for 2 ready gateway Pods while '
+                      f'{reset_db.KEDA_PAUSE}=2', err)
+        self.assertIn(f'restore it with: kubectl --context eks-test -n gateflow annotate scaledobject.keda.sh '
+                      f'gf-gateway {reset_db.KEDA_PAUSE}=2 --overwrite; wait until 2 gateway Pods are Ready; '
+                      f'then kubectl --context eks-test -n gateflow annotate scaledobject.keda.sh gf-gateway '
+                      f'{reset_db.KEDA_PAUSE}-', err)
+        self.assertNotIn('kubeconfig-path', err)
+        self.assertNotIn('reset complete', out)
+
+    def test_keda_still_paused_after_resume_times_out(self):
+        kube = FakeKube(keda=True, paused_lag=10**6)
+        code, out, err = self.run_reset(kube, '--yes')
+        self.assertEqual(code, 1)
+        self.assertIn(f'annotate {reset_db.KEDA_PAUSE}-', kube.events)
+        self.assertIn('FAIL restoring the gateway: timed out after 300s waiting for ScaledObject gf-gateway to '
+                      'leave the paused state', err)
+        self.assertNotIn('reset complete', out)
 
     def test_keda_annotation_already_present_is_restored(self):
         kube = FakeKube(keda=True, pause='3')
