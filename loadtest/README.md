@@ -14,6 +14,8 @@ Scheduled load on the gateway, following
 | `test_prom_export.py` | Unit tests of `prom_export.py`, with a fake port-forward and Prometheus |
 | `derive.py` | Derives L, C, D and T from the single-Pod calibration repeats |
 | `test_derive.py` | Unit tests of `derive.py`, on run folders built by the tests |
+| `bundle.py` | Builds the Part C data bundle of a cloud day from a manifest |
+| `test_bundle.py` | Unit tests of `bundle.py`, on a day built by the tests, with a fake aws CLI |
 
 ## Run
 
@@ -280,6 +282,56 @@ python loadtest/derive.py .local/loadtest/calib-1 .local/loadtest/calib-2 .local
 prints a Markdown summary, writes the JSON to `--out`, and exits with 2 when no run
 is valid or no level passes, with 1 when an input is missing, and otherwise with 0,
 also when the cross-check is off; then record why.
+
+## Build the data bundle
+
+After a cloud day, `bundle.py` turns its run folders into the Part C data bundle:
+per run the results, the record, the raw k6 output gzipped, the Prometheus export,
+the RDS values from CloudWatch and a Part B `summary.md` with charts; for the day a
+runs CSV, `SHA256SUMS` and a zip. The operator (bibi45c) runs it, signed in to AWS,
+because the RDS values come from `aws cloudwatch get-metric-statistics` (read-only):
+
+```text
+python loadtest/bundle.py --manifest .local/cloud-day/day2-manifest.json
+```
+
+The manifest describes the day. Every run ID starts with `d<day>-`; `condition`
+`auto` or `burst` marks an autoscaling run, `calib` a calibration repeat:
+
+```json
+{
+  "day": "2", "date": "2026-10-18", "commit": "<deployed commit>", "derived": "derived-day2.json",
+  "generator_allocatable_cpu": 3.92, "gateway_resources": {"cpu": "1", "memory": "2Gi"},
+  "configs": {"cfg-A": "values-aws.yaml, autoscaling off, chart defaults"},
+  "database_reset": "`deploy/aws/reset_db.py --balance 1000000000000` before each condition",
+  "extra_files": ["teardown-inventory.json", "leftovers-day2.txt"],
+  "runs": {"d2-rep1-r1": {"condition": "rep1", "repeat": 1, "config": "cfg-A", "purpose": "1 replica, ladder 32-52", "notes": ""}}
+}
+```
+
+- Inputs: the run folders in `--runs` (default `.local/loadtest/`), or a folder with
+  only `ABORTED.txt` for a run the operator stopped; in `--evidence` (default: the
+  manifest's folder) each run's `check_live.py` output (`live_pattern`, default
+  `live-{run}.json`), the derived file and `extra_files`; and `<out>/day<N>-config/`
+  from `deploy/aws/collect_config.py` with `images.json`, `nodes.json` and
+  `tf-output.json`.
+- The gateway's resources, and an auto run's min, max, T and D, come from the live
+  check; a run's `gateway_resources` and `autoscaling`, then the manifest's
+  `gateway_resources`, are the fallback. The generator criterion uses the
+  load-generator node's allocatable CPU from `nodes.json`, then
+  `generator_allocatable_cpu`.
+- Before anything is deleted, it refuses mixed or renamed input (a run ID of another
+  day, a record naming another run, a record time not on `date`, a phase outside the
+  load window, another commit, a run without record or `ABORTED.txt`, a derived run
+  that is not a calib run), AWS not reachable, a live check with problems, an auto
+  run without min, max, T and D, a failed CloudWatch query, and an existing bundle
+  without `--rebuild`. `day<N>-config/` is always kept.
+- `--out` defaults to `<evidence>/day<N>/`, `--zip` to `<out>.zip`, `--region` to
+  ap-southeast-1.
+
+Charts need matplotlib, the only package outside the standard library. Without it
+the bundle is still built; the output and every summary say the charts were
+skipped. The script exits with 0 when the bundle is built and with 1 otherwise.
 
 ## Settings
 
