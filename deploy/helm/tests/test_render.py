@@ -77,6 +77,42 @@ class ChartTests(unittest.TestCase):
         self.assertIn('pg_stat_ssl',init['command'][-1])
         self.assertEqual(init['securityContext']['runAsUser'],65532)
 
+    def test_database_max_conns_unset_by_default(self):
+        for args in [(),('--set','environment=aws',*AWS_CIDRS)]:
+            with self.subTest(args=args):
+                self.assertNotIn('DATABASE_MAX_CONNS',json.dumps(render(*args)))
+
+    def test_database_max_conns_only_on_the_service_set(self):
+        docs=render('--set','services.metering.databaseMaxConns=20')
+        deployments={d['metadata']['name']:d for d in docs if d['kind']=='Deployment'}
+        for name,d in deployments.items():
+            env=d['spec']['template']['spec']['containers'][0]['env']
+            found=[e for e in env if e['name']=='DATABASE_MAX_CONNS']
+            with self.subTest(name=name):
+                self.assertEqual(found,[{'name':'DATABASE_MAX_CONNS','value':'20'}] if name=='gf-metering' else [])
+        seed=next(d for d in docs if d['metadata']['name']=='gf-seed-access')
+        self.assertNotIn('DATABASE_MAX_CONNS',json.dumps(seed))
+
+    def test_database_max_conns_leaves_the_tls_check_url(self):
+        base=render('--set','environment=aws',*AWS_CIDRS)
+        capped=render('--set','environment=aws',*AWS_CIDRS,'--set','services.access.databaseMaxConns=20','--set','services.metering.databaseMaxConns=20')
+        for name in ['gf-access','gf-metering']:
+            with self.subTest(name=name):
+                before,after=[next(d for d in docs if d['kind']=='Deployment' and d['metadata']['name']==name)['spec']['template']['spec'] for docs in (base,capped)]
+                self.assertEqual(after['initContainers'],before['initContainers'])
+                self.assertEqual([e['name'] for e in after['initContainers'][0]['env']],['DATABASE_URL'])
+                self.assertNotIn('pool_max_conns',json.dumps(after))
+                url=lambda spec: next(e for e in spec['containers'][0]['env'] if e['name']=='DATABASE_URL')
+                self.assertEqual(url(after),url(before))
+                self.assertIn({'name':'DATABASE_MAX_CONNS','value':'20'},after['containers'][0]['env'])
+
+    def test_invalid_database_max_conns_rejected(self):
+        for value in ['0','-1','abc','1.5','2147483648']:
+            with self.subTest(value=value):
+                p=subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set',f'services.metering.databaseMaxConns={value}'],capture_output=True,text=True)
+                self.assertNotEqual(p.returncode,0)
+                self.assertIn('databaseMaxConns',p.stderr)
+
     def test_aws_gateway_resources(self):
         docs=render('-f',str(CHART.parent/'values-aws.yaml'),*AWS_CIDRS)
         deployments={d['metadata']['name']:d for d in docs if d['kind']=='Deployment'}

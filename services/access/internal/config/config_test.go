@@ -89,6 +89,39 @@ func TestLoadServiceReadsSettings(t *testing.T) {
 	}
 }
 
+func TestLoadServiceReadsDatabaseMaxConns(t *testing.T) {
+	env := serviceEnv()
+	got, err := LoadService(lookup(env))
+	if err != nil || got.DatabaseMaxConns != 0 {
+		t.Errorf("%s unset: got %d, %v, want 0", EnvDatabaseMaxConns, got.DatabaseMaxConns, err)
+	}
+	env[EnvDatabaseMaxConns] = "20"
+	got, err = LoadService(lookup(env))
+	if err != nil || got.DatabaseMaxConns != 20 {
+		t.Errorf("%s=20: got %d, %v, want 20", EnvDatabaseMaxConns, got.DatabaseMaxConns, err)
+	}
+}
+
+func TestLoadServiceRejectsInvalidDatabaseMaxConns(t *testing.T) {
+	for _, value := range []string{"0", "-1", "abc", "2147483648", "20 "} {
+		env := serviceEnv()
+		env[EnvDatabaseMaxConns] = value
+		_, err := LoadService(lookup(env))
+		if err == nil {
+			t.Errorf("%s=%q: no error", EnvDatabaseMaxConns, value)
+			continue
+		}
+		if !strings.Contains(err.Error(), EnvDatabaseMaxConns) {
+			t.Errorf("%s=%q: error %q does not name it", EnvDatabaseMaxConns, value, err)
+		}
+		for _, secret := range []string{env[EnvDatabaseURL], "db-secret", env[EnvKeyPepper], env[EnvInternalToken]} {
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("%s=%q: error %q shows %q", EnvDatabaseMaxConns, value, err, secret)
+			}
+		}
+	}
+}
+
 func TestLoadSeedNamesEachMissingVariable(t *testing.T) {
 	required := []string{EnvDatabaseURL, EnvKeyPepper, EnvSeedSecret}
 	checkMissing(t, seedEnv(), required, func(getenv func(string) string) error {

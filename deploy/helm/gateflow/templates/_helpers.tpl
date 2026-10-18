@@ -12,6 +12,10 @@
 {{- end -}}{{- end -}}
 {{- if or (eq $n "access") (eq $n "metering") -}}
 {{- $env = append $env (dict "name" "DATABASE_URL" "valueFrom" (dict "secretKeyRef" (dict "name" $r.Values.secretName "key" (printf "%s_DATABASE_URL" (upper $n))))) -}}
+{{- /* A variable of its own, not pool_max_conns in the URL, which the TLS check's psql rejects. */ -}}
+{{- with (index $r.Values.services $n).databaseMaxConns -}}
+{{- $env = append $env (dict "name" "DATABASE_MAX_CONNS" "value" (printf "%d" (int .))) -}}
+{{- end -}}
 {{- end -}}
 {{- if eq $n "access" -}}
 {{- range $key := list "ACCESS_KEY_PEPPER" "ACCESS_SEED_SECRET" -}}
