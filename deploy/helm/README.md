@@ -273,6 +273,29 @@ SHUTDOWN_DRAIN_DELAY and SHUTDOWN_TIMEOUT; readiness is /readyz and liveness is
 /healthz. Native sleep works with the distroless images. Values that cannot fit the
 shutdown budget are rejected at render time.
 
+## Probes
+
+Each service has a readiness probe on /readyz and liveness and startup probes on
+/healthz, all on port `http`. Their timing comes from the top-level `probes` value:
+
+| Value | periodSeconds | timeoutSeconds | failureThreshold |
+|---|---|---|---|
+| `probes.readiness` | 2 | 1 | 3 |
+| `probes.liveness` | 10 | 1 | 3 |
+| `probes.startup` | 2 | 1 | 90 |
+
+timeoutSeconds 1 and failureThreshold 3 are the Kubernetes defaults; the chart
+writes them out. `services.<name>.probes` overrides single fields for one service
+and keeps the rest from `probes`. All fields are integers of at least 1; unknown
+keys are rejected. values-aws.yaml and values-kind.yaml keep the defaults.
+
+A gateway at its CPU limit can answer /healthz in over a second, so liveness fails
+and the container restarts. To relax only the gateway's liveness probe:
+
+```text
+--set services.gateway.probes.liveness.timeoutSeconds=5 --set services.gateway.probes.liveness.failureThreshold=6
+```
+
 ## Autoscaling
 
 With `autoscaling.enabled=true` the chart renders a KEDA ScaledObject for the gateway
