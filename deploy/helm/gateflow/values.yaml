@@ -18,6 +18,23 @@
     "margin": 10,
     "grace": 85
   },
+  "probes": {
+    "readiness": {
+      "periodSeconds": 2,
+      "timeoutSeconds": 1,
+      "failureThreshold": 3
+    },
+    "liveness": {
+      "periodSeconds": 10,
+      "timeoutSeconds": 1,
+      "failureThreshold": 3
+    },
+    "startup": {
+      "periodSeconds": 2,
+      "timeoutSeconds": 1,
+      "failureThreshold": 90
+    }
+  },
   "services": {
     "gateway": {
       "port": 8080,
