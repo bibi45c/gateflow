@@ -1,0 +1,13 @@
+# Prometheus for the local stack, so the console dashboard has live numbers. The job
+# names match the cluster's (deploy/helm/monitoring/prometheus-values.yaml), so the
+# console's queries are the same in both.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+scrape_configs:
+  - job_name: gateflow-gateway
+    static_configs: [{targets: ["gateway:8080"]}]
+  - job_name: gateflow-access
+    static_configs: [{targets: ["access:8081"]}]
+  - job_name: gateflow-metering
+    static_configs: [{targets: ["metering:8082"]}]

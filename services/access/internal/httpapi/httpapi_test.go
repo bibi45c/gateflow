@@ -185,6 +185,9 @@ func TestEveryCodeHasAStatusAndAFixedMessage(t *testing.T) {
 		CodeInvalidKey:            401,
 		CodeModelNotAllowed:       403,
 		CodePriceVersionNotFound:  404,
+		CodeInvalidCredentials:    401,
+		CodeTenantNotFound:        404,
+		CodeKeyNotFound:           404,
 		CodeDependencyUnavailable: 503,
 		CodeInternalError:         500,
 	}

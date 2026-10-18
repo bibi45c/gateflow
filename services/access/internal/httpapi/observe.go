@@ -14,7 +14,18 @@ const (
 	verifyRoute       = "/internal/v1/keys/verify"
 	priceVersionRoute = "/internal/v1/price-versions/{id}"
 	otherRoute        = "/internal/v1/"
+
+	loginRoute         = "/internal/v1/console/login"
+	tenantsRoute       = "/internal/v1/tenants"
+	keysRoute          = "/internal/v1/tenants/{tenant_id}/keys"
+	revokeRoute        = "/internal/v1/tenants/{tenant_id}/keys/{key_id}/revoke"
+	channelsRoute      = "/internal/v1/channels"
+	priceVersionsRoute = "/internal/v1/price-versions"
 )
+
+// routes is every route template the API observes.
+var routes = []string{verifyRoute, priceVersionRoute, otherRoute, loginRoute, tenantsRoute, keysRoute,
+	revokeRoute, channelsRoute, priceVersionsRoute}
 
 // NewObserver returns the observer of the API's routes, whose metrics go to registry.
 // It writes no request line: the API writes its own, which also names the verified
@@ -22,7 +33,7 @@ const (
 func NewObserver(registry *prometheus.Registry) (*observability.Observer, error) {
 	return observability.New(observability.Options{
 		Service:  "access",
-		Routes:   []string{verifyRoute, priceVersionRoute, otherRoute},
+		Routes:   routes,
 		Registry: registry,
 	})
 }
@@ -44,6 +55,9 @@ var codeResults = map[string]observability.Result{
 	CodeInvalidKey:            observability.AuthenticationDenied,
 	CodeModelNotAllowed:       observability.PermissionDenied,
 	CodePriceVersionNotFound:  observability.InvalidRequest,
+	CodeInvalidCredentials:    observability.AuthenticationDenied,
+	CodeTenantNotFound:        observability.InvalidRequest,
+	CodeKeyNotFound:           observability.InvalidRequest,
 	CodeDependencyUnavailable: observability.DependencyError,
 	CodeInternalError:         observability.InternalError,
 }

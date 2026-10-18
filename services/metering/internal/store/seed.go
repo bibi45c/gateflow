@@ -49,3 +49,22 @@ func Seed(ctx context.Context, db *pgxpool.Pool, balance int64, tenants int) (in
 	}
 	return created, nil
 }
+
+// SeedExtra creates a wallet with balance micro-units for each of tenantIDs that has
+// none, such as the console's tenant-demo, and returns how many it created.
+func SeedExtra(ctx context.Context, db *pgxpool.Pool, balance int64, tenantIDs []string) (int, error) {
+	if balance < 0 {
+		return 0, fmt.Errorf("store: seed: balance %d is negative", balance)
+	}
+	for _, id := range tenantIDs {
+		if id == "" || len(id) > 200 {
+			return 0, fmt.Errorf("store: seed: tenant id %q is empty or too long", id)
+		}
+	}
+	tag, err := db.Exec(ctx, `INSERT INTO accounting.wallets (tenant_id, balance, held)
+		SELECT id, $2, 0 FROM unnest($1::text[]) AS id ON CONFLICT (tenant_id) DO NOTHING`, tenantIDs, balance)
+	if err != nil {
+		return 0, fmt.Errorf("store: seed: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}

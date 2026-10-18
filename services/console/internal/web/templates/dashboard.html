@@ -1,0 +1,12 @@
+{{define "content"}}
+<p>Live gateway numbers from Prometheus, refreshed every 2 seconds.
+{{with .Data.Grafana}}<a href="{{.}}" target="_blank" rel="noopener">Open the Grafana dashboard</a>.{{end}}</p>
+{{if not .Data.HasPrometheus}}<p class="error">PROMETHEUS_URL is not set, so there is nothing to show.</p>{{end}}
+<div class="tiles" id="dash">
+  <div class="tile"><span>Requests per second</span><strong data-metric="requests_per_second">–</strong><small>gateway, 1 min rate</small></div>
+  <div class="tile"><span>Active streams</span><strong data-metric="active_streams">–</strong><small>admitted calls in flight</small></div>
+  <div class="tile"><span>Gateway replicas</span><strong data-metric="replicas">–</strong><small>scraped and up</small></div>
+</div>
+<p class="meta"><span id="dash-status">Loading…</span></p>
+<script src="/static/app.js"></script>
+{{end}}

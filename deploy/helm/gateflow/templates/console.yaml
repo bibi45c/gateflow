@@ -1,0 +1,26 @@
+{{- /* The web console (issue #137): off by default, ClusterIP only, never behind the ingress. Reach it with kubectl port-forward. */ -}}
+{{- if .Values.console.enabled -}}
+{{- $c := .Values.console -}}
+{{- $name := "console" -}}
+{{- $labels := merge (dict "app.kubernetes.io/component" $name) (include "gf.labels" $ | fromJson) -}}
+{{- $secret := $.Values.secretName -}}
+{{- $env := list -}}
+{{- range $key := list "ACCESS_INTERNAL_TOKEN" "METERING_INTERNAL_TOKEN" "CONSOLE_SESSION_SECRET" -}}
+{{- $env = append $env (dict "name" $key "valueFrom" (dict "secretKeyRef" (dict "name" $secret "key" $key))) -}}
+{{- end -}}
+{{- $gateway := printf "http://%s-gateway:8080" .Release.Name -}}
+{{- range $key, $value := dict "ACCESS_URL" (printf "http://%s-access:8081" .Release.Name) "METERING_URL" (printf "http://%s-metering:8082" .Release.Name) "GATEWAY_URL" $gateway "CONSOLE_PUBLIC_GATEWAY_URL" ($c.publicGatewayURL | default $gateway) "PROMETHEUS_URL" $c.prometheusURL "GRAFANA_URL" $c.grafanaURL "CONSOLE_GATEWAY_JOB" .Values.autoscaling.job "CONSOLE_TIME_ZONE" $c.timeZone "SHUTDOWN_TIMEOUT" "10s" -}}
+{{- if $value -}}{{- $env = append $env (dict "name" $key "value" $value) -}}{{- end -}}
+{{- end -}}
+{{- $container := dict "name" $name "image" (include "gf.image" (dict "root" $ "service" $c)) "ports" (list (dict "name" "http" "containerPort" $c.port)) "env" $env "resources" $c.resources -}}
+{{- range $kind, $path := dict "readiness" "/readyz" "liveness" "/healthz" "startup" "/healthz" -}}
+{{- $p := get $.Values.probes $kind -}}
+{{- $_ := set $container (printf "%sProbe" $kind) (dict "httpGet" (dict "path" $path "port" "http") "periodSeconds" (int $p.periodSeconds) "timeoutSeconds" (int $p.timeoutSeconds) "failureThreshold" (int $p.failureThreshold)) -}}
+{{- end -}}
+{{- $_ := set $container "securityContext" (dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL"))) -}}
+{{- $pod := dict "containers" (list $container) "automountServiceAccountToken" false "securityContext" (dict "runAsNonRoot" true "seccompProfile" (dict "type" "RuntimeDefault")) "nodeSelector" (dict "gateflow.io/workload" "services") -}}
+---
+{{ dict "apiVersion" "apps/v1" "kind" "Deployment" "metadata" (dict "name" (printf "%s-%s" .Release.Name $name) "labels" $labels) "spec" (dict "replicas" $c.replicas "selector" (dict "matchLabels" $labels) "template" (dict "metadata" (dict "labels" $labels) "spec" $pod)) | toJson }}
+---
+{{ dict "apiVersion" "v1" "kind" "Service" "metadata" (dict "name" (printf "%s-%s" .Release.Name $name) "labels" $labels) "spec" (dict "type" "ClusterIP" "selector" $labels "ports" (list (dict "name" "http" "port" $c.port "targetPort" "http"))) | toJson }}
+{{ end -}}

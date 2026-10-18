@@ -1,5 +1,6 @@
 // Package httpapi serves the access service's internal API under /internal/v1: key
-// verification and price versions, for the gateway and metering.
+// verification and price versions, for the gateway and metering, and the console
+// routes: sign-in, tenants, keys, channels and price versions.
 //
 // Every route needs the internal bearer token and answers errors in the shared error
 // body. Each request is logged on one line that never holds a gateway key, its HMAC,
@@ -44,6 +45,7 @@ type API struct {
 	hasToken  bool
 	logger    *slog.Logger
 	observer  *observability.Observer
+	console   ConsoleStore
 }
 
 // New returns the API. pepper is ACCESS_KEY_PEPPER and internalToken is
@@ -65,6 +67,7 @@ func New(s Store, pepper []byte, internalToken string, logger *slog.Logger, obse
 func (a *API) Register(mux *http.ServeMux) {
 	mux.Handle("POST "+verifyRoute, a.route(verifyRoute, a.verifyKey))
 	mux.Handle("GET "+priceVersionRoute, a.route(priceVersionRoute, a.priceVersion))
+	a.registerConsole(mux)
 	mux.Handle(otherRoute, a.route(otherRoute, http.NotFound))
 }
 

@@ -97,6 +97,26 @@
       }
     }
   },
+  "console": {
+    "enabled": false,
+    "port": 8070,
+    "replicas": 1,
+    "image": "ghcr.io/bibi45c/gateflow-console",
+    "digest": "",
+    "publicGatewayURL": "",
+    "prometheusURL": "http://prometheus-server.monitoring.svc.cluster.local",
+    "grafanaURL": "",
+    "timeZone": "Asia/Singapore",
+    "resources": {
+      "requests": {
+        "cpu": "20m",
+        "memory": "32Mi"
+      },
+      "limits": {
+        "memory": "128Mi"
+      }
+    }
+  },
   "seedChannels": {
     "ollamaBaseURL": "http://ollama:11434",
     "ollamaModel": "qwen3:8b"

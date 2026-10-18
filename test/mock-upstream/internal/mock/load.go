@@ -69,11 +69,14 @@ func loadFromEnv(load *Load) error {
 
 // forModel returns t with mock-load's interval and a fixed rate when model is
 // mock-load, so a long stream lasts its count × interval even where timers wake up
-// late; other models get t unchanged.
+// late. mock-chat gets its own reading pace; other models get t unchanged.
 func (t Timing) forModel(model string) Timing {
-	if model == loadModel {
+	switch model {
+	case loadModel:
 		t.EventInterval = t.Load.Interval
 		t.fixedRate = true
+	case chatModel:
+		return t.chatTiming()
 	}
 	return t
 }

@@ -27,6 +27,8 @@ jobs:
             target: services/metering
           - service: mock-upstream
             target: test/mock-upstream
+          - service: console
+            target: services/console
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

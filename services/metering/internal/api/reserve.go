@@ -25,6 +25,7 @@ type reserveRequest struct {
 	PriceVersionID  *string `json:"price_version_id"`
 	MaxInputTokens  *int64  `json:"max_input_tokens"`
 	MaxOutputTokens *int64  `json:"max_output_tokens"`
+	Model           *string `json:"model"`
 }
 
 type reserveResponse struct {
@@ -55,8 +56,13 @@ func (q reserveRequest) reservation() (Reservation, bool) {
 	if !validID(q.CallID) || !validID(q.TenantID) || !validID(q.PriceVersionID) ||
 		q.AttemptID == nil || *q.AttemptID < 1 || *q.AttemptID > math.MaxInt32 ||
 		q.MaxInputTokens == nil || *q.MaxInputTokens < 0 ||
-		q.MaxOutputTokens == nil || *q.MaxOutputTokens < 0 {
+		q.MaxOutputTokens == nil || *q.MaxOutputTokens < 0 ||
+		(q.Model != nil && !validPathID(*q.Model)) {
 		return Reservation{}, false
+	}
+	model := ""
+	if q.Model != nil {
+		model = *q.Model
 	}
 	bounds := billing.Bounds{MaxInput: *q.MaxInputTokens, MaxOutput: *q.MaxOutputTokens}
 	return Reservation{
@@ -64,6 +70,7 @@ func (q reserveRequest) reservation() (Reservation, bool) {
 		AttemptID:      int32(*q.AttemptID),
 		TenantID:       *q.TenantID,
 		PriceVersionID: *q.PriceVersionID,
+		Model:          model,
 		Bounds:         bounds,
 		Digest:         billing.ReserveDigest(*q.TenantID, *q.PriceVersionID, bounds),
 	}, true

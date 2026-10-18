@@ -95,8 +95,8 @@ func TestCommandMigratesSeedsAndPrintsKeys(t *testing.T) {
 		(SELECT count(*) FROM access.tenants)`).Scan(&owned, &tenants); err != nil {
 		t.Fatal(err)
 	}
-	// The six tables and the migrations' version table.
-	if owned != 7 || tenants != 4 {
-		t.Errorf("tables owned by access = %d, tenants = %d; want 7 and 4", owned, tenants)
+	// The seven tables and the migrations' version table.
+	if owned != 8 || tenants != 4 {
+		t.Errorf("tables owned by access = %d, tenants = %d; want 8 and 4", owned, tenants)
 	}
 }

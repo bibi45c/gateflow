@@ -48,6 +48,15 @@ const MAX_VUS = number('MAX_VUS', '4000');
 // times the seconds a request lasts. Allocating them before the run keeps k6 from
 // dropping arrivals while it starts more.
 const STREAM_S = number('STREAM_S', '25');
+// PREALLOC_VUS replaces that estimate when requests outlast STREAM_S, as they do once
+// a level overloads the gateway; unset keeps the estimate.
+const PREALLOC_VUS = env('PREALLOC_VUS', '') === '' ? null : number('PREALLOC_VUS', '');
+if (PREALLOC_VUS !== null && (!Number.isInteger(PREALLOC_VUS) || PREALLOC_VUS < 1)) {
+  throw new Error('PREALLOC_VUS must be a whole number of at least 1');
+}
+if (PREALLOC_VUS !== null && PREALLOC_VUS > MAX_VUS) {
+  throw new Error(`PREALLOC_VUS (${PREALLOC_VUS}) must not exceed MAX_VUS (${MAX_VUS})`);
+}
 
 // phases returns the run's plan as [phase, level, start, end], in seconds from the
 // start of the scenario.
@@ -73,7 +82,7 @@ export const options = {
       executor: 'ramping-arrival-rate',
       startRate: LEVELS[0],
       timeUnit: '1s',
-      preAllocatedVUs: Math.min(MAX_VUS, Math.ceil(Math.max(...LEVELS) * STREAM_S)),
+      preAllocatedVUs: Math.min(MAX_VUS, PREALLOC_VUS !== null ? PREALLOC_VUS : Math.ceil(Math.max(...LEVELS) * STREAM_S)),
       maxVUs: MAX_VUS,
       // Let the last request reach its deadline and publish a terminal result.
       gracefulStop: `${TOTAL_DEADLINE_S + 5}s`,
