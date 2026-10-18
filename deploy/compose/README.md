@@ -28,6 +28,8 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `MOCK_UPSTREAM_BASE_URL` | access seed | `http://mock-upstream:8090` | Base URL of the mock upstream channel |
 | `OLLAMA_BASE_URL` | access seed | `http://host.docker.internal:11434` | Base URL of the Ollama channel; the default reaches Ollama on the host |
 | `OLLAMA_MODEL` | access seed | `qwen3:8b` | Model the Ollama channel serves |
+| `CONSOLE_ADMIN_PASSWORD` | access seed | `admin-local-only` | Password of the console user `admin`; unset skips the user |
+| `CONSOLE_DEMO_PASSWORD` | access seed | `demo-local-only` | Password of the console user `demo`, of tenant `tenant-demo`; unset skips the user |
 | `OLLAMA_CONTEXT_LENGTH` | ollama, with the `ollama` profile only | `64000` | Context the Ollama container asks for; Ollama caps it at the model's maximum |
 | `MOCK_FIRST_EVENT_DELAY_MS` | mock-upstream | `0` | Delay before the first stream event |
 | `MOCK_EVENT_INTERVAL_MS` | mock-upstream | `0` | Delay between stream events |
@@ -52,7 +54,9 @@ Compose runs no Prometheus yet.
 
 `seed-access` and `seed-metering` run once on every `up`, after `access` and
 `metering` are healthy, and create the test tenants `tenant-00` to `tenant-10`, their
-keys, the `mock` and `ollama` channels and the wallets (`tenant-00` has no balance);
+keys, the `mock` and `ollama` channels and the wallets (`tenant-00` has no balance),
+and for the console the users `admin` and `demo` and the tenant `tenant-demo` with a
+wallet but no key;
 the gateway starts after them, and a repeated `up` changes nothing.
 Each tenant's key, valid only for this local stack, is in the seed log:
 `docker compose -p <name> -f deploy/compose/compose.yaml logs seed-access`.

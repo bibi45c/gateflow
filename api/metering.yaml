@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FlowGate metering internal API
-  version: 1.1.0
+  version: 1.2.0
   description: |
     Internal API of the metering service (wallets, reservations, settlement and the
     ledger) for S1, as agreed in issue #18 revision 3.2. The gateway reserves before
@@ -12,6 +12,11 @@ info:
     (`POST /v1/responses`), next to `anthropic-messages` (`POST /v1/messages`). The
     reserve and settle bodies do not change; the bounds of reserve and the usage
     source and outcome rule of settle give the gateway's rules for each protocol.
+
+    Issue #137 adds the console routes: the wallet list, a tenant's usage, and
+    wallet adjustments (admin top-ups and corrections). Only the console service
+    calls them, with the same internal token. Reserve gains an optional `model`,
+    which the gateway sends so the usage log can show it.
 
     `api/errors.md` is the single list of error codes. The `ErrorCode` enum below
     lists exactly the codes it gives for metering.
@@ -37,7 +42,8 @@ info:
     - `tenant_id`, `price_version_id`, `reservation_id`, `ledger_entry_id` and
       `call_id` are opaque strings; `attempt_id` is an integer; token counts are
       int64 or null. The seeded wallets have `tenant_id` exactly `tenant-00` to
-      `tenant-10`, the same strings as the access seed.
+      `tenant-10`, the same strings as the access seed; compose also seeds
+      `tenant-demo` for the console's demo user.
     - No service logs a gateway key, an `Authorization` or `x-api-key` header, an
       internal token, a credential value or a request or response body.
     - `/healthz` stays open and is not part of this contract.
@@ -711,6 +717,154 @@ paths:
               examples:
                 dependency_unavailable:
                   $ref: '#/components/examples/DependencyUnavailable'
+  /internal/v1/wallets:
+    get:
+      operationId: listWallets
+      summary: List every wallet
+      description: For the console's admin pages (issue #137).
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The wallets, by tenant.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Wallet'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalErrorReply'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailableReply'
+  /internal/v1/tenants/{tenant_id}/usage:
+    get:
+      operationId: tenantUsage
+      summary: A tenant's wallet, usage summary and latest calls
+      description: |
+        For the console (issue #137). The summary adds up the call attempts reserved
+        at or after `since`; `charged` counts settled attempts only. `items` are the
+        latest attempts, newest first, open ones included.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TenantId'
+        - name: since
+          in: query
+          required: false
+          description: RFC 3339 time; the start of the current UTC day when absent.
+          schema: {type: string, format: date-time}
+        - name: limit
+          in: query
+          required: false
+          description: How many items, 1 to 200; 50 when absent.
+          schema: {type: integer, minimum: 1, maximum: 200}
+      responses:
+        '200':
+          description: The usage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Usage'
+        '400':
+          description: '`invalid_request`: `since` or `limit` is malformed.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_request:
+                  $ref: '#/components/examples/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`wallet_not_found`: the tenant has no wallet.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                wallet_not_found:
+                  $ref: '#/components/examples/WalletNotFound'
+        '500':
+          $ref: '#/components/responses/InternalErrorReply'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailableReply'
+  /internal/v1/wallets/{tenant_id}/adjustments:
+    post:
+      operationId: adjustWallet
+      summary: Top up or correct a tenant's balance
+      description: |
+        For the console's admin (issue #137). Adds `amount`, which may be negative,
+        to the balance once per `adjustment_id`, in one transaction, and records it
+        in the append-only `wallet_adjustments`. A top-up creates a missing wallet.
+        A repeat with the same id and content answers the recorded adjustment with
+        200; other content is `idempotency_conflict`. An adjustment that would
+        leave the available balance (balance - held) below 0 is refused with
+        `insufficient_balance` and changes nothing.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [adjustment_id, amount]
+              properties:
+                adjustment_id: {type: string, minLength: 1, maxLength: 200}
+                amount:
+                  type: integer
+                  format: int64
+                  not: {const: 0}
+                  description: Micro-units; positive tops up, negative corrects.
+                note: {type: string, maxLength: 200}
+      responses:
+        '201':
+          description: Applied now.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Adjustment'
+        '200':
+          description: Applied earlier with the same content; nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Adjustment'
+        '400':
+          description: '`invalid_request`: the body breaks the request schema.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_request:
+                  $ref: '#/components/examples/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: '`insufficient_balance`: the available balance would fall below 0.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                insufficient_balance:
+                  $ref: '#/components/examples/InsufficientBalance'
+        '422':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '500':
+          $ref: '#/components/responses/InternalErrorReply'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailableReply'
 components:
   securitySchemes:
     internalToken:
@@ -732,7 +886,71 @@ components:
       schema:
         type: string
       example: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
+    TenantId:
+      name: tenant_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+      example: tenant-demo
   schemas:
+    Wallet:
+      type: object
+      required: [tenant_id, balance, held, available, updated_at]
+      properties:
+        tenant_id: {type: string}
+        balance: {type: integer, format: int64}
+        held: {type: integer, format: int64}
+        available: {type: integer, format: int64, description: balance - held.}
+        updated_at: {type: string, format: date-time}
+    Usage:
+      type: object
+      required: [wallet, summary, items]
+      properties:
+        wallet:
+          $ref: '#/components/schemas/Wallet'
+        summary:
+          type: object
+          required: [since, requests, charged, input_tokens, output_tokens]
+          properties:
+            since: {type: string, format: date-time}
+            requests: {type: integer, format: int64}
+            charged: {type: integer, format: int64}
+            input_tokens: {type: integer, format: int64}
+            output_tokens: {type: integer, format: int64}
+        items:
+          type: array
+          items:
+            type: object
+            required: [reservation_id, call_id, model, status, outcome, input_tokens, output_tokens,
+              max_cost, charged, created_at, settled_at]
+            properties:
+              reservation_id: {type: string}
+              call_id: {type: string}
+              model: {type: [string, 'null']}
+              status: {type: string, enum: [reserved, settled]}
+              outcome:
+                oneOf:
+                  - $ref: '#/components/schemas/Outcome'
+                  - type: 'null'
+              input_tokens: {type: [integer, 'null'], format: int64}
+              output_tokens: {type: [integer, 'null'], format: int64}
+              max_cost: {type: integer, format: int64}
+              charged: {type: [integer, 'null'], format: int64}
+              created_at: {type: string, format: date-time}
+              settled_at: {type: [string, 'null'], format: date-time}
+    Adjustment:
+      type: object
+      required: [adjustment_id, tenant_id, amount, note, balance_after, created_at]
+      properties:
+        adjustment_id: {type: string}
+        tenant_id: {type: string}
+        amount: {type: integer, format: int64}
+        note: {type: string}
+        balance_after: {type: integer, format: int64}
+        created_at: {type: string, format: date-time}
     ReserveRequest:
       type: object
       additionalProperties: false
@@ -766,6 +984,14 @@ components:
           format: int64
           minimum: 0
           description: The most output tokens the call can use; the gateway sends the output bound of the request (see the bounds of reserve).
+        model:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: |
+            Optional (issue #137). The model the client asked for, kept for the
+            usage log. It is not part of the idempotency content, so a replay that
+            differs only in `model` is answered from the record.
     ReserveResponse:
       type: object
       required: [reservation_id, max_cost, status]
@@ -906,6 +1132,24 @@ components:
           message: A dependency is unavailable.
           request_id: req_6b1e0c4d-2f3a-4c5b-8d6e-7f8091a2b3c4
   responses:
+    InternalErrorReply:
+      description: '`internal_error`: an unexpected failure inside metering.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            internal_error:
+              $ref: '#/components/examples/InternalError'
+    DependencyUnavailableReply:
+      description: '`dependency_unavailable`: the metering database is unavailable.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            dependency_unavailable:
+              $ref: '#/components/examples/DependencyUnavailable'
     Unauthorized:
       description: '`unauthorized`: the internal token is missing, empty or wrong.'
       content:
@@ -918,8 +1162,8 @@ components:
     IdempotencyConflict:
       description: |
         `idempotency_conflict`: an earlier reserve with the same (`call_id`,
-        `attempt_id`), or an earlier settle of the same reservation, had different
-        content.
+        `attempt_id`), an earlier settle of the same reservation, or an earlier
+        adjustment with the same `adjustment_id`, had different content.
       content:
         application/json:
           schema:

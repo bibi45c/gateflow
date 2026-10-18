@@ -37,7 +37,7 @@ func TestAdmittedCallIsVerifiedReservedRelayedAndSettled(t *testing.T) {
 	}
 	checkInternalCall(t, reserve[0], meteringToken, id)
 	checkJSON(t, "reserve body", reserve[0].Body, fmt.Sprintf(`{"call_id":%q,"attempt_id":1,"tenant_id":"tenant-01",`+
-		`"price_version_id":"pv-fixture-2-5","max_input_tokens":%d,"max_output_tokens":20}`, id, len(messagesBody)))
+		`"price_version_id":"pv-fixture-2-5","max_input_tokens":%d,"max_output_tokens":20,"model":"mock-small"}`, id, len(messagesBody)))
 
 	settle := h.settle.requests()
 	if len(settle) != 1 {

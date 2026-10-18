@@ -241,7 +241,7 @@ func TestMigration0002AfterOnly0001(t *testing.T) {
 	}
 	before := channelRows(t, pool)
 
-	for run, want := range []int{1, 0} {
+	for run, want := range []int{2, 0} {
 		if ran, err := pgmigrate.Apply(ctx, pool, "access", migrations.FS); err != nil || ran != want {
 			t.Fatalf("run %d with 0002: applied %d, want %d, err %v", run+1, ran, want, err)
 		}
@@ -254,7 +254,7 @@ func TestMigration0002AfterOnly0001(t *testing.T) {
 	if err == nil {
 		versions, err = pgx.CollectRows(rows, pgx.RowTo[string])
 	}
-	if want := []string{"1 0001_init.sql", "2 0002_channel_protocols.sql"}; err != nil || !slices.Equal(versions, want) {
+	if want := []string{"1 0001_init.sql", "2 0002_channel_protocols.sql", "3 0003_console.sql"}; err != nil || !slices.Equal(versions, want) {
 		t.Errorf("recorded migrations = %v, err %v; want %v", versions, err, want)
 	}
 	if err := exec(pool, responses, channel.ProtocolResponses); err != nil {

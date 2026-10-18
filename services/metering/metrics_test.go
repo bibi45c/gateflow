@@ -150,7 +150,8 @@ var (
 		"permission_denied": true, "insufficient_balance": true, "tenant_limited": true,
 		"capacity_rejected": true, "dependency_error": true, "internal_error": true}
 	meteringRoutes = map[string]bool{"/internal/v1/reservations": true,
-		"/internal/v1/reservations/{reservation_id}/settle": true}
+		"/internal/v1/reservations/{reservation_id}/settle": true, "/internal/v1/wallets": true,
+		"/internal/v1/tenants/{tenant_id}/usage": true, "/internal/v1/wallets/{tenant_id}/adjustments": true}
 )
 
 // checkBounded fails the test unless s has exactly the allowed labels, each with a
