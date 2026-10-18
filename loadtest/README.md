@@ -152,7 +152,9 @@ python loadtest/kube_run.py --kubeconfig <EKS kubeconfig> --kube-context <EKS co
 [settings](#settings) with `--env NAME=value`; only those settings are accepted, and
 three are not: `GATEWAY_URL` and `MOCK_URL` follow from `--release`
 (`http://<release>-mock-upstream:8090` for the mock), and `ACCESS_SEED_SECRET` comes
-only from the Secret. `--timeout` defaults to the plan's length plus 15 minutes.
+only from the Secret. `PREALLOC_VUS` is set with `--prealloc-vus N`, which must be
+a whole number from 1 to `MAX_VUS` (4000 unless set with `--env`); it is left unset
+when not given. `--timeout` defaults to the plan's length plus 15 minutes.
 k6 requests and is limited to 2 CPUs and 4 GiB (`--k6-cpu`, `--k6-memory`) of the
 c6i.xlarge's 4 vCPUs and 8 GiB, which leaves the rest of the node to the mock
 upstream. As locally, `wallet_empty_responses` must be 0.
@@ -299,7 +301,16 @@ Pass each with `-e NAME=value`, or with `--env NAME=value` to `kube_run.py`.
 | `TTFB_DEADLINE_MS` | `10000` | Time-to-first-byte deadline; this does not measure the first model content delta |
 | `TOTAL_DEADLINE_S` | `60` | Total deadline of a request |
 | `STREAM_S` | `25` | Seconds a request is expected to last; the highest level times this is the number of VUs k6 starts before the run |
+| `PREALLOC_VUS` | unset | VUs k6 starts before the run, replacing the highest level times `STREAM_S`; a whole number from 1 to `MAX_VUS`, otherwise k6 refuses to start. With `kube_run.py`, pass `--prealloc-vus N` instead of `--env` |
 | `MAX_VUS` | `4000` | VU ceiling; k6 can drop arrivals when every VU is occupied |
+
+Set `PREALLOC_VUS` when a failing level's requests last longer than `STREAM_S`:
+when their duration times the level's rate exceeds the default preallocation
+(`min(MAX_VUS, ceil(highest level × STREAM_S))`), k6 has to start VUs during the
+run, cannot start them fast enough, and drops iterations, which makes the run
+invalid. For example, 150 requests per second lasting 45 seconds keep 6,750 VUs
+busy: raise `MAX_VUS` to at least that and pass `--prealloc-vus 6750`. Leave
+`STREAM_S` at the expected stream length rather than raising it to get more VUs.
 
 Requests are sent on schedule even when replies slow down (`ramping-arrival-rate`).
 Each VU holds about 1 MB while its stream lasts, so 50 requests per second of 20-second
