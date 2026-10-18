@@ -1,0 +1,10 @@
+{
+  "config": "deploy/helm/values-aws.yaml alone: the chart defaults with a 1 vCPU, 2 GiB gateway",
+  "deployments": {
+    "gateway": {"requests": {"cpu": "1", "memory": "2Gi"}, "limits": {"cpu": "1", "memory": "2Gi"}},
+    "access": {"replicas": 1, "requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"memory": "256Mi"}},
+    "metering": {"replicas": 1, "requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"memory": "256Mi"}},
+    "mock-upstream": {"replicas": 1, "requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"memory": "256Mi"}}
+  },
+  "autoscaling": {"serverAddress": "http://prometheus-server.monitoring.svc.cluster.local", "scaleDownStabilizationSeconds": 60}
+}
