@@ -35,6 +35,8 @@ SEED_KEY = 'ACCESS_SEED_SECRET'
 SETTINGS = ('PAIRED', 'MODEL', 'MAX_TOKENS', 'INPUT_BYTES', 'TENANTS', 'LEVELS', 'WARMUP_S', 'RAMP_S',
             'HOLD_S', 'TTFB_DEADLINE_MS', 'TOTAL_DEADLINE_S', 'MOCK_FIRST_EVENT_DELAY_MS', 'MAX_VUS', 'STREAM_S')
 FROM_RELEASE = ('GATEWAY_URL', 'MOCK_URL')
+PREALLOC = 'PREALLOC_VUS'  # set with --prealloc-vus, which checks it against MAX_VUS
+DEFAULT_MAX_VUS = 4000  # as messages.js
 WORKLOAD = {'gateflow.io/workload': 'load-generator'}
 PREFIX = 'gateflow-k6-'
 NAME = re.compile(r'[a-z0-9]([-a-z0-9]*[a-z0-9])?')
@@ -79,9 +81,21 @@ def setting(text):
         raise argparse.ArgumentTypeError(f'{SEED_KEY} is read from the {SECRET} Secret, not from --env')
     if key in FROM_RELEASE:
         raise argparse.ArgumentTypeError(f'{key} is the in-cluster Service of --release, not set with --env')
+    if key == PREALLOC:
+        raise argparse.ArgumentTypeError(f'{PREALLOC} is set with --prealloc-vus, not with --env')
     if key not in SETTINGS:
         raise argparse.ArgumentTypeError(f'{key} is not a setting of messages.js; use one of {", ".join(SETTINGS)}')
     return key, value
+
+
+def vu_count(text):
+    try:
+        number = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f'expected a whole number, got {text!r}') from None
+    if number < 1:
+        raise argparse.ArgumentTypeError(f'must be at least 1, got {number}')
+    return number
 
 
 def setting_value(env, name, default):
@@ -173,6 +187,8 @@ def parse_args(argv, now):
     parser.add_argument('--out-dir', type=Path, help='output folder (default: .local/loadtest/<name>/)')
     parser.add_argument('--env', type=setting, action='append', default=[], metavar='KEY=VALUE',
                         help=f'messages.js setting, repeatable: {", ".join(SETTINGS)}')
+    parser.add_argument('--prealloc-vus', type=vu_count, metavar='N',
+                        help='VUs k6 starts before the run, at most MAX_VUS (default: the highest level times STREAM_S)')
     parser.add_argument('--timeout', type=int, help=f'seconds to wait for k6 (default: the plan plus {MARGIN_S})')
     parser.add_argument('--k6-cpu', default='2', help='CPU request and limit of k6 (default: 2)')
     parser.add_argument('--k6-memory', default='4Gi', help='memory request and limit of k6 (default: 4Gi)')
@@ -182,6 +198,14 @@ def parse_args(argv, now):
     if repeated:
         parser.error(f'--env sets {", ".join(repeated)} more than once')
     args.env = dict(args.env)
+    if args.prealloc_vus is not None:
+        try:
+            max_vus = setting_value(args.env, 'MAX_VUS', DEFAULT_MAX_VUS)
+        except ValueError as error:
+            parser.error(f'cannot check --prealloc-vus: {error}')
+        if args.prealloc_vus > max_vus:
+            parser.error(f'--prealloc-vus {args.prealloc_vus} exceeds MAX_VUS {max_vus:g}')
+        args.env[PREALLOC] = str(args.prealloc_vus)
     args.name = args.name or stamp_name(now)
     if not NAME.fullmatch(args.name) or len(PREFIX + args.name) > 63:
         parser.error(f'--name must be lowercase letters, digits and dashes, at most {63-len(PREFIX)} characters')
