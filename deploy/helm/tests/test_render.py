@@ -8,6 +8,9 @@ CHART = Path(__file__).resolve().parents[1] / 'gateflow'
 INBOUND = 'alb.ingress.kubernetes.io/inbound-cidrs'
 # Documentation address (RFC 5737); aws renders fail without inbound CIDRs.
 AWS_CIDRS = ('--set-json', 'ingress.inboundCidrs=["192.0.2.1/32"]')
+SERVICES = ('gateway', 'access', 'metering', 'mock-upstream')
+# Probe: (path, periodSeconds, timeoutSeconds, failureThreshold); timeout and threshold are the Kubernetes defaults.
+DEFAULT_PROBES = {'readinessProbe': ('/readyz', 2, 1, 3), 'livenessProbe': ('/healthz', 10, 1, 3), 'startupProbe': ('/healthz', 2, 1, 90)}
 
 def render(*args):
     p = subprocess.run(['helm', 'template', 'gf', str(CHART), '--kube-version', '1.35.0', *args], capture_output=True, text=True, encoding='utf-8')
@@ -168,6 +171,51 @@ class ChartTests(unittest.TestCase):
             with self.subTest(cidrs=cidrs):
                 p=subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set','environment=aws','--set-json',f'ingress.inboundCidrs={cidrs}'],capture_output=True,text=True)
                 self.assertNotEqual(p.returncode,0)
+
+    def assert_probes(self,docs,expected):
+        deployments={d['metadata']['labels']['app.kubernetes.io/component']:d for d in docs if d['kind']=='Deployment'}
+        self.assertEqual(set(deployments),set(SERVICES))
+        for name,d in deployments.items():
+            container=d['spec']['template']['spec']['containers'][0]
+            for kind,(path,period,timeout,failures) in expected(name).items():
+                with self.subTest(service=name,probe=kind):
+                    probe=container[kind]
+                    self.assertEqual(probe['httpGet'],{'path':path,'port':'http'})
+                    self.assertEqual(probe['periodSeconds'],period)
+                    self.assertEqual(probe['timeoutSeconds'],timeout)
+                    self.assertEqual(probe['failureThreshold'],failures)
+
+    def test_default_probes(self):
+        self.assert_probes(render(),lambda name:DEFAULT_PROBES)
+
+    def test_service_probe_override(self):
+        def expected(name):
+            if name!='gateway': return DEFAULT_PROBES
+            return {**DEFAULT_PROBES,'livenessProbe':('/healthz',10,5,3)}
+        self.assert_probes(render('--set','services.gateway.probes.liveness.timeoutSeconds=5'),expected)
+
+    def test_global_probe_override(self):
+        expected={**DEFAULT_PROBES,'readinessProbe':('/readyz',5,1,3)}
+        self.assert_probes(render('--set','probes.readiness.periodSeconds=5'),lambda name:expected)
+
+    def test_service_probe_override_wins_over_global(self):
+        def expected(name):
+            return {**DEFAULT_PROBES,'livenessProbe':('/healthz',10,4 if name=='access' else 2,3)}
+        self.assert_probes(render('--set','probes.liveness.timeoutSeconds=2','--set','services.access.probes.liveness.timeoutSeconds=4'),expected)
+
+    def test_environment_values_keep_default_probes(self):
+        for args in [['-f',str(CHART.parent/'values-aws.yaml'),*AWS_CIDRS],['-f',str(CHART.parent/'values-kind.yaml')]]:
+            with self.subTest(args=args):
+                self.assert_probes(render(*args),lambda name:DEFAULT_PROBES)
+
+    def test_invalid_probes_rejected(self):
+        for setting in ['probes.liveness.timeoutSeconds=0','probes.readiness.periodSeconds=-1','probes.startup.failureThreshold=abc',
+                        'probes.liveness.timeout=5','probes.ready.periodSeconds=2','services.gateway.probes.liveness.timeoutSeconds=0',
+                        'services.gateway.probes.liveness.failureThreshold=-3','services.gateway.probes.startup.periodSeconds=abc',
+                        'services.gateway.probes.liveness.timeout=5']:
+            with self.subTest(setting=setting):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set',setting],capture_output=True,text=True,check=True)
 
     def test_kind_has_no_inbound_cidrs(self):
         for args in [[],['-f',str(CHART.parent/'values-kind.yaml')]]:
