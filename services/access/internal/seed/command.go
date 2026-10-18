@@ -36,7 +36,8 @@ func Command(ctx context.Context, args []string, getenv func(string) string, std
 	if _, err := seedChannels(cfg); err != nil {
 		return err
 	}
-	pool, err := store.Open(ctx, cfg.DatabaseURL)
+	// The seed keeps pgx's default pool size.
+	pool, err := store.Open(ctx, cfg.DatabaseURL, 0)
 	if err != nil {
 		return err
 	}
