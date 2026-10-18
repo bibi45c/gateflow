@@ -77,8 +77,9 @@ Prometheus for its dashboard, on 9090 (`PROMETHEUS_PORT`). Open
 | `demo` | `demo-local-only` | Tenant `tenant-demo`: balance and today's usage, API keys (create, shown once, revoke), the usage log, models and prices, quick start for curl, Codex CLI and OpenCode, and a playground that streams a call through the gateway |
 | `admin` | `admin-local-only` | Every tenant with its balance and a top-up or correction form, channels and prices (read-only), and a dashboard of live requests per second, active streams and gateway replicas from Prometheus |
 
-A short tour: sign in as `demo`, create a key, send `mock-load` from the playground
-(it streams for about 20 s), and watch the call appear under Usage. Then sign in as
+A short tour: sign in as `demo`, create a key, send the playground's default
+`mock-chat` (a readable answer streamed at about 28 tokens a second), and watch the
+call appear under Usage. Then sign in as
 `admin`, top up `tenant-demo`, and open the dashboard while a load test runs (see
 [loadtest/README.md](loadtest/README.md)). The console keeps no data of its own; it
 calls the internal APIs of access and metering ([api/](api)). Screenshots are in

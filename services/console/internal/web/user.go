@@ -121,7 +121,34 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 
 type modelsData struct {
 	Models []modelRow
+	Mock   []mockModel
 	Prices []backend.PriceVersion
+}
+
+// mockModel is a model the mock upstream serves, as a channel pattern such as
+// mock-* cannot name it.
+type mockModel struct {
+	Name string
+	What string
+}
+
+// mockModels are the mock scenarios worth trying by hand; the first is the
+// playground's default.
+var mockModels = []mockModel{
+	{"mock-chat", "A readable answer about FlowGate, streamed word by word at about 28 tokens a second"},
+	{"mock-text", "One short sentence, at once"},
+	{"mock-coding", "A scripted coding session with tool calls, for Codex CLI and OpenCode"},
+	{"mock-load", "The load-test stream: 200 deltas of repeated letters over about 20 seconds"},
+}
+
+// servedMocks returns mockModels when a channel serves the mock-* pattern, else nil.
+func servedMocks(rows []modelRow) []mockModel {
+	for _, row := range rows {
+		if row.Pattern == "mock-*" {
+			return mockModels
+		}
+	}
+	return nil
 }
 
 type modelRow struct {
@@ -158,7 +185,8 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, "list the prices", err)
 		return
 	}
-	s.render(w, r, http.StatusOK, "models", "Models and prices", modelsData{Models: catalogModels(channels), Prices: prices})
+	rows := catalogModels(channels)
+	s.render(w, r, http.StatusOK, "models", "Models and prices", modelsData{Models: rows, Mock: servedMocks(rows), Prices: prices})
 }
 
 func (s *Server) quickstart(w http.ResponseWriter, r *http.Request) {

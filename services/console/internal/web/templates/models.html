@@ -1,5 +1,5 @@
 {{define "content"}}
-<p>A name ending in <code>*</code> matches any model that starts with it, for example <code>mock-*</code> matches <code>mock-small</code>.</p>
+<p>A name ending in <code>*</code> matches any model that starts with it, for example <code>mock-*</code> matches <code>mock-chat</code>.</p>
 <table>
   <thead><tr><th>Model</th><th>Protocols</th></tr></thead>
   <tbody>
@@ -8,6 +8,17 @@
   {{end}}
   </tbody>
 </table>
+{{with .Data.Mock}}
+<h2>Mock models</h2>
+<table>
+  <thead><tr><th>Model</th><th>What it does</th></tr></thead>
+  <tbody>
+  {{range .}}
+  <tr><td><code>{{.Name}}</code></td><td>{{.What}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
 <h2>Prices</h2>
 <table>
   <thead><tr><th>Price version</th><th class="num">Input</th><th class="num">Output</th></tr></thead>
