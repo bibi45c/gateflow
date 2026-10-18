@@ -140,8 +140,10 @@ class SettingsTests(unittest.TestCase):
         return stderr.getvalue()
 
     def test_only_messages_js_settings_are_accepted(self):
-        args = parse('--env', 'LEVELS=5,25', '--env', 'PAIRED=0', '--env', 'MOCK_FIRST_EVENT_DELAY_MS=0')
-        self.assertEqual(args.env, {'LEVELS': '5,25', 'PAIRED': '0', 'MOCK_FIRST_EVENT_DELAY_MS': '0'})
+        args = parse('--env', 'LEVELS=5,25', '--env', 'PAIRED=0', '--env', 'MOCK_FIRST_EVENT_DELAY_MS=0',
+                     '--env', 'CONNECTION_REUSE=0')
+        self.assertEqual(args.env, {'LEVELS': '5,25', 'PAIRED': '0', 'MOCK_FIRST_EVENT_DELAY_MS': '0',
+                                    'CONNECTION_REUSE': '0'})
         for setting in ('FOO=1', 'levels=5', 'LEVELS', 'K6_OUT=json=x', 'GATEWAY_URL=http://alb.example',
                         'MOCK_URL=http://127.0.0.1:8090'):
             with self.subTest(setting=setting):
