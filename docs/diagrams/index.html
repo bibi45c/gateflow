@@ -292,7 +292,7 @@ flowchart TB
 
 <section id="zh-5b">
 <h3>5b. 物理部署：S3 云环境 <span class="tag">已在 EKS 上运行过</span></h3>
-<p>左边是运维者，中间是 AWS，右边是镜像的构建与发布。2026 年 10 月 17 日，<code>deploy/terraform</code> 第一次 apply 到 ap-southeast-1，当天 destroy；同日第二次 apply，生成器节点换为 m6i.2xlarge。两次都部署了 chart、Prometheus、KEDA 和 AWS Load Balancer Controller，并在集群内跑了 k6（operator 记录，10 月 17 日）。第二次运行时 gateway 每个 Pod 限 0.25 vCPU，以 <code>--set</code> 和 overlay 传入；仓库里的 <code>values-aws.yaml</code> 仍是 1 vCPU。测得的数字和报告尚未发布，图中不含测量值。与计划不同：没有 ElastiCache，chart 和 Terraform 都不含 Redis；GitHub Actions 只构建并推送镜像，不部署到 AWS，部署由运维者在本机执行。该记录未涵盖经 ALB 的流量，所以 ALB 的箭头是虚线。来源：<code>deploy/terraform/</code>、<code>deploy/helm/</code>、<a href="as-built.md#4-physical-view-cloud">as-built.md</a>、operator 记录（10 月 17 日）。</p>
+<p>左边是运维者，中间是 AWS，右边是镜像的构建与发布。2026 年 10 月 17 日，<code>deploy/terraform</code> 第一次 apply 到 ap-southeast-1，当天 destroy；同日第二次 apply，生成器节点换为 m6i.2xlarge。两次都部署了 chart、Prometheus、KEDA 和 AWS Load Balancer Controller，并在集群内跑了 k6（operator 记录，10 月 17 日）。第二次运行时 gateway 每个 Pod 限 0.25 vCPU，以 <code>--set</code> 和 overlay 传入；仓库里的 <code>values-aws.yaml</code> 仍是 1 vCPU。测得的数字和报告尚未发布，图中不含测量值。与计划不同：没有 ElastiCache，chart 和 Terraform 都不含 Redis；GitHub Actions 只构建并推送镜像，不部署到 AWS，部署由运维者在本机执行。该记录未涵盖经 ALB 的流量，所以 ALB 的箭头是虚线。来源：<code>deploy/terraform/</code>、<code>deploy/helm/</code>、<a href="as-built.md#4-physical-view-cloud">as-built.md</a>、operator 记录（10 月 17 日）。Grafana 仪表盘说明见 <a href="../../deploy/helm/README.md#load-and-scaling-dashboard-74">deploy/helm/README.md</a>。</p>
 <div class="diagram"><pre class="mermaid">
 flowchart LR
   OPR["运维者<br/>本机运行 terraform、helm"]
@@ -304,7 +304,7 @@ flowchart LR
         GWp["gateway Pod，2 到 4 个<br/>values-aws.yaml：1 vCPU<br/>第二次 apply：限 0.25 vCPU"]
         SVp["access、metering<br/>各一个 Pod"]
         MON["Prometheus、KEDA"]
-        GF["Grafana，可选<br/>已在 kind 上验证"]
+        GF["Grafana，可选<br/>已在 kind 上验证<br/>内存请求 256 MiB、上限 1 GiB，无持久卷<br/>无 Ingress、无 RBAC、不挂载 API token"]
       end
       subgraph GEN["节点组 load-generator：1 × c6i.xlarge（第二次 apply 为 m6i.2xlarge），有 taint"]
         LG["mock-upstream Pod<br/>k6 Pod"]
@@ -324,7 +324,7 @@ flowchart LR
   GWp -->|"mock 渠道"| LG
   SVp --> RDS
   MON -->|"抓取指标、扩缩"| GWp
-  GF -.->|"PromQL"| MON
+  GF -.->|"PromQL，私有数据源"| MON
   GA --> GR
   EKS -->|"拉取镜像"| NAT
   NAT -->|"匿名拉取"| GR
@@ -903,7 +903,7 @@ flowchart TB
 
 <section id="en-5b">
 <h3>5b. Physical deployment: S3 cloud <span class="tag">Ran on EKS</span></h3>
-<p>The operator is on the left, AWS in the middle, and the image build and release on the right. On 17 October 2026, <code>deploy/terraform</code> was applied to ap-southeast-1 and destroyed the same day. A second apply that day used m6i.2xlarge for the generator node. Both times the chart, Prometheus, KEDA and the AWS Load Balancer Controller were installed, and k6 ran inside the cluster (operator record, 17 Oct). In the second run each gateway Pod was limited to 0.25 vCPU, passed with <code>--set</code> and an overlay; <code>values-aws.yaml</code> in the repository still sets 1 vCPU. The measured results and the report are not published yet, so the diagram shows no measured value. Unlike the plan, there is no ElastiCache: neither the chart nor the Terraform includes Redis. GitHub Actions only builds and pushes images and never deploys to AWS; the operator deploys from their own machine. The record does not cover traffic through the ALB, so the ALB arrows are dotted. Sources: <code>deploy/terraform/</code>, <code>deploy/helm/</code>, <a href="as-built.md#4-physical-view-cloud">as-built.md</a>, operator record (17 Oct).</p>
+<p>The operator is on the left, AWS in the middle, and the image build and release on the right. On 17 October 2026, <code>deploy/terraform</code> was applied to ap-southeast-1 and destroyed the same day. A second apply that day used m6i.2xlarge for the generator node. Both times the chart, Prometheus, KEDA and the AWS Load Balancer Controller were installed, and k6 ran inside the cluster (operator record, 17 Oct). In the second run each gateway Pod was limited to 0.25 vCPU, passed with <code>--set</code> and an overlay; <code>values-aws.yaml</code> in the repository still sets 1 vCPU. The measured results and the report are not published yet, so the diagram shows no measured value. Unlike the plan, there is no ElastiCache: neither the chart nor the Terraform includes Redis. GitHub Actions only builds and pushes images and never deploys to AWS; the operator deploys from their own machine. The record does not cover traffic through the ALB, so the ALB arrows are dotted. Sources: <code>deploy/terraform/</code>, <code>deploy/helm/</code>, <a href="as-built.md#4-physical-view-cloud">as-built.md</a>, operator record (17 Oct). The Grafana dashboard is described in <a href="../../deploy/helm/README.md#load-and-scaling-dashboard-74">deploy/helm/README.md</a>.</p>
 <div class="diagram"><pre class="mermaid">
 flowchart LR
   OPR["Operator<br/>runs terraform and helm locally"]
@@ -915,7 +915,7 @@ flowchart LR
         GWp["gateway Pods, 2 to 4<br/>values-aws.yaml: 1 vCPU<br/>second apply: 0.25 vCPU limit"]
         SVp["access, metering<br/>one Pod each"]
         MON["Prometheus, KEDA"]
-        GF["Grafana, optional<br/>verified on kind"]
+        GF["Grafana, optional<br/>verified on kind<br/>256 MiB request, 1 GiB limit, no persistent volume<br/>no Ingress, no RBAC, no API token"]
       end
       subgraph GEN["node group load-generator: 1 × c6i.xlarge (m6i.2xlarge in the second apply), tainted"]
         LG["mock-upstream Pod<br/>k6 Pod"]
@@ -935,7 +935,7 @@ flowchart LR
   GWp -->|"mock channels"| LG
   SVp --> RDS
   MON -->|"scrapes, scales"| GWp
-  GF -.->|"PromQL"| MON
+  GF -.->|"PromQL, private datasource"| MON
   GA --> GR
   EKS -->|"image pulls"| NAT
   NAT -->|"anonymous pull"| GR

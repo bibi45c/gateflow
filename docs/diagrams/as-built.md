@@ -305,7 +305,7 @@ flowchart LR
           JOB["bootstrap and seed Jobs"]
           PROM["Prometheus server, emptyDir, 6 h<br/>kube-state-metrics; cAdvisor from<br/>each kubelet via the API server"]
           KEDA["KEDA, gateway ScaledObject"]
-          GRAF["Grafana, separate release [optional]<br/>dashboard ConfigMap from the chart<br/>localhost port-forward only"]
+          GRAF["Grafana, separate release [optional]<br/>256 MiB request, 1 GiB limit, no persistent volume<br/>dashboard ConfigMap from the chart<br/>localhost port-forward only"]
         end
         subgraph gen["node group load-generator: 1 × c6i.xlarge (m6i.2xlarge in the second apply), tainted"]
           MU["mock-upstream Pod"]
@@ -330,7 +330,7 @@ flowchart LR
   PROM -->|"GET /metrics"| ACM
   KEDA -->|"two triggers"| PROM
   KEDA -->|"scales 2 to 4"| GW
-  GRAF -.->|"PromQL"| PROM
+  GRAF -.->|"PromQL, private datasource"| PROM
   TFC -->|"creates, destroys"| aws
   ops -->|"EKS API: helm, kubectl"| eks
   GA --> GHCR
@@ -377,9 +377,14 @@ flowchart LR
 - **[optional], Grafana (#115):** `dashboard.enabled`, off by default, renders the
   dashboard JSON as a ConfigMap. `deploy/helm/dashboard.py` checks that ConfigMap
   and the Prometheus release, then installs Grafana 13.2.4 (chart 14.0.0) as a
-  separate release in the application namespace. Grafana has no Ingress, no RBAC
-  objects and no service account token, keeps its data in an `emptyDir`, and is
-  opened through a localhost port-forward. It was verified on kind on 16 October
+  separate release in the application namespace. Grafana has no Ingress, no
+  Kubernetes RBAC objects (`rbac.create: false`) and does not mount an API token
+  (`automountServiceAccountToken: false`). It has no persistent volume and keeps
+  its data in an `emptyDir`. It requests 256 MiB of memory with a 1 GiB limit,
+  reads Prometheus through a private in-cluster datasource, and is opened through
+  a localhost port-forward. The dashboard is described in
+  [deploy/helm/README.md](../../deploy/helm/README.md#load-and-scaling-dashboard-74).
+  It was verified on kind on 16 October
   ([screenshot](../../deploy/helm/evidence/dashboard-kind-20261016.jpg)); the
   17 October record does not list it.
 - **Pod placement:** gateway, access, metering, the bootstrap and seed Jobs,
