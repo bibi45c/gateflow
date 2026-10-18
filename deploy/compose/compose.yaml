@@ -67,6 +67,9 @@ services:
       MOCK_UPSTREAM_BASE_URL: http://mock-upstream:8090
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      # Console users that seed-access creates; local-only passwords.
+      CONSOLE_ADMIN_PASSWORD: ${CONSOLE_ADMIN_PASSWORD:-admin-local-only}
+      CONSOLE_DEMO_PASSWORD: ${CONSOLE_DEMO_PASSWORD:-demo-local-only}
     ports: ["127.0.0.1:${ACCESS_PORT:-8081}:8081"]
     healthcheck: *healthcheck
     depends_on:
@@ -110,7 +113,8 @@ services:
       <<: *service-build
       args:
         TARGET: services/metering
-    command: ["seed"]
+    # tenant-demo is the console demo user's tenant.
+    command: ["seed", "--extra-tenants", "tenant-demo"]
     restart: "no"
     environment: *metering-environment
     depends_on:

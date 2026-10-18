@@ -122,7 +122,7 @@ func wantRejected(t *testing.T, err error, code, constraint, what string) {
 func TestMigrateTwiceAppliesOnce(t *testing.T) {
 	pool := pgtest.New(t).Pool(t, "metering")
 	ctx := context.Background()
-	for run, want := range []int{1, 0} {
+	for run, want := range []int{2, 0} {
 		ran, err := store.Migrate(ctx, pool)
 		if err != nil || ran != want {
 			t.Fatalf("run %d: applied %d, want %d, err %v", run+1, ran, want, err)

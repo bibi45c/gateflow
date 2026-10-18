@@ -110,7 +110,7 @@ func TestResponsesCallIsVerifiedReservedRelayedAndSettled(t *testing.T) {
 		t.Fatalf("%d reserve calls, want 1", len(reserve))
 	}
 	checkJSON(t, "reserve body", reserve[0].Body, fmt.Sprintf(`{"call_id":%q,"attempt_id":1,"tenant_id":"tenant-01",`+
-		`"price_version_id":"pv-fixture-2-5","max_input_tokens":%d,"max_output_tokens":32768}`, id, len(responsesBody)))
+		`"price_version_id":"pv-fixture-2-5","max_input_tokens":%d,"max_output_tokens":32768,"model":"mock-small"}`, id, len(responsesBody)))
 
 	upstream := h.upstream.requests()
 	if len(upstream) != 1 {
@@ -169,7 +169,7 @@ func TestResponsesHoldsAndSendsTheOutputBound(t *testing.T) {
 			}
 			checkJSON(t, "reserve body", reserve[0].Body, fmt.Sprintf(`{"call_id":%q,"attempt_id":1,`+
 				`"tenant_id":"tenant-01","price_version_id":"pv-fixture-2-5","max_input_tokens":%d,`+
-				`"max_output_tokens":%d}`, resp.Header.Get("request-id"), len(tc.body), tc.hold))
+				`"max_output_tokens":%d,"model":"mock-small"}`, resp.Header.Get("request-id"), len(tc.body), tc.hold))
 			if upstream := h.upstream.requests(); len(upstream) != 1 || string(upstream[0].Body) != tc.upstream {
 				t.Errorf("upstream got %v, want one request with %s", upstream, tc.upstream)
 			}

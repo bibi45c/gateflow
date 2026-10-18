@@ -47,16 +47,17 @@ func main() {
 	pool, err := store.Open(context.Background(), cfg.DatabaseURL, cfg.DatabaseMaxConns)
 	exitOn(err)
 	defer pool.Close()
-	server.Main("access", ":8081", routes(store.New(pool), cfg, observer))
+	s := store.New(pool)
+	server.Main("access", ":8081", routes(s, s, cfg, observer))
 }
 
 // routes returns the function that adds the internal API and GET /metrics. Like
 // /healthz, /metrics needs no token: only the cluster reaches the service, and no
 // ingress may route to it.
-func routes(s httpapi.Store, cfg config.Service, observer *observability.Observer) func(*http.ServeMux) {
+func routes(s httpapi.Store, cs httpapi.ConsoleStore, cfg config.Service, observer *observability.Observer) func(*http.ServeMux) {
 	return func(mux *http.ServeMux) {
 		// server.Main has set the default logger by the time it registers routes.
-		httpapi.New(s, cfg.KeyPepper, cfg.InternalToken, slog.Default(), observer).Register(mux)
+		httpapi.New(s, cfg.KeyPepper, cfg.InternalToken, slog.Default(), observer).WithConsole(cs).Register(mux)
 		mux.Handle("GET /metrics", observer.MetricsHandler())
 	}
 }

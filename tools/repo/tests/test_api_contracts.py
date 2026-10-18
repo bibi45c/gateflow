@@ -6,10 +6,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 API = ROOT / "api"
 SERVICES = ("access", "metering")
-# The internal codes of issue #18 revision 3.2, per service that returns them.
+# The internal codes of issue #18 revision 3.2 and the console codes of issue #137, per
+# service that returns them.
 AGREED = {
     "access": {"invalid_request", "unauthorized", "invalid_key", "model_not_allowed",
-               "price_version_not_found", "internal_error", "dependency_unavailable"},
+               "price_version_not_found", "internal_error", "dependency_unavailable",
+               "invalid_credentials", "tenant_not_found", "key_not_found"},
     "metering": {"invalid_request", "unauthorized", "wallet_not_found", "reservation_not_found",
                  "insufficient_balance", "idempotency_conflict", "internal_error",
                  "dependency_unavailable"},

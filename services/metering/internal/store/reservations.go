@@ -68,11 +68,11 @@ func (s *Reservations) Reserve(ctx context.Context, r api.Reservation) (api.Rese
 	r.ID = newID("res_")
 	created := false
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `INSERT INTO accounting.reservations (`+reservationColumns+`)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		tag, err := tx.Exec(ctx, `INSERT INTO accounting.reservations (`+reservationColumns+`, model)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, nullif($12, ''))
 			ON CONFLICT (call_id, attempt_id) DO NOTHING`,
 			r.ID, r.CallID, r.AttemptID, r.TenantID, r.PriceVersionID,
-			r.Prices.Input, r.Prices.Output, r.Bounds.MaxInput, r.Bounds.MaxOutput, r.MaxCost, r.Digest)
+			r.Prices.Input, r.Prices.Output, r.Bounds.MaxInput, r.Bounds.MaxOutput, r.MaxCost, r.Digest, r.Model)
 		if err != nil {
 			return err
 		}
