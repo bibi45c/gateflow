@@ -56,11 +56,31 @@ the feasibility test in [docs/feasibility-plan.md](docs/feasibility-plan.md).
 
    If a port is taken or reserved, put other ports in `deploy/compose/.env`, which
    Git ignores, for example `GATEWAY_PORT=18080`. The variables are `GATEWAY_PORT`,
-   `ACCESS_PORT`, `METERING_PORT`, `MOCK_UPSTREAM_PORT`, `POSTGRES_PORT` and
-   `REDIS_PORT`. To see the reserved ranges on Windows:
+   `ACCESS_PORT`, `METERING_PORT`, `MOCK_UPSTREAM_PORT`, `POSTGRES_PORT`,
+   `REDIS_PORT`, `CONSOLE_PORT` and `PROMETHEUS_PORT`. To see the reserved ranges on
+   Windows:
 
    ```text
    netsh interface ipv4 show excludedportrange protocol=tcp
    ```
 
    On macOS, `lsof -i :8080` shows what holds a port.
+
+## Web console
+
+The local stack also runs the console, on port 8070 (`CONSOLE_PORT`), and a
+Prometheus for its dashboard, on 9090 (`PROMETHEUS_PORT`). Open
+`http://localhost:8070` and sign in with a local-only account the seed creates:
+
+| User | Password | Sees |
+|---|---|---|
+| `demo` | `demo-local-only` | Tenant `tenant-demo`: balance and today's usage, API keys (create, shown once, revoke), the usage log, models and prices, quick start for curl, Codex CLI and OpenCode, and a playground that streams a call through the gateway |
+| `admin` | `admin-local-only` | Every tenant with its balance and a top-up or correction form, channels and prices (read-only), and a dashboard of live requests per second, active streams and gateway replicas from Prometheus |
+
+A short tour: sign in as `demo`, create a key, send `mock-load` from the playground
+(it streams for about 20 s), and watch the call appear under Usage. Then sign in as
+`admin`, top up `tenant-demo`, and open the dashboard while a load test runs (see
+[loadtest/README.md](loadtest/README.md)). The console keeps no data of its own; it
+calls the internal APIs of access and metering ([api/](api)). Screenshots are in
+[docs/console](docs/console). On Helm the console is off by default
+(`console.enabled`); it is a ClusterIP Service, reached with `kubectl port-forward`.

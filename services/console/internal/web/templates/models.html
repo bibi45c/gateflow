@@ -1,0 +1,21 @@
+{{define "content"}}
+<p>A name ending in <code>*</code> matches any model that starts with it, for example <code>mock-*</code> matches <code>mock-small</code>.</p>
+<table>
+  <thead><tr><th>Model</th><th>Protocols</th></tr></thead>
+  <tbody>
+  {{range .Data.Models}}
+  <tr><td><code>{{.Pattern}}</code></td><td>{{range $i, $p := .Protocols}}{{if $i}}, {{end}}{{$p}}{{end}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+<h2>Prices</h2>
+<table>
+  <thead><tr><th>Price version</th><th class="num">Input</th><th class="num">Output</th></tr></thead>
+  <tbody>
+  {{range .Data.Prices}}
+  <tr><td>{{.ID}}</td><td class="num">{{perMillion .InputMicroPerToken}}</td><td class="num">{{perMillion .OutputMicroPerToken}}</td></tr>
+  {{end}}
+  </tbody>
+</table>
+<p class="hint">New keys are charged at the newest price version.</p>
+{{end}}

@@ -162,6 +162,37 @@ services:
       seed-metering:
         condition: service_completed_successfully
 
+  # The web console (services/console): user portal and admin area, on CONSOLE_PORT.
+  console:
+    build:
+      <<: *service-build
+      args:
+        TARGET: services/console
+    <<: *stop
+    environment:
+      <<: [*internal-urls, *internal-tokens]
+      GATEWAY_URL: http://gateway:8080
+      CONSOLE_PUBLIC_GATEWAY_URL: http://localhost:${GATEWAY_PORT:-8080}
+      CONSOLE_SESSION_SECRET: ${CONSOLE_SESSION_SECRET:-console-session-secret-local-only}
+      CONSOLE_TIME_ZONE: ${CONSOLE_TIME_ZONE:-Asia/Singapore}
+      PROMETHEUS_URL: http://prometheus:9090
+      GRAFANA_URL: ${GRAFANA_URL:-}
+    ports: ["127.0.0.1:${CONSOLE_PORT:-8070}:8070"]
+    healthcheck: *healthcheck
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  # Scrapes the services for the console dashboard; see prometheus.yml.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 5s
+      retries: 10
+
   # Optional: starts only with `--profile ollama`, for people who do not install
   # Ollama on the host. It runs on the CPU. See docs/clients/opencode.md.
   ollama:

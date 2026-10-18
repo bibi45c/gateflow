@@ -39,7 +39,10 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `POSTGRES_PASSWORD` | postgres | `gateflow-local-only` | Password of the `gateflow` superuser |
 | `SHUTDOWN_DRAIN_DELAY` | every service and the mock upstream; compose leaves it unset | `0s` | Go duration a stopping process keeps serving, with `/readyz` answering 503, before it closes its listener |
 | `SHUTDOWN_TIMEOUT` | every service and the mock upstream; compose leaves it unset | `10s` | Go duration a stopping process waits for in-flight requests before it closes them; `stop_grace_period` must exceed the drain delay plus this |
-| `*_PORT` | compose | 8080, 8081, 8082, 8090, 5432, 6379; 11434 for `OLLAMA_PORT` | Host ports, bound to localhost only |
+| `CONSOLE_SESSION_SECRET` | console | `console-session-secret-local-only` | Signs the console's session cookies; at least 16 bytes |
+| `CONSOLE_TIME_ZONE` | console | `Asia/Singapore` | Where the console's "today" starts |
+| `GRAFANA_URL` | console | empty | Grafana dashboard the console dashboard links to; no link when empty |
+| `*_PORT` | compose | 8080, 8081, 8082, 8090, 5432, 6379, 8070 for `CONSOLE_PORT`, 9090 for `PROMETHEUS_PORT`; 11434 for `OLLAMA_PORT` | Host ports, bound to localhost only |
 
 ## Metrics
 
@@ -48,7 +51,8 @@ beside `/healthz` on their own port and without a token;
 [docs/observability.md](../../docs/observability.md#interim-logging-on-main) lists
 what they hold. They are for scrapes inside the stack or the cluster: an ingress must
 route only `/v1/messages` and `/v1/responses` to the gateway, and never `/metrics`.
-Compose runs no Prometheus yet.
+Compose runs a Prometheus on `PROMETHEUS_PORT` (9090) that scrapes all three for the
+console dashboard; [prometheus.yml](prometheus.yml) keeps the job names of the cluster.
 
 ## Seed services
 

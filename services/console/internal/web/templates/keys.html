@@ -1,0 +1,37 @@
+{{define "content"}}
+{{with .Data.Created}}
+<div class="card created">
+  <p><strong>Key created.</strong> Copy it now: it is shown only once and FlowGate keeps only its hash.</p>
+  <pre class="secret" id="new-key">{{.Key}}</pre>
+  <button type="button" class="copy" data-copy="new-key">Copy</button>
+</div>
+{{end}}
+{{with .Data.Error}}<p class="error">{{.}}</p>{{end}}
+<form method="post" action="/keys" class="inline">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label>Name <input name="name" maxlength="64" placeholder="laptop"></label>
+  <button type="submit">Create key</button>
+</form>
+<table>
+  <thead><tr><th>Name</th><th>Key</th><th>Created</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {{$csrf := .CSRF}}
+  {{range .Data.Keys}}
+  <tr>
+    <td>{{if .Name}}{{.Name}}{{else}}—{{end}}</td>
+    <td><code>{{if .Prefix}}{{.Prefix}}…{{else}}(seeded){{end}}</code></td>
+    <td>{{when .CreatedAt}}</td>
+    <td>{{if .RevokedAt}}<span class="status revoked">revoked {{whenPtr .RevokedAt}}</span>{{else}}<span class="status completed">active</span>{{end}}</td>
+    <td>{{if not .RevokedAt}}
+      <form method="post" action="/keys/{{.ID}}/revoke" class="confirm" data-confirm="Revoke this key? Calls with it will be refused.">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <button type="submit" class="danger">Revoke</button>
+      </form>{{end}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="5" class="empty">No keys yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+<script src="/static/app.js"></script>
+{{end}}

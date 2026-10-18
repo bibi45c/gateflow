@@ -1,6 +1,12 @@
 {{- range $index, $name := list "access" "metering" -}}
 {{- $svc := index $.Values.services $name -}}
 {{- $env := include "gf.env" (dict "root" $ "name" $name) | fromJsonArray -}}
+{{- /* With the console on, the access seed also creates the console users whose passwords the secret holds. */ -}}
+{{- if and $.Values.console.enabled (eq $name "access") -}}
+{{- range $key := list "CONSOLE_ADMIN_PASSWORD" "CONSOLE_DEMO_PASSWORD" -}}
+{{- $env = append $env (dict "name" $key "valueFrom" (dict "secretKeyRef" (dict "name" $.Values.secretName "key" $key "optional" true))) -}}
+{{- end -}}
+{{- end -}}
 {{- $c := dict "name" "seed" "image" (include "gf.image" (dict "root" $ "service" $svc)) "args" (list "seed") "env" $env -}}
 {{- $pod := include "gf.jobPod" $ | fromJson -}}
 {{- $_ := set $pod "containers" (list $c) -}}

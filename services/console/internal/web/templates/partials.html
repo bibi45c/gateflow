@@ -1,0 +1,19 @@
+{{define "calls"}}
+<table>
+  <thead><tr><th>Time</th><th>Model</th><th>Status</th><th class="num">Input</th><th class="num">Output</th><th class="num">Cost</th></tr></thead>
+  <tbody>
+  {{range .}}
+  <tr>
+    <td>{{when .CreatedAt}}</td>
+    <td>{{strPtr .Model}}</td>
+    <td><span class="status {{.Status}} {{strPtr .Outcome}}">{{if .Outcome}}{{deref .Outcome}}{{else}}{{.Status}}{{end}}</span></td>
+    <td class="num">{{intPtr .InputTokens}}</td>
+    <td class="num">{{intPtr .OutputTokens}}</td>
+    <td class="num">{{usdPtr .Charged}}</td>
+  </tr>
+  {{else}}
+  <tr><td colspan="6" class="empty">No calls yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
