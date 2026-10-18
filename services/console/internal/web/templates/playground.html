@@ -1,0 +1,22 @@
+{{define "content"}}
+<p>Sends one streamed Messages call through the real gateway with your key, so it is
+billed and shows in your usage. The key stays in this browser tab only.</p>
+<form id="playground" class="card">
+  <label>Gateway key <input id="pg-key" type="password" autocomplete="off" placeholder="gf_..." required></label>
+  <div class="row">
+    <label>Model
+      <input id="pg-model" list="pg-models" value="mock-chat" required>
+      <datalist id="pg-models">{{range .Data.Mock}}<option value="{{.Name}}">{{end}}{{range .Data.Models}}<option value="{{.Pattern}}">{{end}}</datalist>
+    </label>
+    <label>Max tokens <input id="pg-max" type="number" min="1" max="4096" value="256"></label>
+  </div>
+  <label>Prompt <textarea id="pg-prompt" rows="4" required>What is FlowGate?</textarea></label>
+  <button type="submit" id="pg-send">Send</button>
+  <button type="button" id="pg-stop" disabled>Stop</button>
+</form>
+<div class="card">
+  <div class="meta"><span id="pg-status">Idle.</span> <span id="pg-usage"></span></div>
+  <pre id="pg-out" class="out"></pre>
+</div>
+<script src="/static/app.js"></script>
+{{end}}

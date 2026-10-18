@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FlowGate access internal API
-  version: 1.1.0
+  version: 1.2.0
   description: |
     Internal API of the access service (tenants, gateway keys, channels and price
     versions) for S1, as agreed in issue #18 revision 3.2. Issue #61 adds a second
@@ -10,6 +10,11 @@ info:
     `POST /internal/v1/keys/verify`; metering calls
     `GET /internal/v1/price-versions/{id}`. Callers write their own clients under
     `services/<caller>/internal/`.
+
+    Issue #137 adds the console routes: console sign-in, tenants, a tenant's
+    keys (list, create, revoke), channels and price versions. Only the console
+    service calls them, with the same internal token; it checks the signed-in
+    user's role and tenant before each call.
 
     `api/errors.md` is the single list of error codes. The `ErrorCode` enum below
     lists exactly the codes it gives for access.
@@ -224,6 +229,254 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/DependencyUnavailable'
+  /internal/v1/console/login:
+    post:
+      operationId: consoleLogin
+      summary: Check a console user's username and password
+      description: |
+        Called by the console (issue #137). Passwords are stored as salted
+        PBKDF2-SHA256 hashes and never logged. An unknown username and a wrong
+        password get the same answer and take about the same time.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username, password]
+              properties:
+                username: {type: string, minLength: 1, maxLength: 64}
+                password: {type: string, minLength: 1, maxLength: 256}
+      responses:
+        '200':
+          description: The user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsoleUser'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          description: |
+            `unauthorized`: the internal token is missing, empty or wrong.
+            `invalid_credentials`: the username or password is wrong.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_credentials:
+                  value:
+                    error:
+                      code: invalid_credentials
+                      message: The username or password is wrong.
+                      request_id: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /internal/v1/tenants:
+    get:
+      operationId: listTenants
+      summary: List every tenant
+      description: For the console's admin pages. Balances come from metering.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The tenants, by id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /internal/v1/tenants/{tenant_id}/keys:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+    get:
+      operationId: listKeys
+      summary: List a tenant's gateway keys, newest first
+      description: The raw key is never answered here; only its prefix.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Key'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/TenantNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+    post:
+      operationId: createKey
+      summary: Create a gateway key for the tenant
+      description: |
+        The key may use every channel, at the newest price version. The answer is
+        the only place the raw `key` ever appears; access stores its HMAC and its
+        first 10 characters as `prefix`.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  maxLength: 64
+                  description: A label without control characters; may be empty.
+      responses:
+        '201':
+          description: The new key, with `key` set.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Key'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`tenant_not_found`, or `price_version_not_found` when no price version exists.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /internal/v1/tenants/{tenant_id}/keys/{key_id}/revoke:
+    post:
+      operationId: revokeKey
+      summary: Revoke a tenant's key
+      description: |
+        Idempotent: revoking a revoked key answers it with its first `revoked_at`.
+        The gateway refuses the key with `invalid_key` from its next call on.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TenantId'
+        - name: key_id
+          in: path
+          required: true
+          schema: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: The revoked key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Key'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`key_not_found`: the tenant has no key with this id.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                key_not_found:
+                  value:
+                    error:
+                      code: key_not_found
+                      message: The tenant has no such key.
+                      request_id: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /internal/v1/channels:
+    get:
+      operationId: listChannels
+      summary: List every channel and the model patterns it serves
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The channels, by id. `credential_env` is not answered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, protocol, base_url, models]
+                      properties:
+                        id: {type: string}
+                        protocol: {type: string, enum: [anthropic-messages, openai-responses]}
+                        base_url: {type: string}
+                        models: {type: array, items: {type: string}}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
+  /internal/v1/price-versions:
+    get:
+      operationId: listPriceVersions
+      summary: List every price version, newest first
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The price versions, with when each was written.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/PriceVersion'
+                        - type: object
+                          required: [created_at]
+                          properties:
+                            created_at: {type: string, format: date-time}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/DependencyUnavailable'
 components:
   securitySchemes:
     internalToken:
@@ -246,7 +499,49 @@ components:
       schema:
         type: string
       example: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
+    TenantId:
+      name: tenant_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      example: tenant-demo
   schemas:
+    ConsoleUser:
+      type: object
+      required: [user_id, username, role, tenant_id]
+      properties:
+        user_id: {type: string}
+        username: {type: string}
+        role: {type: string, enum: [user, admin]}
+        tenant_id:
+          type: [string, 'null']
+          description: The user's tenant; null for an admin.
+    Tenant:
+      type: object
+      required: [id, name, active_keys, created_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        active_keys: {type: integer, description: Keys not revoked.}
+        created_at: {type: string, format: date-time}
+    Key:
+      type: object
+      required: [id, tenant_id, name, prefix, price_version_id, created_at, revoked_at]
+      properties:
+        id: {type: string}
+        tenant_id: {type: string}
+        name: {type: string}
+        prefix:
+          type: string
+          description: The first 10 characters of the raw key; empty for seeded keys.
+        price_version_id: {type: string}
+        created_at: {type: string, format: date-time}
+        revoked_at: {type: [string, 'null'], format: date-time}
+        key:
+          type: string
+          description: The raw key, only in the answer that created it.
     VerifyRequest:
       type: object
       additionalProperties: false
@@ -391,6 +686,9 @@ components:
         - invalid_key
         - model_not_allowed
         - price_version_not_found
+        - invalid_credentials
+        - tenant_not_found
+        - key_not_found
         - internal_error
         - dependency_unavailable
   examples:
@@ -401,6 +699,19 @@ components:
           message: The internal token is missing or wrong.
           request_id: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
   responses:
+    TenantNotFound:
+      description: '`tenant_not_found`: no tenant has this id.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            tenant_not_found:
+              value:
+                error:
+                  code: tenant_not_found
+                  message: The tenant does not exist.
+                  request_id: req_3f1c2a9e-7b4d-4e8a-9c61-2d5b8f0a7e34
     InvalidRequest:
       description: '`invalid_request`: the body is not JSON or breaks the request schema.'
       content:

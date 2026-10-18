@@ -1,0 +1,10 @@
+{
+  "config": "values-aws.yaml plus a 0.25 vCPU, 1 GiB gateway, access 3, metering 5, mock upstream requests cpu 1 / memory 1Gi and limit memory 2Gi",
+  "deployments": {
+    "gateway": {"requests": {"cpu": "250m", "memory": "1Gi"}, "limits": {"cpu": "250m", "memory": "1Gi"}},
+    "access": {"replicas": 3, "requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"memory": "256Mi"}},
+    "metering": {"replicas": 5, "requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"memory": "256Mi"}},
+    "mock-upstream": {"replicas": 1, "requests": {"cpu": "1", "memory": "1Gi"}, "limits": {"memory": "2Gi"}}
+  },
+  "autoscaling": {"serverAddress": "http://prometheus-server.monitoring.svc.cluster.local", "scaleDownStabilizationSeconds": 60}
+}

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · FlowGate console</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="/">FlowGate</a>
+  {{if .User.ID}}
+  <nav>
+    {{if .User.Admin}}
+    <a href="/admin/tenants" {{if eq .Path "/admin/tenants"}}class="on"{{end}}>Tenants</a>
+    <a href="/admin/catalog" {{if eq .Path "/admin/catalog"}}class="on"{{end}}>Channels and prices</a>
+    <a href="/admin/dashboard" {{if eq .Path "/admin/dashboard"}}class="on"{{end}}>Dashboard</a>
+    <a href="/playground" {{if eq .Path "/playground"}}class="on"{{end}}>Playground</a>
+    {{else}}
+    <a href="/" {{if eq .Path "/"}}class="on"{{end}}>Home</a>
+    <a href="/keys" {{if eq .Path "/keys"}}class="on"{{end}}>API keys</a>
+    <a href="/usage" {{if eq .Path "/usage"}}class="on"{{end}}>Usage</a>
+    <a href="/models" {{if eq .Path "/models"}}class="on"{{end}}>Models</a>
+    <a href="/quickstart" {{if eq .Path "/quickstart"}}class="on"{{end}}>Quick start</a>
+    <a href="/playground" {{if eq .Path "/playground"}}class="on"{{end}}>Playground</a>
+    {{end}}
+  </nav>
+  <form method="post" action="/logout" class="who">
+    <span>{{.User.Username}}{{if .User.Admin}} (admin){{else}} · {{.User.TenantID}}{{end}}</span>
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit">Sign out</button>
+  </form>
+  {{end}}
+</header>
+<main data-csrf="{{.CSRF}}">
+<h1>{{.Title}}</h1>
+{{template "content" .}}
+</main>
+</body>
+</html>

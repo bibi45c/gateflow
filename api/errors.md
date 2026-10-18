@@ -28,15 +28,18 @@ Access and metering answer every error with this body:
 | access | 401 | `unauthorized` | The internal token is missing, empty or wrong. |
 | access | 401 | `invalid_key` | The gateway key is unknown or revoked. |
 | access | 403 | `model_not_allowed` | The gateway key is valid but none of its channels serves the requested model over the requested protocol. |
-| access | 404 | `price_version_not_found` | No price version has the requested id. |
+| access | 404 | `price_version_not_found` | No price version has the requested id; or, at key creation, no price version exists. |
+| access | 401 | `invalid_credentials` | At console sign-in, the username or password is wrong. |
+| access | 404 | `tenant_not_found` | On a console route, no tenant has the id in the path. |
+| access | 404 | `key_not_found` | At key revocation, the tenant has no key with the id in the path. |
 | access | 500 | `internal_error` | An unexpected failure. |
 | access | 503 | `dependency_unavailable` | The access database is unavailable. |
 | metering | 400 | `invalid_request` | The body is not JSON or breaks the request schema, a token count is negative, or at reserve `max_cost` overflows int64. |
 | metering | 401 | `unauthorized` | The internal token is missing, empty or wrong. |
-| metering | 404 | `wallet_not_found` | At reserve, the tenant has no wallet. |
+| metering | 404 | `wallet_not_found` | At reserve or at a usage query, the tenant has no wallet. |
 | metering | 404 | `reservation_not_found` | At settle, no reservation has the id in the path. |
-| metering | 409 | `insufficient_balance` | At reserve, the wallet's available balance is below `max_cost`. |
-| metering | 422 | `idempotency_conflict` | An earlier reserve with the same (`call_id`, `attempt_id`), or an earlier settle of the same reservation, had different content. |
+| metering | 409 | `insufficient_balance` | At reserve, the wallet's available balance is below `max_cost`; or an adjustment would leave the available balance below 0. |
+| metering | 422 | `idempotency_conflict` | An earlier reserve with the same (`call_id`, `attempt_id`), or an earlier settle of the same reservation, had different content; or an earlier adjustment with the same `adjustment_id` had different content. |
 | metering | 500 | `internal_error` | An unexpected failure; or, at reserve, access answered the price lookup with 404 or 401, or the price version is outside 0 to 1,000,000 micro-units per token. |
 | metering | 503 | `dependency_unavailable` | The metering database is unavailable; or, at reserve, access did not answer the price lookup within 1 s or answered it with a 5xx. |
 

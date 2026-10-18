@@ -161,6 +161,26 @@ class SettingsTests(unittest.TestCase):
         self.refused('--timeout', '0')
         self.refused('--env', 'HOLD_S=-1')
 
+    def test_prealloc_vus_is_passed_to_k6_only_when_given(self):
+        args = parse('--prealloc-vus', '9000', '--env', 'MAX_VUS=10000')
+        env = {e['name']: e.get('value') for e in kube_run.pod(args)['spec']['containers'][0]['env']}
+        self.assertEqual(env['PREALLOC_VUS'], '9000')
+        self.assertEqual(kube_run.target_env(args)['PREALLOC_VUS'], '9000')
+        unset = {e['name'] for e in kube_run.pod(parse('--env', 'MAX_VUS=10000'))['spec']['containers'][0]['env']}
+        self.assertNotIn('PREALLOC_VUS', unset)
+        self.assertNotIn('PREALLOC_VUS', kube_run.target_env(parse()))
+        # The default MAX_VUS of messages.js bounds it too.
+        self.assertEqual(parse('--prealloc-vus', '4000').env['PREALLOC_VUS'], '4000')
+
+    def test_prealloc_vus_must_be_positive_and_within_max_vus(self):
+        for value in ('0', '-5', '1.5', 'many'):
+            with self.subTest(value=value):
+                self.refused('--prealloc-vus', value)
+        message = self.refused('--prealloc-vus', '9000', '--env', 'MAX_VUS=8000')
+        self.assertIn('exceeds MAX_VUS 8000', message)
+        self.refused('--prealloc-vus', '4001')
+        self.assertIn('--prealloc-vus', self.refused('--env', 'PREALLOC_VUS=9000'))
+
     def test_defaults_follow_the_time_and_the_plan(self):
         args = parse()
         self.assertEqual((args.namespace, args.release, args.name), ('gateflow', 'gf', '20261016-120000'))

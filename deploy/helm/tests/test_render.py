@@ -323,4 +323,30 @@ class SourceTests(unittest.TestCase):
         for cidr in ['198.51.100.7','198.51.100.7/33','2001:db8::/32','198.51.100.7/32,203.0.113.0/24','']:
             self.assertNotRegex(cidr,pattern)
 
+    def test_console_off_by_default(self):
+        docs=render()
+        self.assertFalse(any(d['metadata']['name']=='gf-console' for d in docs))
+        seed=next(d for d in docs if d['metadata']['name']=='gf-seed-access')
+        names={e['name'] for e in seed['spec']['template']['spec']['containers'][0]['env']}
+        self.assertNotIn('CONSOLE_ADMIN_PASSWORD',names)
+
+    def test_console_enabled_is_cluster_internal(self):
+        docs=render('--set','console.enabled=true','--set','console.grafanaURL=http://localhost:3000')
+        deployment=next(d for d in docs if d['kind']=='Deployment' and d['metadata']['name']=='gf-console')
+        service=next(d for d in docs if d['kind']=='Service' and d['metadata']['name']=='gf-console')
+        self.assertEqual(service['spec']['type'],'ClusterIP')
+        container=deployment['spec']['template']['spec']['containers'][0]
+        env={e['name']:e for e in container['env']}
+        self.assertEqual(env['GATEWAY_URL']['value'],'http://gf-gateway:8080')
+        self.assertEqual(env['CONSOLE_GATEWAY_JOB']['value'],'gateflow-gateway')
+        self.assertEqual(env['CONSOLE_SESSION_SECRET']['valueFrom']['secretKeyRef']['name'],'gateflow-runtime')
+        self.assertTrue(container['securityContext']['readOnlyRootFilesystem'])
+        ingress=next(d for d in docs if d['kind']=='Ingress')
+        backends={p['backend']['service']['name'] for p in ingress['spec']['rules'][0]['http']['paths']}
+        self.assertNotIn('gf-console',backends)
+        seed=next(d for d in docs if d['metadata']['name']=='gf-seed-access')
+        passwords=[e for e in seed['spec']['template']['spec']['containers'][0]['env'] if e['name'].startswith('CONSOLE_')]
+        self.assertEqual(len(passwords),2)
+        self.assertTrue(all(e['valueFrom']['secretKeyRef']['optional'] for e in passwords))
+
 if __name__=='__main__': unittest.main()

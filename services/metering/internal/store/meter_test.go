@@ -76,7 +76,8 @@ func newMeter(t *testing.T, balances map[string]int64) *meter {
 	t.Cleanup(access.Close)
 
 	mux := http.NewServeMux()
-	api.New(store.NewReservations(m.pool), accessclient.New(access.URL, accessToken), meteringToken, nil).Register(mux)
+	api.New(store.NewReservations(m.pool), accessclient.New(access.URL, accessToken), meteringToken, nil).
+		WithConsole(store.NewConsole(m.pool)).Register(mux)
 	m.server = httptest.NewServer(mux)
 	t.Cleanup(m.server.Close)
 	return m

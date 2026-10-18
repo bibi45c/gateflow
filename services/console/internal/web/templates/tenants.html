@@ -1,0 +1,32 @@
+{{define "content"}}
+{{with .Data.Error}}<p class="error">{{.}}</p>{{end}}
+{{with .Data.Done}}<p class="ok">Adjusted {{.}}</p>{{end}}
+<p>Top up with a positive amount in US dollars, or correct with a negative one. Each
+adjustment is recorded once; a correction never takes the available balance below 0.</p>
+<table>
+  <thead><tr><th>Tenant</th><th class="num">Active keys</th><th class="num">Balance</th><th class="num">Held</th><th class="num">Available</th><th>Adjust</th></tr></thead>
+  <tbody>
+  {{$csrf := .CSRF}}
+  {{range .Data.Tenants}}
+  <tr>
+    <td>{{.ID}}{{if ne .Name .ID}} <small>{{.Name}}</small>{{end}}</td>
+    <td class="num">{{.ActiveKeys}}</td>
+    {{with .Wallet}}
+    <td class="num">{{usd .Balance}}</td><td class="num">{{usd .Held}}</td><td class="num"><strong>{{usd .Available}}</strong></td>
+    {{else}}
+    <td class="num" colspan="3">no wallet</td>
+    {{end}}
+    <td>
+      <form method="post" action="/admin/tenants/{{.ID}}/adjust" class="inline">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <input type="hidden" name="adjustment_id" value="{{.AdjustmentID}}">
+        <input name="amount" size="8" placeholder="10.00" required aria-label="Amount in USD for {{.ID}}">
+        <input name="note" size="12" placeholder="note" aria-label="Note">
+        <button type="submit">Apply</button>
+      </form>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}

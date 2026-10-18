@@ -120,6 +120,23 @@
       }
     },
     "probes": { "$ref": "#/definitions/probes" },
+    "console": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "replicas": { "type": "integer", "minimum": 1 },
+        "image": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string" },
+        "publicGatewayURL": { "type": "string" },
+        "prometheusURL": { "type": "string" },
+        "grafanaURL": { "type": "string" },
+        "timeZone": { "type": "string", "minLength": 1 },
+        "resources": { "type": "object" }
+      },
+      "required": ["enabled", "port", "replicas", "image", "timeZone"],
+      "additionalProperties": false
+    },
     "autoscaling": {
       "type": "object",
       "properties": {

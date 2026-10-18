@@ -31,10 +31,12 @@ type Reservation struct {
 	AttemptID      int32
 	TenantID       string
 	PriceVersionID string
-	Prices         billing.Prices
-	Bounds         billing.Bounds
-	MaxCost        int64
-	Digest         []byte
+	// Model is the model the caller named, or empty; it is not part of Digest.
+	Model   string
+	Prices  billing.Prices
+	Bounds  billing.Bounds
+	MaxCost int64
+	Digest  []byte
 }
 
 // Settlement is what the gateway reports when a call ends.
@@ -78,6 +80,7 @@ type Handler struct {
 	token    [sha256.Size]byte
 	open     bool
 	observer *observability.Observer
+	console  ConsoleStore
 }
 
 // New returns a handler that accepts calls carrying token as their bearer token. With
@@ -89,10 +92,11 @@ func New(store Store, prices PriceSource, token string, observer *observability.
 		observer: observer}
 }
 
-// Register adds the two operations to mux.
+// Register adds the two operations, and the console routes when set, to mux.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+reserveRoute, identified(h.observed(reserveRoute, h.authorized(h.reserve))))
 	mux.HandleFunc("POST "+settleRoute, identified(h.observed(settleRoute, h.authorized(h.settle))))
+	h.registerConsole(mux)
 }
 
 // authorized runs next only for a request with the internal bearer token. Both sides

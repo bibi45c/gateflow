@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import re
 
-SERVICES = ("gateway", "access", "metering", "mock-upstream")
+SERVICES = ("gateway", "access", "metering", "mock-upstream", "console")
 
 
 def image_tags(service: str, sha: str, ref: str) -> list[str]:

@@ -46,7 +46,7 @@ func TestRoutesServeMetrics(t *testing.T) {
 	}
 	const token = "test-internal-token"
 	mux := http.NewServeMux()
-	routes(fakeStore{}, config.Service{KeyPepper: []byte("test-pepper"), InternalToken: token}, observer)(mux)
+	routes(fakeStore{}, nil, config.Service{KeyPepper: []byte("test-pepper"), InternalToken: token}, observer)(mux)
 	calls := []struct{ method, path, body, token string }{
 		{"POST", "/internal/v1/keys/verify", `{"key":"gf_key-canary","model":"model-canary"}`, token},
 		{"POST", "/internal/v1/keys/verify", `{"key":"gf_key-canary","model":"model-canary"}`, "wrong"},
@@ -134,7 +134,9 @@ var (
 		"permission_denied": true, "insufficient_balance": true, "tenant_limited": true,
 		"capacity_rejected": true, "dependency_error": true, "internal_error": true}
 	accessRoutes = map[string]bool{"/internal/v1/keys/verify": true, "/internal/v1/price-versions/{id}": true,
-		"/internal/v1/": true}
+		"/internal/v1/": true, "/internal/v1/console/login": true, "/internal/v1/tenants": true,
+		"/internal/v1/tenants/{tenant_id}/keys": true, "/internal/v1/tenants/{tenant_id}/keys/{key_id}/revoke": true,
+		"/internal/v1/channels": true, "/internal/v1/price-versions": true}
 )
 
 // checkBounded fails the test unless s has exactly the allowed labels, each with a
