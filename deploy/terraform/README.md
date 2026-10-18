@@ -122,6 +122,10 @@ terraform -chdir=deploy/terraform plan -var-file=experiment.tfvars -out=experime
 terraform -chdir=deploy/terraform apply experiment.tfplan
 ```
 
+To run Terraform in a container with short-lived sign-in credentials and no static
+keys, use the [credential bridge](credential-bridge.md); it also describes its
+acceptance test.
+
 Verify the current AWS identity outside Terraform before these commands. The
 account-ID guard must match it. Review every resource, AMI/engine availability,
 quotas and deletion setting in the saved plan. Never apply an unreviewed/stale plan.
