@@ -21,7 +21,13 @@ first. Without --yes it only prints the plan. With --yes it:
     environment and security settings of the running metering Deployment;
  7. verifies tenants+1 wallets, tenant-00 at 0, every other wallet at N, nothing
     held, no reservations and no ledger entries;
- 8. restores the gateway replica count or the previous KEDA annotation.
+ 8. restores the gateway replica count or the previous KEDA annotation. When the
+    ScaledObject had no paused-replicas annotation before, it first sets the
+    annotation to the recorded gateway replica count, waits until that many gateway
+    Pods are Ready, then removes the annotation and waits until the ScaledObject no
+    longer reports Paused. Removing the annotation alone would leave the gateway at
+    0: with no gateway Pod there is no gateway metric, the chart's triggers return
+    an empty result by design, and the HPA never scales back up to minReplicas.
 
 Whatever fails, the temporary Pods are deleted and the gateway is restored, and the
 output says what state the database was left in. Nothing printed carries a secret.
@@ -116,7 +122,8 @@ def plan(args):
         f'{args.release}-metering',
         f'verify {args.tenants + 1} wallets, tenant-00 at 0, the others at {args.balance}, nothing held, '
         'no reservations or ledger entries',
-        f'delete the temporary Pods and restore {gateway} (replicas or KEDA annotation)',
+        f'delete the temporary Pods and restore {gateway}: its replicas, or, under KEDA, {KEDA_PAUSE} set to the'
+        ' recorded replicas until that many gateway Pods are Ready, then the previous annotation',
     ]
 
 
@@ -334,22 +341,42 @@ class Reset:
         item = json.loads(self.kubectl('get', 'deployment', self.gateway, '-o', 'json'))
         return item.get('status', {}).get('readyReplicas') or 0
 
+    def keda_paused(self):
+        item = json.loads(self.kubectl('get', 'scaledobject.keda.sh', self.scaled_object, '-o', 'json'))
+        if KEDA_PAUSE in item.get('metadata', {}).get('annotations', {}):
+            return True
+        return any(condition.get('type') == 'Paused' and condition.get('status') == 'True'
+                   for condition in item.get('status', {}).get('conditions', []))
+
+    def resume_keda(self):
+        """KEDA cannot bring the gateway back from 0 itself: with no gateway Pod the triggers
+        return an empty result, so the HPA keeps 0. Let KEDA hold the recorded count until
+        those Pods are Ready, so metrics flow again before autoscaling takes over."""
+        target = self.replicas['gateway']
+        if target:
+            self.kubectl('annotate', 'scaledobject.keda.sh', self.scaled_object, f'{KEDA_PAUSE}={target}',
+                         '--overwrite')
+            print(f'gateway: KEDA holding {self.gateway} at {target} ({KEDA_PAUSE}={target})')
+            self.wait_until(f'{target} ready gateway Pods while {KEDA_PAUSE}={target}',
+                            lambda: self.ready_gateways() == target)
+        self.kubectl('annotate', 'scaledobject.keda.sh', self.scaled_object, f'{KEDA_PAUSE}-')
+        self.wait_until(f'ScaledObject {self.scaled_object} to leave the paused state',
+                        lambda: not self.keda_paused())
+        print(f'gateway: KEDA resumed ({KEDA_PAUSE} removed) with {target} ready gateway Pods')
+
     def restore_gateway(self):
-        if self.scaled_object:
-            if self.previous_pause is None:
-                self.kubectl('annotate', 'scaledobject.keda.sh', self.scaled_object, f'{KEDA_PAUSE}-')
-                print(f'gateway: KEDA resumed ({KEDA_PAUSE} removed)')
-            else:
-                self.kubectl('annotate', 'scaledobject.keda.sh', self.scaled_object,
-                             f'{KEDA_PAUSE}={self.previous_pause}', '--overwrite')
-                print(f'gateway: KEDA annotation {KEDA_PAUSE} restored to its previous value')
-            target = 1 if self.previous_pause is None and self.replicas['gateway'] else 0
+        if self.scaled_object and self.previous_pause is None:
+            self.resume_keda()
+        elif self.scaled_object:
+            self.kubectl('annotate', 'scaledobject.keda.sh', self.scaled_object,
+                         f'{KEDA_PAUSE}={self.previous_pause}', '--overwrite')
+            print(f'gateway: KEDA annotation {KEDA_PAUSE} restored to its previous value')
         else:
             target = self.replicas['gateway']
             self.kubectl('scale', 'deployment', self.gateway, f'--replicas={target}')
             print(f'gateway: scaled {self.gateway} back to {target}')
-        if target:
-            self.wait_until(f'{target} ready gateway Pods', lambda: self.ready_gateways() >= target)
+            if target:
+                self.wait_until(f'{target} ready gateway Pods', lambda: self.ready_gateways() >= target)
 
     def advice(self):
         where = f' The pre-reset export is in {self.evidence}.' if self.evidence else ''
@@ -367,8 +394,14 @@ class Reset:
     def restore_command(self):
         base = f'kubectl --context {self.args.kube_context} -n {self.args.namespace}'
         if self.scaled_object:
-            value = f'{KEDA_PAUSE}-' if self.previous_pause is None else f'{KEDA_PAUSE}={self.previous_pause} --overwrite'
-            return f'{base} annotate scaledobject.keda.sh {self.scaled_object} {value}'
+            annotate = f'{base} annotate scaledobject.keda.sh {self.scaled_object}'
+            target = self.replicas['gateway']
+            if self.previous_pause is not None:
+                return f'{annotate} {KEDA_PAUSE}={self.previous_pause} --overwrite'
+            if not target:
+                return f'{annotate} {KEDA_PAUSE}-'
+            return (f'{annotate} {KEDA_PAUSE}={target} --overwrite; wait until {target} gateway Pods are Ready; '
+                    f'then {annotate} {KEDA_PAUSE}-')
         return f'{base} scale deployment {self.gateway} --replicas={self.replicas["gateway"]}'
 
     def cleanup(self):
