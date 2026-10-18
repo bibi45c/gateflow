@@ -1,0 +1,49 @@
+{{define "content"}}
+{{$base := .Data.BaseURL}}
+<p>Base URL: <code>{{$base}}</code>. FlowGate speaks the Anthropic Messages API
+(<code>POST /v1/messages</code>) and the OpenAI Responses API (<code>POST /v1/responses</code>).
+Create a key under <a href="/keys">API keys</a> and put it in <code>GATEFLOW_API_KEY</code>.
+The mock models (<code>mock-*</code>) answer instantly; see <a href="/models">Models</a> for the rest.</p>
+
+<h2>curl</h2>
+<pre>export GATEFLOW_API_KEY=gf_...
+curl -N {{$base}}/v1/messages \
+  -H "x-api-key: $GATEFLOW_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"mock-small","max_tokens":64,"stream":true,
+       "messages":[{"role":"user","content":"Hello"}]}'</pre>
+
+<h2>Codex CLI</h2>
+<p><code>~/.codex/config.toml</code> (or the folder in <code>CODEX_HOME</code>):</p>
+<pre>model = "mock-coding"
+model_provider = "gateflow"
+
+[model_providers.gateflow]
+name = "GateFlow"
+base_url = "{{$base}}/v1"
+wire_api = "responses"
+env_key = "GATEFLOW_API_KEY"</pre>
+
+<h2>OpenCode</h2>
+<p><code>opencode.json</code> in the folder where you start OpenCode:</p>
+<pre>{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "gateflow": {
+      "npm": "@ai-sdk/anthropic",
+      "name": "GateFlow",
+      "options": {
+        "baseURL": "{{$base}}/v1",
+        "apiKey": "{env:GATEFLOW_API_KEY}"
+      },
+      "models": {
+        "mock-coding": {"name": "Mock coding", "limit": {"context": 40960, "output": 4096}}
+      }
+    }
+  },
+  "model": "gateflow/mock-coding",
+  "enabled_providers": ["gateflow"]
+}</pre>
+<p class="hint">The repository's <code>docs/clients/codex.md</code> and <code>docs/clients/opencode.md</code> have the full, tested setups.</p>
+{{end}}
