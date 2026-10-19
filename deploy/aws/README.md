@@ -20,6 +20,9 @@ python -m unittest discover -s deploy/aws/tests -v
 | `credserve.py` | Serves fresh AWS credentials to the Terraform container | [credential bridge](../terraform/credential-bridge.md) |
 | `sweep.py` | Second, independent leftover check in every region | [below](#sweeppy) |
 
+For tests T0–T5 against a real model on a GPU host, follow
+[real-model.md](real-model.md), which extends the cloud day below.
+
 `deploy/aws/secrets.py` shadows the standard library module of that name for every
 script in this folder, so none of them imports `secrets`.
 
