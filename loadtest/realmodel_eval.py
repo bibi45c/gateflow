@@ -151,10 +151,13 @@ class Stream:
         self.status, self.error, self.stop_reason = 'failed', 'stream ended without its end event', None
         self.input_tokens = self.output_tokens = None
         self.first_output = None
+        self.output_times = []
 
     def output(self, text, clock, into=None):
-        if text and self.first_output is None:
-            self.first_output = clock()
+        if text:
+            now = clock()
+            self.first_output = now if self.first_output is None else self.first_output
+            self.output_times.append(now)
         (self.text if into is None else into).append(text)
 
 
@@ -252,6 +255,9 @@ def call(target, protocol, item, settings, clock=time.monotonic):
         record['thinking'] = ''.join(stream.thinking)
     if stream.first_output is not None:
         record['first_output_ms'] = round((stream.first_output - started) * 1000, 1)
+    if settings.record_deltas:
+        # Arrival of each output delta, in ms from the request: the token gaps of test T3.
+        record['delta_ms'] = [round((t - started) * 1000, 1) for t in stream.output_times]
     return record
 
 
@@ -416,10 +422,12 @@ def _count(values):
 
 
 def verdict(summary):
-    passes, gate = summary['passes'], summary['comparisons']['direct_vs_gateway']
-    complete = all(p['not_completed'] == 0 for p in passes.values())
-    identical = gate['compared'] == summary['items'] and gate['identical'] == gate['compared']
-    return complete and identical
+    """Every call completed, and, when both passes ran, every gateway answer equals the direct one."""
+    complete = all(p['not_completed'] == 0 for p in summary['passes'].values())
+    gate = summary['comparisons'].get('direct_vs_gateway')
+    if gate is None:
+        return complete
+    return complete and gate['compared'] == summary['items'] and gate['identical'] == gate['compared']
 
 
 def markdown(summary):
@@ -456,7 +464,9 @@ def run(args):
     secret = os.environ.get(SEED_KEY, DEFAULT_SEED_SECRET)
     direct = {'url': args.direct_url, 'bearer': os.environ.get(args.direct_api_key_env) if args.direct_api_key_env else None}
     gateway = {'url': args.gateway_url, 'key': derive_key(secret, args.tenant)}
-    order = [('direct', direct), ('gateway', gateway)] + ([('direct_repeat', direct)] if args.control else [])
+    order = [(name, {'direct': direct, 'gateway': gateway}[name]) for name in args.passes]
+    if args.control:
+        order.append(('direct_repeat', direct))
     args.out_dir.mkdir(parents=True, exist_ok=True)
     records = {}
     for name, target in order:
@@ -469,7 +479,9 @@ def run(args):
                'prompts_sha256': hashlib.sha256(args.prompts.read_bytes()).hexdigest(),
                'sets': sorted({i['set'] for i in items}, key=SETS.index),
                'passes': {name: pass_summary(items, recs, args.exec_humaneval) for name, recs in records.items()},
-               'comparisons': {'direct_vs_gateway': compare(records['direct'], records['gateway'])}}
+               'comparisons': {}}
+    if 'direct' in records and 'gateway' in records:
+        summary['comparisons']['direct_vs_gateway'] = compare(records['direct'], records['gateway'])
     if args.control:
         summary['comparisons']['direct_vs_direct_repeat'] = compare(records['direct'], records['direct_repeat'])
     summary['pass'] = verdict(summary)
@@ -527,23 +539,31 @@ def reconcile_calls(calls, ledger, reservations):
             problems.append(f"{call['id']}: amount {entry['amount']} is not the price times the tokens")
         else:
             checked += 1
+    for entry in ledger:
+        hold = holds.get(entry['reservation_id'])
+        tokens = (whole(entry['input_tokens']) or 0, whole(entry['output_tokens']) or 0)
+        if hold is None:
+            problems.append(f"ledger entry {entry['ledger_entry_id']}: no reservation {entry['reservation_id']}")
+        elif int(entry['amount']) != int(hold['input_price']) * tokens[0] + int(hold['output_price']) * tokens[1]:
+            problems.append(f"ledger entry {entry['ledger_entry_id']}: amount {entry['amount']} is not the price times the tokens")
     held = [r['reservation_id'] for r in reservations if r['status'] == 'reserved']
     if held:
         problems.append(f'{len(held)} reservations still reserved, first {held[0]}')
     ours = {c.get('request_id') for c in calls}
     return problems, {'calls_completed': sum(1 for c in calls if c['status'] == 'completed'), 'reconciled': checked,
                       'ledger_entries': len(ledger), 'other_ledger_entries': sum(1 for e in ledger if e['call_id'] not in ours),
-                      'reservations_reserved': len(held)}
+                      'reservations_reserved': len(held),
+                      'outcomes': dict(sorted(_count(e['outcome'] for e in ledger).items()))}
 
 
 def reconcile(args):
     calls = []
-    for path in args.answers:
+    for path in args.answers or []:
         try:
             calls += [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
         except (OSError, json.JSONDecodeError) as error:
             raise InputError(f'cannot read {path}: {error}') from None
-    if not any(c.get('request_id') for c in calls):
+    if args.answers and not any(c.get('request_id') for c in calls):
         raise InputError('no call has a request_id: pass the answers-gateway.jsonl of a gateway pass')
     problems, counts = reconcile_calls(calls, read_csv(args.ledger), read_csv(args.reservations))
     print(json.dumps(counts))
@@ -591,6 +611,13 @@ def positive(text):
     return number
 
 
+def pass_list(text):
+    passes = [p for p in text.split(',') if p]
+    if not passes or any(p not in ('direct', 'gateway') for p in passes) or len(set(passes)) != len(passes):
+        raise argparse.ArgumentTypeError('passes are direct, gateway or both, comma-separated')
+    return passes
+
+
 def set_list(text):
     sets = [s for s in text.split(',') if s]
     unknown = [s for s in sets if s not in SETS]
@@ -616,11 +643,14 @@ def parse_args(argv):
     r.add_argument('--limit', type=positive, help='first N items of each set only')
     r.add_argument('--tenant', default='tenant-01', help=f'seeded tenant whose key is derived from {SEED_KEY}')
     r.add_argument('--direct-api-key-env', metavar='NAME', help='variable holding a key vLLM checks as a bearer token')
+    r.add_argument('--passes', type=pass_list, default=['direct', 'gateway'],
+                   help='comma list of direct and gateway, in order (default: direct,gateway); one alone is not compared')
+    r.add_argument('--record-deltas', action='store_true', help='keep the arrival time of every output delta (T3)')
     r.add_argument('--control', action='store_true', help='repeat the direct pass to measure the noise floor')
     r.add_argument('--exec-humaneval', action='store_true', help='run the HumanEval tests; disposable Pod only')
     c = commands.add_parser('reconcile', help='match gateway calls to the ledger and reservations CSVs of reset_db.py')
-    c.add_argument('--answers', type=Path, action='append', required=True, metavar='JSONL',
-                   help='answers-gateway.jsonl of a run (repeatable)')
+    c.add_argument('--answers', type=Path, action='append', metavar='JSONL',
+                   help='answers-gateway.jsonl of a run (repeatable); without it only the ledger itself is checked')
     c.add_argument('--ledger', type=Path, required=True, help='ledger_entries.csv')
     c.add_argument('--reservations', type=Path, required=True, help='reservations.csv')
     p = commands.add_parser('pod', help='write a Pod manifest that runs this script on the load-generator node')
@@ -630,6 +660,8 @@ def parse_args(argv):
     p.add_argument('--lifetime', type=positive, default=14400, help='seconds before the Pod stops (default: 4 h)')
     args = parser.parse_args(argv)
     if args.command == 'run':
+        if args.control and 'direct' not in args.passes:
+            parser.error('--control repeats the direct pass, so --passes must include direct')
         for flag, url in (('--direct-url', args.direct_url), ('--gateway-url', args.gateway_url)):
             parts = urllib.parse.urlsplit(url)
             if parts.scheme not in ('http', 'https') or not parts.hostname:

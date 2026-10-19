@@ -196,6 +196,9 @@ def parse_args(argv, now):
                         help=f'messages.js setting, repeatable: {", ".join(SETTINGS)}')
     parser.add_argument('--prealloc-vus', type=vu_count, metavar='N',
                         help='VUs k6 starts before the run, at most MAX_VUS (default: the highest level times STREAM_S)')
+    parser.add_argument('--gateway-url', metavar='URL',
+                        help='aim GATEWAY_URL elsewhere, such as a vLLM server for a direct capacity run '
+                             '(default: the gateway Service of --release)')
     parser.add_argument('--prompts', type=Path, metavar='JSONL',
                         help='prompt file for messages.js, such as loadtest/prompts/realmodel.jsonl (default: none)')
     parser.add_argument('--timeout', type=int, help=f'seconds to wait for k6 (default: the plan plus {MARGIN_S})')
@@ -215,6 +218,8 @@ def parse_args(argv, now):
         if args.prealloc_vus > max_vus:
             parser.error(f'--prealloc-vus {args.prealloc_vus} exceeds MAX_VUS {max_vus:g}')
         args.env[PREALLOC] = str(args.prealloc_vus)
+    if args.gateway_url is not None and not re.fullmatch(r'https?://[^\s/]+', args.gateway_url):
+        parser.error('--gateway-url is a base URL such as http://10.40.2.15:8000, without a path')
     args.prompts_text = None
     if args.prompts is not None:
         try:
@@ -251,7 +256,7 @@ def labels(args):
 
 def target_env(args):
     """Every environment variable of k6 except the seed secret."""
-    return {'GATEWAY_URL': f'http://{args.release}-gateway:8080',
+    return {'GATEWAY_URL': args.gateway_url or f'http://{args.release}-gateway:8080',
             'MOCK_URL': f'http://{args.release}-mock-upstream:8090', **dict(sorted(args.env.items()))}
 
 

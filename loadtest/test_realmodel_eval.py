@@ -168,6 +168,22 @@ class RunTest(Case):
         self.assertTrue((out/'answers-direct_repeat.jsonl').exists())
         self.assertEqual(len(direct.requests), 6)
 
+    def test_one_pass_alone_records_deltas_and_is_not_compared(self):
+        direct = self.upstream()
+        gateway = self.upstream()
+        code, summary, out = self.run_eval(direct, gateway, '--passes', 'direct', '--record-deltas')
+        self.assertEqual(code, 0)
+        self.assertEqual((list(summary['passes']), summary['comparisons']), (['direct'], {}))
+        self.assertEqual(gateway.requests, [])
+        first = json.loads((out/'answers-direct.jsonl').read_text(encoding='utf-8').splitlines()[0])
+        self.assertEqual(len(first['delta_ms']), len(range(0, len(REPLIES['two plus two']), 5)))
+        self.assertEqual(first['delta_ms'], sorted(first['delta_ms']))
+
+    def test_control_needs_the_direct_pass(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            ev.parse_args(['run', '--direct-url', 'http://d', '--gateway-url', 'http://g', '--model', 'm',
+                           '--out-dir', 'o', '--passes', 'gateway', '--control'])
+
     def test_unusable_prompts_exit_2(self):
         self.prompts.write_text('{"id": "x", "set": "gsm8k", "prompt": "p"}\nnot json\n', encoding='utf-8')
         code, summary, _ = self.run_eval(self.upstream(), self.upstream())
@@ -202,7 +218,7 @@ class ReconcileTest(Case):
             charge = 3 * a['input_tokens'] + 15 * a['output_tokens'] if amount is None else amount
             ledger.append(f"le{i},r{i},{a['request_id']},1,tenant-01,{charge},{a['input_tokens']},{a['output_tokens']},{outcome},t\n")
             holds.append(f"r{i},{a['request_id']},settled,3,15\n")
-        ledger.append('le9,r9,req_other,1,tenant-02,0,1,1,completed,t\n')
+        ledger.append('le9,r9,req_other,1,tenant-02,18,1,1,completed,t\n')
         holds.append(f"r9,req_other,{'reserved' if held else 'settled'},3,15\n")
         (self.folder/'ledger_entries.csv').write_text(''.join(ledger), encoding='utf-8')
         (self.folder/'reservations.csv').write_text(''.join(holds), encoding='utf-8')
@@ -234,6 +250,20 @@ class ReconcileTest(Case):
                 code, text = self.bill(out, **kwargs)
                 self.assertEqual(code, 1)
                 self.assertIn(expected, text)
+
+    def test_ledger_alone_is_checked_without_answers(self):
+        csvs = [str(self.folder/'ledger_entries.csv'), str(self.folder/'reservations.csv')]
+        (self.folder/'ledger_entries.csv').write_text(self.LEDGER + 'le1,r1,c1,1,tenant-01,33,1,2,completed,t\n'
+                                                       'le2,r2,c2,1,tenant-01,0,0,0,upstream_error,t\n', encoding='utf-8')
+        for holds, expected in (('r1,c1,settled,3,15\nr2,c2,settled,3,15\n', 0),
+                                ('r1,c1,settled,3,16\nr2,c2,settled,3,15\n', 1)):
+            with self.subTest(holds=holds):
+                (self.folder/'reservations.csv').write_text(self.HOLDS + holds, encoding='utf-8')
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                    code = ev.main(['reconcile', '--ledger', csvs[0], '--reservations', csvs[1]])
+                self.assertEqual(code, expected, output.getvalue())
+                self.assertIn('"outcomes": {"completed": 1, "upstream_error": 1}', output.getvalue())
 
     def test_direct_answers_cannot_be_reconciled(self):
         code, summary, out = self.run_eval(self.upstream(), self.upstream())

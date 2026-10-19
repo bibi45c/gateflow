@@ -456,7 +456,9 @@ python loadtest/kube_run.py --kubeconfig <kubeconfig> --kube-context <context> -
 ```
 
 For a paired run, add `--env PAIRED=1 --env DIRECT_URL=http://<model host>:8000`: the
-direct call goes to vLLM with the same body, without a gateway key.
+direct call goes to vLLM with the same body, without a gateway key. For a direct capacity
+run (T0), `--gateway-url http://<model host>:8000` aims k6 at vLLM instead of the
+gateway Service; the results table then describes vLLM alone.
 
 `realmodel_eval.py` is the correctness check (T5). It sends each prompt as a streamed
 call at temperature 0, first to `--direct-url` and then through `--gateway-url`, with
@@ -487,6 +489,13 @@ amount equal to the reservation's prices times those tokens. No reservation may 
 ```text
 python loadtest/realmodel_eval.py reconcile --answers .local/realmodel/t5/answers-gateway.jsonl --ledger <evidence dir>/ledger_entries.csv --reservations <evidence dir>/reservations.csv
 ```
+
+`--passes direct` (or `gateway`) runs one side only, with no comparison, and
+`--record-deltas` keeps the arrival time of every output delta in `delta_ms`: the
+time-to-first-token, token-gap and length samples of T3. Without `--answers`,
+`reconcile` checks only the ledger: every entry's amount against its reservation,
+no reservation left `reserved`, and the count of each outcome, to set against the
+k6 results of a run.
 
 Greedy decoding is not batch-invariant: with other calls in the same batch, vLLM may
 give a different answer to the same prompt, gateway or not. `--control` repeats the

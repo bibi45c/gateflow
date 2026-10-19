@@ -300,6 +300,12 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual((env['PROMPTS'], env['DIRECT_URL'], env['TEMPERATURE']),
                          ('/scripts/prompts.jsonl', 'http://10.40.2.9:8000', '0.7'))
 
+    def test_gateway_url_can_aim_k6_at_a_model_server(self):
+        self.assertEqual(kube_run.target_env(parse('--gateway-url', 'http://10.40.2.9:8000'))['GATEWAY_URL'],
+                         'http://10.40.2.9:8000')
+        self.assertEqual(kube_run.target_env(parse())['GATEWAY_URL'], 'http://gf-gateway:8080')
+        self.refused('--gateway-url', 'http://10.40.2.9:8000/v1')
+
     def test_prompts_need_the_flag_and_a_readable_small_file(self):
         self.assertIn('--prompts', self.refused('--env', 'PROMPTS=/x.jsonl'))
         self.refused('--prompts', 'missing-prompts.jsonl')
