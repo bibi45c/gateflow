@@ -16,6 +16,10 @@ Scheduled load on the gateway, following
 | `test_derive.py` | Unit tests of `derive.py`, on run folders built by the tests |
 | `bundle.py` | Builds the Part C data bundle of a cloud day from a manifest |
 | `test_bundle.py` | Unit tests of `bundle.py`, on a day built by the tests, with a fake aws CLI |
+| `prompts/realmodel.jsonl` | GSM8K, MMLU and HumanEval prompts for real-model runs; sources and licenses in [prompts/SOURCES.md](prompts/SOURCES.md) |
+| `prompts/build_prompts.py` | Rebuilds `realmodel.jsonl` from the pinned sources |
+| `realmodel_eval.py` | Sends the prompts at temperature 0 straight to a model server and through the gateway, scores the answers and compares them byte for byte |
+| `test_realmodel_eval.py` | Unit tests of `realmodel_eval.py`, against fake streaming upstreams |
 
 ## Run
 
@@ -356,6 +360,9 @@ Pass each with `-e NAME=value`, or with `--env NAME=value` to `kube_run.py`.
 | `PREALLOC_VUS` | unset | VUs k6 starts before the run, replacing the highest level times `STREAM_S`; a whole number from 1 to `MAX_VUS`, otherwise k6 refuses to start. With `kube_run.py`, pass `--prealloc-vus N` instead of `--env` |
 | `MAX_VUS` | `4000` | VU ceiling; k6 can drop arrivals when every VU is occupied |
 | `CONNECTION_REUSE` | `1` | `1` lets each VU keep its connection; `0` opens a new connection for every request, so gateway Pods added during the run get a share through a Service |
+| `PROMPTS` | unset | JSONL file whose `prompt` fields become the user messages, request *i* sending item *i* mod *n*; replaces `INPUT_BYTES`. With `kube_run.py`, pass `--prompts FILE` instead of `--env` |
+| `DIRECT_URL` | unset | Direct side of `PAIRED=1` instead of `MOCK_URL`, such as a vLLM server; then `MOCK_FIRST_EVENT_DELAY_MS` is not required |
+| `TEMPERATURE` | unset | `temperature` of every request, 0 to 2; unset leaves it out, so a real model uses its own default |
 
 Set `PREALLOC_VUS` when a failing level's requests last longer than `STREAM_S`:
 when their duration times the level's rate exceeds the default preallocation
@@ -435,6 +442,52 @@ Not measured here:
   an SSE-aware client such as xk6-sse;
 - the gateway's own active requests, CPU, memory, network and database contention;
   they come from the services' `/metrics` and Prometheus.
+
+## Real-model runs
+
+For the real-model tests T0–T5 (issues
+[#144](https://github.com/bibi45c/gateflow/issues/144)–[#146](https://github.com/bibi45c/gateflow/issues/146)),
+the gateway's `ollama` channel points at a vLLM server, and k6 sends benchmark prompts
+instead of `x` bytes. Always set `CONNECTION_REUSE=0` (#143). `MODEL` is vLLM's
+served model name, which the channel also serves:
+
+```text
+python loadtest/kube_run.py --kubeconfig <kubeconfig> --kube-context <context> --name t2-r1 --prompts loadtest/prompts/realmodel.jsonl --env MODEL=qwen3-0.6b --env TEMPERATURE=0.7 --env CONNECTION_REUSE=0 --env LEVELS=<levels>
+```
+
+For a paired run, add `--env PAIRED=1 --env DIRECT_URL=http://<model host>:8000`: the
+direct call goes to vLLM with the same body, without a gateway key.
+
+`realmodel_eval.py` is the correctness check (T5). It sends each prompt as a streamed
+call at temperature 0, first to `--direct-url` and then through `--gateway-url`, with
+`--concurrency` calls in flight (default 32). It then scores the answers:
+
+- GSM8K: the final number;
+- MMLU: the choice letter;
+- HumanEval-lite: the code parses and defines the function. With `--exec-humaneval`
+  it also runs the tests, in a disposable Pod only, since that is not a sandbox.
+
+It compares direct and gateway answers byte for byte, and writes
+`answers-<pass>.jsonl`, `summary.json` and `summary.md`. It exits 0 only when every
+call completed and every answer is identical. Run it in the cluster with the Pod that
+`pod` writes, which runs on the load-generator node with the seed secret:
+
+```text
+python loadtest/realmodel_eval.py pod --name t5 --out .local/realmodel/pod-t5.json
+python loadtest/realmodel_eval.py run --direct-url http://<model host>:8000 --gateway-url http://gf-gateway:8080 --model qwen3-0.6b --out-dir /tmp/t5 --control
+```
+
+Greedy decoding is not batch-invariant: with other calls in the same batch, vLLM may
+give a different answer to the same prompt, gateway or not. `--control` repeats the
+direct pass, so the direct-vs-direct rate shows that noise floor. `--concurrency 1`
+is the strict check, where the batches cannot differ.
+
+Locally, the compose stack and `mock-chat` exercise the whole pipe: the mock is both
+the direct side and the gateway's upstream.
+
+```text
+python loadtest/realmodel_eval.py run --direct-url http://127.0.0.1:8090 --gateway-url http://127.0.0.1:8080 --model mock-chat --out-dir .local/realmodel/local --limit 5
+```
 
 ## Tests
 

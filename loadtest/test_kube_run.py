@@ -244,6 +244,8 @@ class TimelineTests(unittest.TestCase):
 
 
 class ManifestTests(unittest.TestCase):
+    refused = SettingsTests.refused
+
     def test_pod_runs_pinned_k6_on_the_generator_node_with_the_seed_from_the_secret(self):
         args = parse('--name', 'calibration', '--release', 'lt', '--env', 'LEVELS=5')
         pod = kube_run.pod(args)
@@ -284,6 +286,27 @@ class ManifestTests(unittest.TestCase):
         document = kube_run.config_map(args, script)
         self.assertEqual(document['metadata']['name'], 'gateflow-k6-calibration')
         self.assertEqual(document['data'], {'messages.js': script})
+        self.assertNotIn('PROMPTS', kube_run.target_env(args))
+
+    def test_prompts_go_into_the_config_map_and_reach_k6(self):
+        with tempfile.TemporaryDirectory() as folder:
+            prompts = Path(folder)/'prompts.jsonl'
+            prompts.write_text('{"prompt": "hello"}\n', encoding='utf-8')
+            args = parse('--name', 'real', '--prompts', str(prompts), '--env', 'DIRECT_URL=http://10.40.2.9:8000',
+                         '--env', 'TEMPERATURE=0.7', '--env', 'MODEL=qwen3-0.6b')
+        document = kube_run.config_map(args, 'script')
+        self.assertEqual(document['data'], {'messages.js': 'script', 'prompts.jsonl': '{"prompt": "hello"}\n'})
+        env = {e['name']: e.get('value') for e in kube_run.pod(args)['spec']['containers'][0]['env']}
+        self.assertEqual((env['PROMPTS'], env['DIRECT_URL'], env['TEMPERATURE']),
+                         ('/scripts/prompts.jsonl', 'http://10.40.2.9:8000', '0.7'))
+
+    def test_prompts_need_the_flag_and_a_readable_small_file(self):
+        self.assertIn('--prompts', self.refused('--env', 'PROMPTS=/x.jsonl'))
+        self.refused('--prompts', 'missing-prompts.jsonl')
+        with tempfile.TemporaryDirectory() as folder:
+            big = Path(folder)/'big.jsonl'
+            big.write_text('x' * (kube_run.PROMPTS_MAX_BYTES + 1), encoding='utf-8')
+            self.assertIn('ConfigMap', self.refused('--prompts', str(big)))
 
 
 class RunTests(unittest.TestCase):
