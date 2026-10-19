@@ -9,6 +9,12 @@ The runbook for tests T0–T5 against a real model on EKS (issue
   `loadtest/prompts/realmodel.jsonl`, `loadtest/realmodel_eval.py`, and the
   `--prompts` and `--gateway-url` options of `loadtest/kube_run.py`.
 
+**Status: future work.** Running this session is deferred until the account has an
+On-Demand G and VT vCPU quota in ap-southeast-1. On 2026-10-19 the quota was 0, and
+the request for 8 was open in a support case. Until then the S3 results stand on
+the mock upstream. The kit is ready to run once the quota exists: start at
+[0. Preconditions](#0-preconditions).
+
 It extends a normal cloud day ([Flow example](README.md#flow-example)); everything not
 said here is as there. **bibi45c only**, or a session the owner directs. Every step is
 paid, so it needs the owner's approval for that session.
