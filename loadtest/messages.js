@@ -4,7 +4,9 @@
 // at the first level, then for each level a ramp (except the first) and a hold. Every
 // request streams, carries an explicit max_tokens and uses the seeded tenants in
 // turn. PAIRED=1 is a separate latency diagnostic: each request also goes straight to
-// the mock, doubling its load. http_req_waiting measures TTFB, not the first model
+// the mock, doubling its load (or to DIRECT_URL, such as a real model server).
+// PROMPTS names a JSONL file of benchmark prompts (loadtest/prompts/realmodel.jsonl);
+// request i then sends item i mod n as its user message. http_req_waiting measures TTFB, not the first model
 // content delta required by proposal section 6.2. Each request is tagged with its
 // phase, level, tenant and path, and setup() writes the plan into the output, so that
 // summarize.py can build the results tables from the JSON output alone.
@@ -19,6 +21,8 @@ const number = (name, fallback) => Number(env(name, fallback));
 
 const BASE_URL = env('GATEWAY_URL', 'http://127.0.0.1:8080');
 const MOCK_URL = env('MOCK_URL', 'http://127.0.0.1:8090');
+// The direct side of PAIRED=1: the mock by default, or a model server such as vLLM.
+const DIRECT_URL = env('DIRECT_URL', '');
 const PAIRED = env('PAIRED', '0') === '1';
 // mock-load streams MOCK_LOAD_EVENTS deltas (200 by default), one output token each;
 // max_tokens covers them, so each call is charged its real usage, not its hold.
@@ -40,8 +44,14 @@ const TOTAL_DEADLINE_S = number('TOTAL_DEADLINE_S', '60');
 if (!Number.isFinite(TOTAL_DEADLINE_S) || TOTAL_DEADLINE_S <= 0) {
   throw new Error('TOTAL_DEADLINE_S must be a positive number');
 }
-if (PAIRED && env('MOCK_FIRST_EVENT_DELAY_MS', '') !== '0') {
+// A real model has no first-event delay to declare; the mock's must be 0.
+if (PAIRED && DIRECT_URL === '' && env('MOCK_FIRST_EVENT_DELAY_MS', '') !== '0') {
   throw new Error('PAIRED=1 requires MOCK_FIRST_EVENT_DELAY_MS=0 on both the mock and k6');
+}
+// Unset leaves temperature out of the body, as before; a real model then uses its default.
+const TEMPERATURE = env('TEMPERATURE', '') === '' ? null : number('TEMPERATURE', '');
+if (TEMPERATURE !== null && !(TEMPERATURE >= 0 && TEMPERATURE <= 2)) {
+  throw new Error('TEMPERATURE must be a number from 0 to 2');
 }
 const MAX_VUS = number('MAX_VUS', '4000');
 // Each request holds a VU for its whole stream, so the VUs in flight are the rate
@@ -125,12 +135,38 @@ const KEYS = Array.from({ length: TENANTS }, (_, i) => {
   return [tenant, deriveKey(SEED_SECRET, tenant)];
 });
 
-const BODY = JSON.stringify({
-  model: MODEL,
-  max_tokens: MAX_TOKENS,
-  stream: true,
-  messages: [{ role: 'user', content: 'x'.repeat(INPUT_BYTES) }],
-});
+// parsePrompts returns the prompt of each line of a JSONL text, failing on the first
+// line that is not a JSON object with a non-empty string prompt.
+export function parsePrompts(text) {
+  const prompts = [];
+  text.split('\n').forEach((line, i) => {
+    if (line.trim() === '') return;
+    let item;
+    try {
+      item = JSON.parse(line);
+    } catch (e) {
+      throw new Error(`PROMPTS line ${i + 1}: not JSON`);
+    }
+    if (!item || typeof item.prompt !== 'string' || item.prompt === '') {
+      throw new Error(`PROMPTS line ${i + 1}: needs a non-empty string prompt`);
+    }
+    prompts.push(item.prompt);
+  });
+  if (prompts.length === 0) throw new Error('PROMPTS has no prompts');
+  return prompts;
+}
+
+// requestBody returns the JSON body with content as the user message.
+export function requestBody(content) {
+  const body = { model: MODEL, max_tokens: MAX_TOKENS, stream: true, messages: [{ role: 'user', content }] };
+  if (TEMPERATURE !== null) body.temperature = TEMPERATURE;
+  return JSON.stringify(body);
+}
+
+const PROMPTS = env('PROMPTS', '') === '' ? null : parsePrompts(open(env('PROMPTS', '')));
+// Without PROMPTS every request sends the same body, built once.
+const BODY = requestBody('x'.repeat(INPUT_BYTES));
+const BODIES = PROMPTS === null ? null : PROMPTS.map(requestBody);
 const HEADERS = { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' };
 
 // classify names the result of one request. A request completes only when its first
@@ -157,8 +193,8 @@ export function setup() {
   }
 }
 
-function request(url, headers, tags) {
-  return ['POST', url, BODY, { headers, timeout: `${TOTAL_DEADLINE_S}s`, tags }];
+function request(url, body, headers, tags) {
+  return ['POST', url, body, { headers, timeout: `${TOTAL_DEADLINE_S}s`, tags }];
 }
 
 export default function () {
@@ -166,10 +202,11 @@ export default function () {
   const [tenant, key] = KEYS[exec.scenario.iterationInTest % KEYS.length];
   const [phase, level] = phaseAt((Date.now() - exec.scenario.startTime) / 1000);
   const tags = { phase, level: String(level), tenant };
-  const gateway = request(`${BASE_URL}/v1/messages`, { ...HEADERS, 'x-api-key': key }, { ...tags, path: 'gateway' });
+  const body = BODIES === null ? BODY : BODIES[exec.scenario.iterationInTest % BODIES.length];
+  const gateway = request(`${BASE_URL}/v1/messages`, body, { ...HEADERS, 'x-api-key': key }, { ...tags, path: 'gateway' });
   sent.add(1, tags);
   const [res, direct] = PAIRED
-    ? http.batch([gateway, request(`${MOCK_URL}/v1/messages`, HEADERS, { ...tags, path: 'direct' })])
+    ? http.batch([gateway, request(`${DIRECT_URL || MOCK_URL}/v1/messages`, body, HEADERS, { ...tags, path: 'direct' })])
     : [http.request(...gateway), null];
   const result = classify(res.status, res.error_code, res.timings.waiting, res.body);
   results[result].add(1, { ...tags, status: String(res.status) });
