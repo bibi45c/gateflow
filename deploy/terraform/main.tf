@@ -51,6 +51,7 @@ module "model_host" {
   disk_gb                = var.gpu_model_disk_gb
   ami_id                 = var.gpu_model_ami_id
   served_model_name      = var.gpu_model_served_name
+  vllm_image             = var.gpu_model_vllm_image
   max_num_seqs           = var.gpu_model_max_num_seqs
   max_model_len          = var.gpu_model_max_model_len
   extra_args             = var.gpu_model_extra_args

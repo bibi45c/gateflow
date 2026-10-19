@@ -60,3 +60,14 @@ run "subnet_index_is_bounded" {
   }
   expect_failures = [var.gpu_model_subnet_index]
 }
+run "fallback_image" {
+  command = plan
+  variables {
+    gpu_model_enabled    = true
+    gpu_model_vllm_image = "vllm/vllm-openai:v0.31.0-cu129@sha256:ff29e51a9457f191deb332b96fa6440584fa941aa2a548449b604e2b1e5e1eeb"
+  }
+  assert {
+    condition     = strcontains(module.model_host[0].image, "v0.31.0-cu129@sha256:")
+    error_message = "The root variable selects the vLLM image."
+  }
+}

@@ -17,3 +17,4 @@ output "model_host_served_model" { value = try(module.model_host[0].served_model
 output "model_host_security_group_id" { value = try(module.model_host[0].security_group_id, null) }
 output "model_host_role_arn" { value = try(module.model_host[0].role_arn, null) }
 output "model_host_ami_id" { value = try(module.model_host[0].ami_id, null) }
+output "model_host_image" { value = try(module.model_host[0].image, null) }

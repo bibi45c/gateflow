@@ -102,6 +102,11 @@ variable "gpu_model_ami_id" {
   type        = string
   default     = ""
 }
+variable "gpu_model_vllm_image" {
+  description = "vLLM image pinned by digest; the v0.31.0-cu129 tag is the fallback for a driver older than R580."
+  type        = string
+  default     = "vllm/vllm-openai:v0.31.0@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3"
+}
 variable "gpu_model_served_name" {
   type    = string
   default = "qwen3-0.6b"
