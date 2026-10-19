@@ -1,0 +1,39 @@
+#!/bin/bash
+# FlowGate model host (deploy/terraform/modules/model_host): cloud-init runs this once
+# at first boot. It waits for Docker and the GPU of the Deep Learning AMI, then starts
+# vLLM, which Docker restarts after a crash or a reboot. Progress goes to
+# /var/log/gateflow-vllm.log; vLLM's own log is `docker logs vllm`.
+set -euo pipefail
+exec > >(tee -a /var/log/gateflow-vllm.log) 2>&1
+echo "gateflow: start $(date -u +%FT%TZ)"
+
+for attempt in $(seq 1 60); do
+  if docker info >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then break; fi
+  echo "gateflow: waiting for Docker and the GPU ($attempt)"
+  sleep 5
+done
+nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
+
+key_args=()
+%{ if api_key_ssm_parameter != "" ~}
+key="$(aws ssm get-parameter --region '${region}' --with-decryption --name '${api_key_ssm_parameter}' --query Parameter.Value --output text)"
+key_args=(--api-key "$key")
+%{ endif ~}
+
+mkdir -p /opt/gateflow/huggingface
+docker pull '${image}'
+# T4 has no BF16, hence --dtype half. Thinking is off for every request by default.
+# Prefix caching is off, so that a repeated prompt is computed the same way each time.
+docker run --detach --name vllm --restart unless-stopped --gpus all --ipc=host \
+  --publish '${port}:8000' \
+  --volume /opt/gateflow/huggingface:/root/.cache/huggingface \
+  '${image}' \
+  --model '${model}' --revision '${revision}' --served-model-name '${served_name}' \
+  --dtype half --max-num-seqs '${max_num_seqs}' --max-model-len '${max_model_len}' \
+  --gpu-memory-utilization '${gpu_memory_utilization}' --no-enable-prefix-caching \
+  --default-chat-template-kwargs '{"enable_thinking": false}' \
+%{ for arg in extra_args ~}
+  '${arg}' \
+%{ endfor ~}
+  "$${key_args[@]}"
+echo "gateflow: vLLM container started $(date -u +%FT%TZ)"

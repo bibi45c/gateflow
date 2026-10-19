@@ -37,3 +37,29 @@ module "database" {
   final_snapshot_identifier = var.database_final_snapshot_identifier
   tags                      = local.tags
 }
+
+# Optional GPU host serving a real model with vLLM (issue #144); off by default.
+module "model_host" {
+  source                 = "./modules/model_host"
+  count                  = var.gpu_model_enabled ? 1 : 0
+  name                   = "gateflow-${var.environment}"
+  region                 = var.region
+  account_id             = var.aws_account_id
+  vpc_id                 = module.network.vpc_id
+  subnet_id              = module.network.private_subnet_ids[var.gpu_model_subnet_index]
+  instance_type          = var.gpu_model_instance_type
+  disk_gb                = var.gpu_model_disk_gb
+  ami_id                 = var.gpu_model_ami_id
+  served_model_name      = var.gpu_model_served_name
+  max_num_seqs           = var.gpu_model_max_num_seqs
+  max_model_len          = var.gpu_model_max_model_len
+  extra_args             = var.gpu_model_extra_args
+  api_key_ssm_parameter  = var.gpu_model_api_key_ssm_parameter
+  gpu_memory_utilization = var.gpu_model_gpu_memory_utilization
+  # The direct baselines of T0, T1 and T5 run on the load-generator node.
+  client_security_group_ids = merge(
+    { services = module.cluster.service_security_group_id },
+    var.gpu_model_generator_access ? { "load-generator" = module.cluster.generator_security_group_id } : {}
+  )
+  tags = local.tags
+}
