@@ -33,7 +33,8 @@ SEED_KEY = 'ACCESS_SEED_SECRET'
 # The messages.js settings --env may set. The target URLs follow from --release, and
 # the seed secret comes only from the Secret, never from the command line.
 SETTINGS = ('PAIRED', 'MODEL', 'MAX_TOKENS', 'INPUT_BYTES', 'TENANTS', 'LEVELS', 'WARMUP_S', 'RAMP_S',
-            'HOLD_S', 'TTFB_DEADLINE_MS', 'TOTAL_DEADLINE_S', 'MOCK_FIRST_EVENT_DELAY_MS', 'MAX_VUS', 'STREAM_S')
+            'HOLD_S', 'TTFB_DEADLINE_MS', 'TOTAL_DEADLINE_S', 'MOCK_FIRST_EVENT_DELAY_MS', 'MAX_VUS', 'STREAM_S',
+            'CONNECTION_REUSE')
 FROM_RELEASE = ('GATEWAY_URL', 'MOCK_URL')
 PREALLOC = 'PREALLOC_VUS'  # set with --prealloc-vus, which checks it against MAX_VUS
 DEFAULT_MAX_VUS = 4000  # as messages.js

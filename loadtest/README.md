@@ -355,6 +355,7 @@ Pass each with `-e NAME=value`, or with `--env NAME=value` to `kube_run.py`.
 | `STREAM_S` | `25` | Seconds a request is expected to last; the highest level times this is the number of VUs k6 starts before the run |
 | `PREALLOC_VUS` | unset | VUs k6 starts before the run, replacing the highest level times `STREAM_S`; a whole number from 1 to `MAX_VUS`, otherwise k6 refuses to start. With `kube_run.py`, pass `--prealloc-vus N` instead of `--env` |
 | `MAX_VUS` | `4000` | VU ceiling; k6 can drop arrivals when every VU is occupied |
+| `CONNECTION_REUSE` | `1` | `1` lets each VU keep its connection; `0` opens a new connection for every request, so gateway Pods added during the run get a share through a Service |
 
 Set `PREALLOC_VUS` when a failing level's requests last longer than `STREAM_S`:
 when their duration times the level's rate exceeds the default preallocation

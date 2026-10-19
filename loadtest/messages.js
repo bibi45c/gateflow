@@ -57,6 +57,13 @@ if (PREALLOC_VUS !== null && (!Number.isInteger(PREALLOC_VUS) || PREALLOC_VUS < 
 if (PREALLOC_VUS !== null && PREALLOC_VUS > MAX_VUS) {
   throw new Error(`PREALLOC_VUS (${PREALLOC_VUS}) must not exceed MAX_VUS (${MAX_VUS})`);
 }
+// A VU keeps its keep-alive connection by default, and a Service balances connections,
+// not requests: Pods that scale out later get no share of the existing connections.
+// CONNECTION_REUSE=0 opens a new connection for every iteration, as new clients would.
+const CONNECTION_REUSE = env('CONNECTION_REUSE', '1');
+if (CONNECTION_REUSE !== '0' && CONNECTION_REUSE !== '1') {
+  throw new Error('CONNECTION_REUSE must be 0 or 1');
+}
 
 // phases returns the run's plan as [phase, level, start, end], in seconds from the
 // start of the scenario.
@@ -77,6 +84,7 @@ export function phases(levels, warmup, ramp, hold) {
 const PLAN = phases(LEVELS, WARMUP_S, RAMP_S, HOLD_S);
 
 export const options = {
+  noVUConnectionReuse: CONNECTION_REUSE === '0',
   scenarios: {
     messages: {
       executor: 'ramping-arrival-rate',
