@@ -368,6 +368,27 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(log_prefixes, ['/aws/eks/gateflow-s3/', '/aws/rds/instance/gateflow-s3/'])
         self.assertIn('inventory written', out)
 
+    def test_inventory_records_the_model_host_when_present(self):
+        outputs = TF_OUTPUTS | {'model_host_instance_id': 'i-0eeeeeeeeeeeeeee1',
+                                'model_host_security_group_id': 'sg-0eeeeeeeeeeeeeee1',
+                                'model_host_role_arn': f'arn:aws:iam::{ACCOUNT}:role/gateflow-s3-model-1'}
+        self.outputs.write_text(json.dumps({key: {'sensitive': False, 'type': 'x', 'value': value}
+                                            for key, value in outputs.items()}), encoding='utf-8')
+        self.assertEqual(self.run_inventory(FakeAWS(INVENTORY_AWS))[0], 0)
+        inventory = json.loads(self.out.read_text(encoding='utf-8'))
+        self.assertIn('i-0eeeeeeeeeeeeeee1', inventory['instance_ids'])
+        self.assertIn('sg-0eeeeeeeeeeeeeee1', inventory['security_group_ids'])
+        self.assertIn(outputs['model_host_role_arn'], inventory['role_arns'])
+
+    def test_inventory_skips_the_null_outputs_of_an_absent_model_host(self):
+        outputs = TF_OUTPUTS | {'model_host_instance_id': None, 'model_host_security_group_id': None,
+                                'model_host_role_arn': None}
+        self.outputs.write_text(json.dumps({key: {'sensitive': False, 'type': 'x', 'value': value}
+                                            for key, value in outputs.items()}), encoding='utf-8')
+        self.assertEqual(self.run_inventory(FakeAWS(INVENTORY_AWS))[0], 0)
+        inventory = json.loads(self.out.read_text(encoding='utf-8'))
+        self.assertNotIn(None, inventory['instance_ids'] + inventory['security_group_ids'] + inventory['role_arns'])
+
     def test_inventory_feeds_check(self):
         self.assertEqual(self.run_inventory(FakeAWS(INVENTORY_AWS))[0], 0)
         responses = CLEAN | {('ec2', 'describe-volumes'): {'Volumes': [
