@@ -277,6 +277,26 @@ SHUTDOWN_DRAIN_DELAY and SHUTDOWN_TIMEOUT; readiness is /readyz and liveness is
 /healthz. Native sleep works with the distroless images. Values that cannot fit the
 shutdown budget are rejected at render time.
 
+### Real-model channel
+
+The seeded `ollama` and `ollama-responses` channels take their base URL and model from
+`seedChannels.ollamaBaseURL` and `seedChannels.ollamaModel`. To send them to the vLLM
+model host of [#144](https://github.com/bibi45c/gateflow/issues/144), read its
+Terraform outputs and set both on the release; no chart change is needed:
+
+```text
+terraform -chdir=deploy/terraform output -raw model_host_base_url
+terraform -chdir=deploy/terraform output -raw model_host_served_model
+helm --kubeconfig <kubeconfig> --kube-context <context> upgrade gf deploy/helm/gateflow -n gateflow --reuse-values --set seedChannels.ollamaBaseURL=<model_host_base_url> --set seedChannels.ollamaModel=<model_host_served_model> --wait --wait-for-jobs --timeout 15m
+```
+
+The post-upgrade access seed replaces the two channels' URL and model; tenants, keys
+and wallets stay. `--reuse-values` keeps them through later `conditions.py upgrade`
+runs. The gateway reads channels from access on every call, so no gateway restart is
+needed. The base URL is plain `http://` and the channel carries no credential, so
+vLLM runs without an API key and the model host's security group is the boundary.
+To go back to the placeholder, set `http://ollama:11434` and `qwen3:8b` the same way.
+
 ## Probes
 
 Each service has a readiness probe on /readyz and liveness and startup probes on

@@ -448,8 +448,11 @@ def run_inventory(args, runner, now):
     inventory['subnet_ids'].update(outputs.get('public_subnet_ids') or [])
     inventory['subnet_ids'].update(outputs.get('private_subnet_ids') or [])
     inventory['security_group_ids'].update(filter(None, [outputs.get('service_security_group_id'),
-                                                         outputs.get('generator_security_group_id')]))
-    inventory['role_arns'].update(filter(None, [outputs.get('controller_role_arn')]))
+                                                         outputs.get('generator_security_group_id'),
+                                                         outputs.get('model_host_security_group_id')]))
+    # The optional GPU model host (gpu_model_enabled); its outputs are null when it is off.
+    inventory['instance_ids'].update(filter(None, [outputs.get('model_host_instance_id')]))
+    inventory['role_arns'].update(filter(None, [outputs.get('controller_role_arn'), outputs.get('model_host_role_arn')]))
     inventory['secret_arns'].update(filter(None, [outputs.get('master_secret_arn')]))
     address = outputs.get('database_address')
     if address:
