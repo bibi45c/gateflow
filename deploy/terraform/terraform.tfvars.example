@@ -15,3 +15,5 @@ database_storage_gb = 20
 # Explicit disposable experiment mode, only after evidence has been exported.
 database_deletion_protection = false
 database_skip_final_snapshot = true
+# Optional GPU model host for the real-model tests (#144); needs the G vCPU quota.
+gpu_model_enabled = false

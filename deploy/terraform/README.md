@@ -55,6 +55,9 @@ revised nodes at Singapore On-Demand rates when reviewing the plan.
 | `database_skip_final_snapshot` | false |
 | `database_final_snapshot_identifier` | Required unique identifier unless skipping snapshot |
 | `tags` | Additional tags; Project/Environment applied consistently |
+| `gpu_model_enabled` | false; true adds the [GPU model host](#optional-gpu-model-host) |
+| `gpu_model_instance_type`, `gpu_model_subnet_index` | g4dn.xlarge (only `g4dn.*`), private subnet 0 |
+| `gpu_model_*` (other) | Disk, AMI, model name and vLLM limits; see [below](#optional-gpu-model-host) |
 
 [terraform.tfvars.example](terraform.tfvars.example) uses fictional account/role
 and documentation-only CIDR placeholders. bibi45c replaces them in an ignored
@@ -76,6 +79,37 @@ Workload placement keeps generator and simulator compute off the relay nodes.
 k6 and the mock upstream both select `gateflow.io/workload=load-generator` and
 tolerate the taint, so they share the generator node. Service nodes run only the
 gateway, access, metering and cluster components. #71 implements this in Helm.
+
+## Optional GPU model host
+
+Issue [#144](https://github.com/bibi45c/gateflow/issues/144). With
+`gpu_model_enabled = true` the configuration adds one GPU instance that serves a real
+model with vLLM, for the real-model tests. The default `false` adds nothing, so the
+S3 plan is unchanged.
+
+| Part | Value |
+|---|---|
+| Instance | `gpu_model_instance_type`, default g4dn.xlarge (1 × T4, 16 GB, 4 vCPU; g4dn.2xlarge also allowed); private subnet `gpu_model_subnet_index`, no public IP, IMDSv2 required |
+| AMI | AWS Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 24.04), NVIDIA driver, Docker and the NVIDIA container toolkit preinstalled. Resolved from the public SSM parameter `/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id` unless `gpu_model_ami_id` is set. A newer AMI later does not replace a running host (`ignore_changes`) |
+| Disk | `gpu_model_disk_gb`, default 100 GB encrypted gp3, deleted with the instance |
+| Server | `gpu_model_vllm_image`, default `vllm/vllm-openai:v0.31.0` pinned by digest (CUDA 13.0, needs an R580 or newer driver; the fallback is `vllm/vllm-openai:v0.31.0-cu129@sha256:ff29e51a9457f191deb332b96fa6440584fa941aa2a548449b604e2b1e5e1eeb`), started by user-data with `--restart unless-stopped`; `Qwen/Qwen3-0.6B` at a pinned revision, served as `gpu_model_served_name` (`qwen3-0.6b`) |
+| vLLM flags | `--dtype half` (T4 has no BF16), thinking off (`--default-chat-template-kwargs '{"enable_thinking": false}'`), `--max-num-seqs` 256, `--max-model-len` 4096, `--gpu-memory-utilization` 0.85, `--no-enable-prefix-caching`, plus `gpu_model_extra_args` such as `--enforce-eager` |
+| Network | Its own security group: TCP 8000 from the services node group, and from the load-generator node group while `gpu_model_generator_access` is true (the default; the direct baselines run there). No CIDR ingress. Egress through the NAT for the image (about 9 GB) and the model (about 1.5 GB) |
+| Access | An instance role with `AmazonSSMManagedInstanceCore` only, for Session Manager. No SSH key, no port 22 |
+| API key | None by default. vLLM checks only `Authorization: Bearer`, while the seeded `ollama` channel has no credential and the gateway refuses one on an `http://` base URL. A keyed vLLM therefore cannot be reached through the gateway. `gpu_model_api_key_ssm_parameter` names a SecureString for direct-only use; the role may then read that one parameter |
+| Outputs | `model_host_base_url` (`http://<private ip>:8000`), `model_host_served_model`, `model_host_private_ip`, `model_host_instance_id`, `model_host_security_group_id`, `model_host_role_arn`, `model_host_ami_id`, `model_host_image`; all null when off |
+
+Point the gateway at it with the Helm values of the
+[seed channel](../helm/README.md#real-model-channel). `leftovers.py inventory` records
+the instance, its security group and its role from the outputs, and the daily teardown
+removes it with everything else.
+
+Before an apply with the flag on, confirm the On-Demand G and VT vCPU quota (4 vCPU
+for xlarge, 8 for 2xlarge) and that the subnet's AZ offers the type:
+`aws ec2 describe-instance-type-offerings --region ap-southeast-1 --location-type availability-zone --filters Name=instance-type,Values=g4dn.xlarge`.
+On 2026-10-19 the price list gave USD 0.736 per hour for g4dn.xlarge and 1.052 for
+g4dn.2xlarge in Singapore, On-Demand Linux. The download through the NAT costs about
+USD 0.6 once per host.
 
 ## Compatibility and controller handoff
 

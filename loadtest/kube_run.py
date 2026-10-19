@@ -34,9 +34,13 @@ SEED_KEY = 'ACCESS_SEED_SECRET'
 # the seed secret comes only from the Secret, never from the command line.
 SETTINGS = ('PAIRED', 'MODEL', 'MAX_TOKENS', 'INPUT_BYTES', 'TENANTS', 'LEVELS', 'WARMUP_S', 'RAMP_S',
             'HOLD_S', 'TTFB_DEADLINE_MS', 'TOTAL_DEADLINE_S', 'MOCK_FIRST_EVENT_DELAY_MS', 'MAX_VUS', 'STREAM_S',
-            'CONNECTION_REUSE')
+            'CONNECTION_REUSE', 'DIRECT_URL', 'TEMPERATURE')
 FROM_RELEASE = ('GATEWAY_URL', 'MOCK_URL')
 PREALLOC = 'PREALLOC_VUS'  # set with --prealloc-vus, which checks it against MAX_VUS
+PROMPTS = 'PROMPTS'  # set with --prompts, which puts the file next to messages.js
+PROMPTS_PATH = '/scripts/prompts.jsonl'
+# A ConfigMap holds at most 1 MiB; leave room for messages.js.
+PROMPTS_MAX_BYTES = 900 * 1024
 DEFAULT_MAX_VUS = 4000  # as messages.js
 WORKLOAD = {'gateflow.io/workload': 'load-generator'}
 PREFIX = 'gateflow-k6-'
@@ -84,6 +88,8 @@ def setting(text):
         raise argparse.ArgumentTypeError(f'{key} is the in-cluster Service of --release, not set with --env')
     if key == PREALLOC:
         raise argparse.ArgumentTypeError(f'{PREALLOC} is set with --prealloc-vus, not with --env')
+    if key == PROMPTS:
+        raise argparse.ArgumentTypeError(f'{PROMPTS} is set with --prompts, not with --env')
     if key not in SETTINGS:
         raise argparse.ArgumentTypeError(f'{key} is not a setting of messages.js; use one of {", ".join(SETTINGS)}')
     return key, value
@@ -190,6 +196,11 @@ def parse_args(argv, now):
                         help=f'messages.js setting, repeatable: {", ".join(SETTINGS)}')
     parser.add_argument('--prealloc-vus', type=vu_count, metavar='N',
                         help='VUs k6 starts before the run, at most MAX_VUS (default: the highest level times STREAM_S)')
+    parser.add_argument('--gateway-url', metavar='URL',
+                        help='aim GATEWAY_URL elsewhere, such as a vLLM server for a direct capacity run '
+                             '(default: the gateway Service of --release)')
+    parser.add_argument('--prompts', type=Path, metavar='JSONL',
+                        help='prompt file for messages.js, such as loadtest/prompts/realmodel.jsonl (default: none)')
     parser.add_argument('--timeout', type=int, help=f'seconds to wait for k6 (default: the plan plus {MARGIN_S})')
     parser.add_argument('--k6-cpu', default='2', help='CPU request and limit of k6 (default: 2)')
     parser.add_argument('--k6-memory', default='4Gi', help='memory request and limit of k6 (default: 4Gi)')
@@ -207,6 +218,17 @@ def parse_args(argv, now):
         if args.prealloc_vus > max_vus:
             parser.error(f'--prealloc-vus {args.prealloc_vus} exceeds MAX_VUS {max_vus:g}')
         args.env[PREALLOC] = str(args.prealloc_vus)
+    if args.gateway_url is not None and not re.fullmatch(r'https?://[^\s/]+', args.gateway_url):
+        parser.error('--gateway-url is a base URL such as http://10.40.2.15:8000, without a path')
+    args.prompts_text = None
+    if args.prompts is not None:
+        try:
+            args.prompts_text = args.prompts.read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError) as error:
+            parser.error(f'cannot read --prompts: {type(error).__name__}')
+        if len(args.prompts_text.encode('utf-8')) > PROMPTS_MAX_BYTES:
+            parser.error(f'--prompts is larger than {PROMPTS_MAX_BYTES} bytes, which a ConfigMap cannot hold')
+        args.env[PROMPTS] = PROMPTS_PATH
     args.name = args.name or stamp_name(now)
     if not NAME.fullmatch(args.name) or len(PREFIX + args.name) > 63:
         parser.error(f'--name must be lowercase letters, digits and dashes, at most {63-len(PREFIX)} characters')
@@ -234,14 +256,14 @@ def labels(args):
 
 def target_env(args):
     """Every environment variable of k6 except the seed secret."""
-    return {'GATEWAY_URL': f'http://{args.release}-gateway:8080',
+    return {'GATEWAY_URL': args.gateway_url or f'http://{args.release}-gateway:8080',
             'MOCK_URL': f'http://{args.release}-mock-upstream:8090', **dict(sorted(args.env.items()))}
 
 
 def config_map(args, script):
     return {'apiVersion': 'v1', 'kind': 'ConfigMap',
             'metadata': {'name': PREFIX + args.name, 'labels': labels(args)},
-            'data': {'messages.js': script}}
+            'data': {'messages.js': script, **({'prompts.jsonl': args.prompts_text} if args.prompts_text else {})}}
 
 
 def pod(args):
@@ -408,6 +430,9 @@ def kube_run(args, runner, stamp, clock=time.monotonic, sleep=time.sleep, wall=u
               'namespace': args.namespace, 'release': args.release, 'k6_image': K6_IMAGE,
               'script': {'path': deploy.repo_path(SCRIPT)[0],
                          'sha256': hashlib.sha256(script.encode('utf-8')).hexdigest()},
+              'prompts': None if args.prompts_text is None else {
+                  'path': deploy.repo_path(args.prompts.resolve())[0],
+                  'sha256': hashlib.sha256(args.prompts_text.encode('utf-8')).hexdigest()},
               'pod': name, 'node_selector': dict(WORKLOAD),
               'resources': {'cpu': args.k6_cpu, 'memory': args.k6_memory}, 'timeout_s': args.timeout,
               # The seed secret's value never leaves the cluster; only its source is recorded.
