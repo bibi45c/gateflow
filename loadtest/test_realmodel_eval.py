@@ -28,8 +28,9 @@ REPLIES = {
 class Upstream:
     """A fake model server. replies maps a prompt to its text; cut lists prompts whose stream stops early."""
 
-    def __init__(self, replies, cut=(), status=200, chunk=5):
+    def __init__(self, replies, cut=(), status=200, chunk=5, request_ids=False):
         self.replies, self.cut, self.status, self.chunk = dict(replies), set(cut), status, chunk
+        self.request_ids = request_ids
         self.requests = []
         owner = self
 
@@ -46,6 +47,8 @@ class Upstream:
                     self.wfile.write(b'{"type":"error"}')
                     return
                 self.send_response(200)
+                if owner.request_ids:
+                    self.send_header('request-id', f'req_{len(owner.requests)}')
                 self.send_header('content-type', 'text/event-stream')
                 self.end_headers()
                 prompt = body['messages'][0]['content'] if self.path == '/v1/messages' else body['input']
@@ -184,6 +187,62 @@ class RunTest(Case):
     def test_sets_and_limit_select_items(self):
         items = ev.load_prompts(self.prompts, ['mmlu', 'humaneval'], 1)
         self.assertEqual([i['id'] for i in items], ['mmlu-00001', 'humaneval-000'])
+
+
+class ReconcileTest(Case):
+    LEDGER = 'ledger_entry_id,reservation_id,call_id,attempt_id,tenant_id,amount,input_tokens,output_tokens,outcome,created_at\n'
+    HOLDS = 'reservation_id,call_id,status,input_price,output_price\n'
+
+    def bill(self, out, amount=None, held=False, outcome='completed', drop=None):
+        answers = [json.loads(l) for l in (out/'answers-gateway.jsonl').read_text(encoding='utf-8').splitlines()]
+        ledger, holds = [self.LEDGER], [self.HOLDS]
+        for i, a in enumerate(answers):
+            if a['id'] == drop:
+                continue
+            charge = 3 * a['input_tokens'] + 15 * a['output_tokens'] if amount is None else amount
+            ledger.append(f"le{i},r{i},{a['request_id']},1,tenant-01,{charge},{a['input_tokens']},{a['output_tokens']},{outcome},t\n")
+            holds.append(f"r{i},{a['request_id']},settled,3,15\n")
+        ledger.append('le9,r9,req_other,1,tenant-02,0,1,1,completed,t\n')
+        holds.append(f"r9,req_other,{'reserved' if held else 'settled'},3,15\n")
+        (self.folder/'ledger_entries.csv').write_text(''.join(ledger), encoding='utf-8')
+        (self.folder/'reservations.csv').write_text(''.join(holds), encoding='utf-8')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            code = ev.main(['reconcile', '--answers', str(out/'answers-gateway.jsonl'),
+                            '--ledger', str(self.folder/'ledger_entries.csv'),
+                            '--reservations', str(self.folder/'reservations.csv')])
+        return code, output.getvalue()
+
+    def gateway_run(self):
+        code, summary, out = self.run_eval(self.upstream(), self.upstream(request_ids=True))
+        self.assertEqual(code, 0)
+        self.assertEqual(summary['passes']['gateway']['missing_usage'], 0)
+        return out
+
+    def test_matching_bill_passes(self):
+        code, text = self.bill(self.gateway_run())
+        self.assertEqual(code, 0, text)
+        self.assertIn('"reconciled": 3', text)
+        self.assertIn('"other_ledger_entries": 1', text)
+
+    def test_wrong_amount_missing_entry_bad_outcome_and_held_reservation_fail(self):
+        out = self.gateway_run()
+        for kwargs, expected in (({'amount': 1}, 'is not the price'), ({'drop': 'mmlu-00001'}, '0 ledger entries'),
+                                 ({'outcome': 'upstream_error'}, 'outcome upstream_error'),
+                                 ({'held': True}, 'still reserved')):
+            with self.subTest(**kwargs):
+                code, text = self.bill(out, **kwargs)
+                self.assertEqual(code, 1)
+                self.assertIn(expected, text)
+
+    def test_direct_answers_cannot_be_reconciled(self):
+        code, summary, out = self.run_eval(self.upstream(), self.upstream())
+        (self.folder/'ledger_entries.csv').write_text(self.LEDGER, encoding='utf-8')
+        (self.folder/'reservations.csv').write_text(self.HOLDS, encoding='utf-8')
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(ev.main(['reconcile', '--answers', str(out/'answers-direct.jsonl'), '--ledger',
+                                      str(self.folder/'ledger_entries.csv'), '--reservations',
+                                      str(self.folder/'reservations.csv')]), 2)
 
 
 class ScoreTest(unittest.TestCase):

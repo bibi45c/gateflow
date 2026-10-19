@@ -477,6 +477,17 @@ python loadtest/realmodel_eval.py pod --name t5 --out .local/realmodel/pod-t5.js
 python loadtest/realmodel_eval.py run --direct-url http://<model host>:8000 --gateway-url http://gf-gateway:8080 --model qwen3-0.6b --out-dir /tmp/t5 --control
 ```
 
+`reconcile` checks the bill of every completed gateway call. It reads the
+`ledger_entries.csv` and `reservations.csv` that `deploy/aws/reset_db.py` exports
+before it empties the tables. Each call must have exactly one `completed` entry, under
+the `request-id` the gateway returned, with the token counts the client saw and an
+amount equal to the reservation's prices times those tokens. No reservation may stay
+`reserved`:
+
+```text
+python loadtest/realmodel_eval.py reconcile --answers .local/realmodel/t5/answers-gateway.jsonl --ledger <evidence dir>/ledger_entries.csv --reservations <evidence dir>/reservations.csv
+```
+
 Greedy decoding is not batch-invariant: with other calls in the same batch, vLLM may
 give a different answer to the same prompt, gateway or not. `--control` repeats the
 direct pass, so the direct-vs-direct rate shows that noise floor. `--concurrency 1`

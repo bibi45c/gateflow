@@ -25,12 +25,17 @@ is not a security sandbox: use it only in a disposable Pod (see the pod command)
 
   python loadtest/realmodel_eval.py run --direct-url http://<model host>:8000 --gateway-url http://gf-gateway:8080 --model qwen3-0.6b --out-dir /tmp/t5
   python loadtest/realmodel_eval.py pod --name t5 --out .local/realmodel/pod-t5.json
+  python loadtest/realmodel_eval.py reconcile --answers <out-dir>/answers-gateway.jsonl --ledger <reset evidence>/ledger_entries.csv --reservations <reset evidence>/reservations.csv
+
+reconcile checks the bill of every completed gateway call against the CSVs that
+deploy/aws/reset_db.py exports before it empties the accounting tables.
 
 Standard library only.
 """
 import argparse
 import ast
 import base64
+import csv
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import hmac
@@ -218,7 +223,7 @@ def call(target, protocol, item, settings, clock=time.monotonic):
     started = clock()
     record = {'id': item['id'], 'set': item['set'], 'status': 'failed', 'http_status': None, 'error': None,
               'text': '', 'ttfb_ms': None, 'first_output_ms': None, 'duration_ms': None,
-              'input_tokens': None, 'output_tokens': None, 'stop_reason': None}
+              'input_tokens': None, 'output_tokens': None, 'stop_reason': None, 'request_id': None}
     stream = Stream()
     connection = None
     try:
@@ -228,6 +233,8 @@ def call(target, protocol, item, settings, clock=time.monotonic):
         response = connection.getresponse()
         record['ttfb_ms'] = round((clock() - started) * 1000, 1)
         record['http_status'] = response.status
+        # The gateway's call ID, which metering records as call_id; a model server sends none.
+        record['request_id'] = response.getheader('request-id')
         if response.status != 200:
             stream.error = response.read(500).decode('utf-8', 'replace')
         else:
@@ -390,6 +397,7 @@ def pass_summary(items, records, execute):
     done = [r for r in records if r['status'] == 'completed']
     return {'items': len(records), 'completed': len(done), 'not_completed': len(records) - len(done),
             'with_thinking': sum(1 for r in records if r.get('thinking')),
+            'missing_usage': sum(1 for r in done if r['input_tokens'] is None or r['output_tokens'] is None),
             'ttfb_ms': {f'p{q}': percentile([r['ttfb_ms'] for r in done], q) for q in (50, 95, 99)},
             'first_output_ms': {f'p{q}': percentile([r['first_output_ms'] for r in done], q) for q in (50, 95, 99)},
             'duration_ms': {f'p{q}': percentile([r['duration_ms'] for r in done], q) for q in (50, 95, 99)},
@@ -418,12 +426,12 @@ def markdown(summary):
     lines = [f"# Real-model answer check ({summary['protocol']})", '',
              f"Model `{summary['model']}`, {summary['items']} items, concurrency {summary['concurrency']}, "
              f"max tokens {summary['max_tokens']}, temperature 0. Verdict: **{'PASS' if summary['pass'] else 'FAIL'}**.", '',
-             '| Pass | Completed | Not completed | TTFB p50 / p95 (ms) | Duration p50 / p95 (ms) | Output tokens p50 / p95 |'
+             '| Pass | Completed | Not completed | Missing usage | TTFB p50 / p95 (ms) | Duration p50 / p95 (ms) | Output tokens p50 / p95 |'
              + ''.join(f' {name} accuracy |' for name in summary['sets']),
-             '|---|---|---|---|---|---|' + '---|' * len(summary['sets'])]
+             '|---|---|---|---|---|---|---|' + '---|' * len(summary['sets'])]
     for name, p in summary['passes'].items():
         accuracy = ''.join(f" {p['sets'].get(s, {}).get('accuracy', '-')} |" for s in summary['sets'])
-        lines.append(f"| {name} | {p['completed']} | {p['not_completed']} | {p['ttfb_ms']['p50']} / {p['ttfb_ms']['p95']} | "
+        lines.append(f"| {name} | {p['completed']} | {p['not_completed']} | {p['missing_usage']} | {p['ttfb_ms']['p50']} / {p['ttfb_ms']['p95']} | "
                      f"{p['duration_ms']['p50']} / {p['duration_ms']['p95']} | "
                      f"{p['output_tokens']['p50']} / {p['output_tokens']['p95']} |{accuracy}")
     lines += ['', '| Comparison | Compared | Identical | Usage differs |', '|---|---|---|---|']
@@ -471,6 +479,78 @@ def run(args):
     (args.out_dir/'summary.md').write_text(markdown(summary), encoding='utf-8')
     print(markdown(summary))
     return 0 if summary['pass'] else 1
+
+
+def read_csv(path):
+    try:
+        with path.open(encoding='utf-8', newline='') as handle:
+            return list(csv.DictReader(handle))
+    except OSError as error:
+        raise InputError(f'cannot read {path}: {error.strerror}') from None
+
+
+def whole(value):
+    return None if value in (None, '') else int(value)
+
+
+def reconcile_calls(calls, ledger, reservations):
+    """Problems found matching gateway calls to the metering ledger, and the counts checked.
+
+    Every completed call must have exactly one ledger entry with its call_id, outcome
+    completed, the token counts the client saw and an amount of input_price x input
+    tokens + output_price x output tokens from its reservation. No reservation may stay
+    reserved. Ledger entries of other calls are counted, not judged.
+    """
+    by_call = {}
+    for entry in ledger:
+        by_call.setdefault(entry['call_id'], []).append(entry)
+    holds = {r['reservation_id']: r for r in reservations}
+    problems = []
+    checked = 0
+    for call in calls:
+        if call['status'] != 'completed':
+            continue
+        entries = by_call.get(call.get('request_id') or '', [])
+        if len(entries) != 1:
+            problems.append(f"{call['id']}: {len(entries)} ledger entries for call {call.get('request_id')}")
+            continue
+        entry = entries[0]
+        tokens = (whole(entry['input_tokens']), whole(entry['output_tokens']))
+        hold = holds.get(entry['reservation_id'])
+        if entry['outcome'] != 'completed':
+            problems.append(f"{call['id']}: ledger outcome {entry['outcome']}")
+        elif tokens != (call['input_tokens'], call['output_tokens']):
+            problems.append(f"{call['id']}: ledger tokens {tokens}, client saw {(call['input_tokens'], call['output_tokens'])}")
+        elif hold is None:
+            problems.append(f"{call['id']}: no reservation {entry['reservation_id']}")
+        elif int(entry['amount']) != int(hold['input_price']) * tokens[0] + int(hold['output_price']) * tokens[1]:
+            problems.append(f"{call['id']}: amount {entry['amount']} is not the price times the tokens")
+        else:
+            checked += 1
+    held = [r['reservation_id'] for r in reservations if r['status'] == 'reserved']
+    if held:
+        problems.append(f'{len(held)} reservations still reserved, first {held[0]}')
+    ours = {c.get('request_id') for c in calls}
+    return problems, {'calls_completed': sum(1 for c in calls if c['status'] == 'completed'), 'reconciled': checked,
+                      'ledger_entries': len(ledger), 'other_ledger_entries': sum(1 for e in ledger if e['call_id'] not in ours),
+                      'reservations_reserved': len(held)}
+
+
+def reconcile(args):
+    calls = []
+    for path in args.answers:
+        try:
+            calls += [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+        except (OSError, json.JSONDecodeError) as error:
+            raise InputError(f'cannot read {path}: {error}') from None
+    if not any(c.get('request_id') for c in calls):
+        raise InputError('no call has a request_id: pass the answers-gateway.jsonl of a gateway pass')
+    problems, counts = reconcile_calls(calls, read_csv(args.ledger), read_csv(args.reservations))
+    print(json.dumps(counts))
+    for problem in problems[:50]:
+        print(f'MISMATCH {problem}')
+    print('PASS billing matches the calls' if not problems else f'FAIL {len(problems)} problems')
+    return 0 if not problems else 1
 
 
 def pod(args):
@@ -538,6 +618,11 @@ def parse_args(argv):
     r.add_argument('--direct-api-key-env', metavar='NAME', help='variable holding a key vLLM checks as a bearer token')
     r.add_argument('--control', action='store_true', help='repeat the direct pass to measure the noise floor')
     r.add_argument('--exec-humaneval', action='store_true', help='run the HumanEval tests; disposable Pod only')
+    c = commands.add_parser('reconcile', help='match gateway calls to the ledger and reservations CSVs of reset_db.py')
+    c.add_argument('--answers', type=Path, action='append', required=True, metavar='JSONL',
+                   help='answers-gateway.jsonl of a run (repeatable)')
+    c.add_argument('--ledger', type=Path, required=True, help='ledger_entries.csv')
+    c.add_argument('--reservations', type=Path, required=True, help='reservations.csv')
     p = commands.add_parser('pod', help='write a Pod manifest that runs this script on the load-generator node')
     p.add_argument('--name', required=True, help='suffix of the Pod name, lowercase letters, digits and dashes')
     p.add_argument('--out', type=Path, help='file to write (default: standard output)')
@@ -557,7 +642,7 @@ def parse_args(argv):
 def main(argv=None):
     args = parse_args(argv)
     try:
-        return run(args) if args.command == 'run' else pod(args)
+        return {'run': run, 'reconcile': reconcile, 'pod': pod}[args.command](args)
     except InputError as error:
         print(f'ERROR {error}', file=sys.stderr)
         return 2
