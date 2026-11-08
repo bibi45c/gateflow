@@ -41,6 +41,8 @@ func TestCommandRefusesBadInput(t *testing.T) {
 		{"negative count", commandEnv(unreachable), []string{"--tenants", "-1"}, "--tenants"},
 		{"count not a number", commandEnv(unreachable), []string{"--tenants", "ten"}, "tenants"},
 		{"extra argument", commandEnv(unreachable), []string{"now"}, "now"},
+		{"plan without tenant", commandEnv(unreachable), []string{"--plans", "free"}, "tenant=plan"},
+		{"tenant named twice", commandEnv(unreachable), []string{"--plans", "tenant-01=free,tenant-01=premium"}, "twice"},
 		{"no seed secret", map[string]string{config.EnvDatabaseURL: unreachable, config.EnvKeyPepper: "p"}, nil,
 			config.EnvSeedSecret},
 		{"bad mock URL", func() map[string]string {
@@ -95,8 +97,49 @@ func TestCommandMigratesSeedsAndPrintsKeys(t *testing.T) {
 		(SELECT count(*) FROM access.tenants)`).Scan(&owned, &tenants); err != nil {
 		t.Fatal(err)
 	}
-	// The seven tables and the migrations' version table.
-	if owned != 8 || tenants != 4 {
-		t.Errorf("tables owned by access = %d, tenants = %d; want 8 and 4", owned, tenants)
+	// The eight tables and the migrations' version table.
+	if owned != 9 || tenants != 4 {
+		t.Errorf("tables owned by access = %d, tenants = %d; want 9 and 4", owned, tenants)
+	}
+}
+
+func TestCommandPutsTenantsOnPlans(t *testing.T) {
+	db := pgtest.New(t)
+	u, err := url.Parse(db.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := u.Query()
+	query.Set("role", "access")
+	u.RawQuery = query.Encode()
+	env := commandEnv(u.String())
+
+	if _, _, err := run(env, "--tenants", "3", "--plans", "tenant-01=free,tenant-02=premium"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Pool(t, "access").Query(context.Background(),
+		"SELECT id || '=' || plan_id FROM access.tenants WHERE id LIKE 'tenant-0%' ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for rows.Next() {
+		var row string
+		if err := rows.Scan(&row); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, row)
+	}
+	want := "tenant-00=unlimited tenant-01=free tenant-02=premium tenant-03=unlimited"
+	if strings.Join(got, " ") != want {
+		t.Errorf("plans: %v, want %s", got, want)
+	}
+	for _, c := range []struct{ plans, want string }{
+		{"tenant-99=free", `tenant "tenant-99" does not exist`},
+		{"tenant-01=gold", `plan "gold" does not exist`},
+	} {
+		if _, _, err := run(env, "--tenants", "3", "--plans", c.plans); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("--plans %s: err %v, want %q", c.plans, err, c.want)
+		}
 	}
 }

@@ -37,7 +37,16 @@ type VerifiedKey struct {
 	TenantID       string
 	KeyID          string
 	PriceVersionID string
+	Limits         Limits
 	Channel        Channel
+}
+
+// Limits are the request limits of a tenant's plan, which the gateway enforces. Zero
+// means no limit.
+type Limits struct {
+	PlanID        string
+	RPM           int
+	MaxConcurrent int
 }
 
 // PriceVersion is an immutable pair of prices, in micro-units per token.
@@ -62,15 +71,20 @@ func New(pool *pgxpool.Pool) *Store {
 // ErrInvalidKey when there is no such key or it is revoked, and ErrModelNotAllowed
 // when none of those channels has a pattern matching model; when several do, the
 // lowest channel id wins. Whenever the key was found, the result carries its
-// TenantID and KeyID, also next to an error.
+// TenantID and KeyID, also next to an error. Limits are those of the tenant's plan.
 func (s *Store) VerifyKey(ctx context.Context, keyHMAC []byte, model, protocol string) (VerifiedKey, error) {
 	var (
 		key     VerifiedKey
 		revoked bool
 	)
-	err := s.pool.QueryRow(ctx, `SELECT id, tenant_id, price_version_id, revoked_at IS NOT NULL
-		FROM access.api_keys WHERE key_hmac = $1`, keyHMAC).
-		Scan(&key.KeyID, &key.TenantID, &key.PriceVersionID, &revoked)
+	err := s.pool.QueryRow(ctx, `SELECT k.id, k.tenant_id, k.price_version_id, k.revoked_at IS NOT NULL,
+			p.id, p.rpm_limit, p.max_concurrent
+		FROM access.api_keys AS k
+		JOIN access.tenants AS t ON t.id = k.tenant_id
+		JOIN access.plans AS p ON p.id = t.plan_id
+		WHERE k.key_hmac = $1`, keyHMAC).
+		Scan(&key.KeyID, &key.TenantID, &key.PriceVersionID, &revoked,
+			&key.Limits.PlanID, &key.Limits.RPM, &key.Limits.MaxConcurrent)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return VerifiedKey{}, ErrInvalidKey

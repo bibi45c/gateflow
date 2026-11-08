@@ -108,6 +108,10 @@ paths:
                     tenant_id: tenant-01
                     key_id: key-tenant-01
                     price_version_id: pv-seed-1
+                    limits:
+                      plan_id: unlimited
+                      rpm: 0
+                      max_concurrent: 0
                     channel:
                       id: mock
                       protocol: anthropic-messages
@@ -119,6 +123,10 @@ paths:
                     tenant_id: tenant-02
                     key_id: key-tenant-02
                     price_version_id: pv-seed-1
+                    limits:
+                      plan_id: unlimited
+                      rpm: 0
+                      max_concurrent: 0
                     channel:
                       id: hosted
                       protocol: anthropic-messages
@@ -130,6 +138,10 @@ paths:
                     tenant_id: tenant-01
                     key_id: key-tenant-01
                     price_version_id: pv-seed-1
+                    limits:
+                      plan_id: unlimited
+                      rpm: 0
+                      max_concurrent: 0
                     channel:
                       id: mock-responses
                       protocol: openai-responses
@@ -572,7 +584,7 @@ components:
             Messages channels.
     VerifyResponse:
       type: object
-      required: [tenant_id, key_id, price_version_id, channel]
+      required: [tenant_id, key_id, price_version_id, limits, channel]
       properties:
         tenant_id:
           type: string
@@ -583,8 +595,31 @@ components:
         price_version_id:
           type: string
           description: The opaque id of the price version this call is charged at; the gateway passes it to reserve.
+        limits:
+          $ref: '#/components/schemas/Limits'
         channel:
           $ref: '#/components/schemas/Channel'
+    Limits:
+      type: object
+      description: |
+        The request limits of the tenant's plan (issue #157). The gateway enforces them
+        per tenant, across all its replicas, before it reserves: `rpm` requests in any
+        sliding minute and `max_concurrent` calls in flight. 0 means no limit. A
+        gateway that gets no `limits`, from an access image older than migration
+        0004, treats the tenant as unlimited.
+      required: [plan_id, rpm, max_concurrent]
+      properties:
+        plan_id:
+          type: string
+          description: The tenant's plan, such as `unlimited`, `free`, `standard` or `premium`.
+        rpm:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        max_concurrent:
+          type: integer
+          minimum: 0
+          maximum: 100000
     Channel:
       type: object
       description: |
