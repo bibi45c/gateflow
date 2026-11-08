@@ -137,6 +137,18 @@
       "required": ["enabled", "port", "replicas", "image", "timeZone"],
       "additionalProperties": false
     },
+    "seedPlans": { "type": "string", "pattern": "^([A-Za-z0-9._-]{1,64}=[a-z0-9-]{1,32}(,[A-Za-z0-9._-]{1,64}=[a-z0-9-]{1,32})*)?$" },
+    "ratelimit": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "leaseTTL": { "type": "string", "pattern": "^([0-9]+(m|h))?$" },
+        "redisImage": { "type": "string", "minLength": 1 },
+        "resources": { "type": "object" }
+      },
+      "required": ["enabled", "redisImage"],
+      "additionalProperties": false
+    },
     "autoscaling": {
       "type": "object",
       "properties": {

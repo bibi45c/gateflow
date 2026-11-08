@@ -23,6 +23,10 @@ Override a value in `deploy/compose/.env`, which Git ignores.
 | `METERING_INTERNAL_TOKEN` | metering (accepts); gateway (sends) | `metering-token-local-only` | Bearer token for calls to metering |
 | `MODEL_ALIASES` | gateway; compose leaves it unset | The mock scenarios (`mock-text` … `mock-load`), `qwen3:8b`, `qwen2.5-coder:7b` | Comma-separated model names, at most 16, that request log lines show as they are; any other model is logged as `other`. A model is never a metric label |
 | `UPSTREAM_MAX_IDLE_CONNS` | gateway; compose leaves it unset | `256` | Idle upstream connections the gateway keeps, in all and to each upstream host, for 90 s, so a load test reuses connections instead of opening one per call |
+| `RATELIMIT_ENABLED` | gateway | `true` | Enforces each tenant's plan limits (#157); `false` turns enforcement off |
+| `RATELIMIT_REDIS_URL` | gateway | `redis://redis:6379/0` | The Redis holding the shared limit state; required when `RATELIMIT_ENABLED` is `true` |
+| `RATELIMIT_LEASE_TTL` | gateway; compose leaves it unset | `10m` | Go duration, 1m to 1h, after which a concurrency lease whose call never reported expires |
+| `SEED_PLANS` | access seed | empty | `tenant=plan` pairs, comma-separated, such as `tenant-01=free`; the plans are `unlimited` (every tenant's default), `free` (60 per minute, 5 at once), `standard` (600, 50) and `premium` (6000, 200) |
 | `ACCESS_KEY_PEPPER` | access | `key-pepper-local-only` | Secret mixed into the stored HMAC of each gateway key |
 | `ACCESS_SEED_SECRET` | access seed | `seed-secret-local-only` | Derives the seeded tenants' gateway keys |
 | `MOCK_UPSTREAM_BASE_URL` | access seed | `http://mock-upstream:8090` | Base URL of the mock upstream channel |

@@ -63,9 +63,19 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:8
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       # A throwaway CI superuser; pkg/pgtest creates and drops one database per test.
       GATEFLOW_TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      # A throwaway Redis for the gateway's rate limit tests; each test uses its own tenant keys.
+      GATEFLOW_TEST_REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -73,11 +83,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Run every test against Postgres, failing if any database test skipped
+      - name: Run every test against Postgres and Redis, failing if any of those tests skipped
         shell: bash
         run: |
           go test -count=1 -v ./... | tee "$RUNNER_TEMP/go-test.log"
-          if grep -F "set GATEFLOW_TEST_POSTGRES_URL" "$RUNNER_TEMP/go-test.log"; then exit 1; fi
+          if grep -E "set GATEFLOW_TEST_(POSTGRES|REDIS)_URL" "$RUNNER_TEMP/go-test.log"; then exit 1; fi
 
   compose:
     name: Compose smoke test

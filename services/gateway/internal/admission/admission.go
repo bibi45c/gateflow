@@ -1,8 +1,9 @@
 // Package admission decides whether the relay may send a call upstream, and charges
 // the call once the relay has reported how it ended, as issues #18 and #39 ask. It
-// verifies the gateway key with access, checks the channel access returns, holds the
-// most the call can cost with metering, and settles that hold with metering. The
-// public errors it returns are those of api/errors.md.
+// verifies the gateway key with access, checks the channel access returns, checks
+// the tenant's rate and concurrency limits (#157), holds the most the call can cost
+// with metering, and settles that hold with metering. The public errors it returns
+// are those of api/errors.md.
 package admission
 
 import (
@@ -67,6 +68,8 @@ type Config struct {
 	Getenv func(name string) string
 	// Logger gets the failures. Nil means slog.Default().
 	Logger *slog.Logger
+	// Limiter enforces the tenants' plan limits. Nil enforces none.
+	Limiter Limiter
 }
 
 // Admission is the relay.Admission of the gateway. It is safe for concurrent use.
@@ -75,6 +78,7 @@ type Admission struct {
 	metering *meteringclient.Client
 	getenv   func(string) string
 	logger   *slog.Logger
+	limiter  Limiter
 }
 
 var _ relay.Admission = (*Admission)(nil)
@@ -87,12 +91,14 @@ func New(cfg Config) *Admission {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &Admission{access: cfg.Access, metering: cfg.Metering, getenv: cfg.Getenv, logger: cfg.Logger}
+	return &Admission{access: cfg.Access, metering: cfg.Metering, getenv: cfg.Getenv, logger: cfg.Logger,
+		limiter: cfg.Limiter}
 }
 
-// Admit verifies the call's key and model, checks the channel, and reserves, in the
-// order of #18. It admits a call only with a confirmed reservation, and its report
-// function settles that reservation.
+// Admit verifies the call's key and model, checks the channel, checks the tenant's
+// limits and reserves, in the order of #18 and #157. It admits a call only with a
+// confirmed reservation, and its report function frees the call's concurrency
+// lease and settles that reservation.
 func (a *Admission) Admit(ctx context.Context, call relay.Call) (relay.Admitted, *relay.PublicError) {
 	verified, perr := a.verify(ctx, call)
 	if perr != nil {
@@ -106,13 +112,19 @@ func (a *Admission) Admit(ctx context.Context, call relay.Call) (relay.Admitted,
 			"request_id", call.RequestID, "channel_id", verified.Channel.ID, "reason", err.Error())
 		return relay.Admitted{}, errInternal
 	}
+	release, perr := a.limit(ctx, call, verified)
+	if perr != nil {
+		return relay.Admitted{}, perr
+	}
 	reservation, perr := a.reserve(ctx, call, verified)
 	if perr != nil {
+		release()
 		return relay.Admitted{}, perr
 	}
 	return relay.Admitted{
 		Channel: relay.Channel{BaseURL: verified.Channel.BaseURL, CredentialEnv: verified.Channel.CredentialEnv},
 		Report: func(result relay.Result) {
+			release()
 			a.settle(call.RequestID, reservation.ReservationID, result)
 		},
 	}, nil

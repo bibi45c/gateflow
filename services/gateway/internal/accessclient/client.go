@@ -26,7 +26,16 @@ type Verified struct {
 	TenantID       string  `json:"tenant_id"`
 	KeyID          string  `json:"key_id"`
 	PriceVersionID string  `json:"price_version_id"`
+	Limits         Limits  `json:"limits"`
 	Channel        Channel `json:"channel"`
+}
+
+// Limits are the tenant's plan limits (issue #157); zero means no limit. An access
+// image older than migration 0004 sends none, so the tenant is unlimited.
+type Limits struct {
+	PlanID        string `json:"plan_id"`
+	RPM           int    `json:"rpm"`
+	MaxConcurrent int    `json:"max_concurrent"`
 }
 
 // Channel is the upstream access names for the call. The gateway checks it before

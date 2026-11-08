@@ -12,6 +12,7 @@ const (
 	ErrorTypePermission      = "permission_error"
 	ErrorTypeRequestTooLarge = "request_too_large"
 	ErrorTypeAPI             = "api_error"
+	ErrorTypeRateLimit       = "rate_limit_error"
 )
 
 // ErrorBody is a Responses error: the body of an error response.

@@ -64,7 +64,7 @@ type from the tables below; `param` and `code` are null unless a row names them:
 
 The gateway checks a request in this order: body size (413), gateway key present
 (401), JSON and the body fields of the endpoint (400), verify with access, channel
-check, reserve, dispatch.
+check, the tenant's plan limits (#157), reserve, dispatch.
 
 | Situation | Status | Type |
 |---|---|---|
@@ -74,6 +74,8 @@ check, reserve, dispatch.
 | On `/v1/responses`: malformed JSON, missing or non-string `model`, or a `max_output_tokens` that breaks the bounds of reserve in [metering.yaml](metering.yaml) | 400 | `invalid_request_error` |
 | On `/v1/responses`: `previous_response_id` is present and not null | 400 | `invalid_request_error`, with `param` `"previous_response_id"` |
 | Channel misconfigured (a `protocol` other than the endpoint's, bad `base_url` or `credential_env`, or its variable unset); logged, and no reservation is made | 500 | `api_error` |
+| The verified tenant is over its plan's request rate (`rpm` per sliding minute) or concurrency (`max_concurrent` calls in flight) limit; nothing is reserved | 429 | `rate_limit_error`, with a fixed message naming the gateway's rate or concurrent request limit, and a `retry-after` header in whole seconds |
+| Rate limits are enabled and the tenant has a limit, but the limit store (Redis) cannot answer in time; logged, and nothing is reserved | 503 | `api_error` |
 | Upstream 400 or 429 | 400 or 429 | Passed through with the upstream's status and body |
 | Any other upstream status, or a failure before any output | 502 | `api_error` |
 | Failure after the stream has started | Already sent | An upstream error event is relayed unchanged: `event: error` on `/v1/messages`, and `error` or `response.failed` on `/v1/responses`. Otherwise the gateway sends its own error event with type `api_error` and a fixed message: `event: error` on `/v1/messages`, and the Responses `error` event below on `/v1/responses`. Then the gateway closes the stream. |
@@ -93,6 +95,9 @@ data: {"type": "error", "code": "api_error", "message": "The upstream model serv
   gateway also passes back the upstream's `content-type` and `retry-after`.
 - 409 and 429 are not used for balance, because clients retry them and each retry
   reserves again.
+- The gateway's own 429 is told apart from an upstream 429 by its type
+  `rate_limit_error` and its fixed message; an upstream 429 keeps the upstream's
+  body. A tenant on a plan with no limits is never checked against the store.
 
 ## Mapping internal errors to public errors
 

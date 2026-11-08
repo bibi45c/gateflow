@@ -21,6 +21,7 @@ import (
 	"github.com/bibi45c/gateflow/services/gateway/internal/config"
 	"github.com/bibi45c/gateflow/services/gateway/internal/internalapi"
 	"github.com/bibi45c/gateflow/services/gateway/internal/meteringclient"
+	"github.com/bibi45c/gateflow/services/gateway/internal/ratelimit"
 	"github.com/bibi45c/gateflow/services/gateway/internal/relay"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -61,13 +62,25 @@ func register(cfg config.Config, logs io.Writer) (func(*http.ServeMux), error) {
 	if err != nil {
 		return nil, err
 	}
+	// With rate limits on, the tenants' plan limits are enforced in Redis (#157).
+	var limiter *ratelimit.Limiter
+	if cfg.RateLimit.Enabled {
+		limiter, err = ratelimit.New(ratelimit.Config{URL: cfg.RateLimit.RedisURL, LeaseTTL: cfg.RateLimit.LeaseTTL})
+		if err != nil {
+			return nil, err
+		}
+	}
 	return func(mux *http.ServeMux) {
 		logger := slog.Default()
-		admit := admission.New(admission.Config{
+		admitConfig := admission.Config{
 			Access:   accessclient.New(internalapi.NewCaller(cfg.AccessURL, cfg.AccessInternalToken)),
 			Metering: meteringclient.New(internalapi.NewCaller(cfg.MeteringURL, cfg.MeteringInternalToken)),
 			Logger:   logger,
-		})
+		}
+		if limiter != nil {
+			admitConfig.Limiter = limiter
+		}
+		admit := admission.New(admitConfig)
 		// The two endpoints share one upstream transport, and so its connections, and
 		// one observer, and so its metrics.
 		relayConfig := relay.Config{Transport: relay.NewTransport(cfg.UpstreamMaxIdleConns), Observer: observer}

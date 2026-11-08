@@ -121,6 +121,21 @@
     "ollamaBaseURL": "http://ollama:11434",
     "ollamaModel": "qwen3:8b"
   },
+  "seedPlans": "",
+  "ratelimit": {
+    "enabled": false,
+    "leaseTTL": "",
+    "redisImage": "redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53",
+    "resources": {
+      "requests": {
+        "cpu": "50m",
+        "memory": "64Mi"
+      },
+      "limits": {
+        "memory": "128Mi"
+      }
+    }
+  },
   "autoscaling": {
     "enabled": false,
     "minReplicas": 2,

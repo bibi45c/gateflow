@@ -160,7 +160,7 @@ Create Secrets in the release namespace before Helm install:
 
 | Secret (default name) | Required keys |
 |---|---|
-| gateflow-runtime | ACCESS_DATABASE_URL, METERING_DATABASE_URL, ACCESS_INTERNAL_TOKEN, METERING_INTERNAL_TOKEN, ACCESS_KEY_PEPPER, ACCESS_SEED_SECRET |
+| gateflow-runtime | ACCESS_DATABASE_URL, METERING_DATABASE_URL, ACCESS_INTERNAL_TOKEN, METERING_INTERNAL_TOKEN, ACCESS_KEY_PEPPER, ACCESS_SEED_SECRET; RATELIMIT_REDIS_PASSWORD when `ratelimit.enabled` (URL-safe characters only) |
 | gateflow-bootstrap | PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD, PGSSLMODE, ACCESS_PASSWORD, METERING_PASSWORD |
 
 URLs use the access and metering roles respectively; role passwords must match the
@@ -188,6 +188,24 @@ The existing access seed command prints derived gateway API keys to its Job log.
 Treat those logs as credentials: restrict access and never paste them into PRs or
 issue evidence. The local helper uses the known disposable seed secret required
 by the smoke suite. Use a private seed secret for a real deployment.
+
+## Tenant rate limits (#157)
+
+`ratelimit.enabled=true` installs `<release>-redis`:
+- a single replica with no persistence and a password from `RATELIMIT_REDIS_PASSWORD`;
+- reachable only through its ClusterIP Service, with no Ingress;
+- on the services nodes.
+
+It also turns on the gateway's enforcement of each tenant's plan limits (requests per sliding minute and calls in flight, from access). `ratelimit.leaseTTL` (1m to 1h) bounds a concurrency lease whose gateway died before the call ended.
+
+`seedPlans` (for example `tenant-01=free`, with commas escaped as `\,` in `--set`) puts seeded tenants on plans through the access seed hook. Tenants on the default `unlimited` plan are never checked against Redis.
+
+**When Redis is down:**
+- a limited tenant's new calls get `503`, because enforcement fails closed;
+- calls already running continue;
+- after a restart, the counters and leases start empty, so a tenant can briefly exceed its limit by at most one window's worth.
+
+`rehearse.py` writes the password into the kind fixture's runtime Secret. On AWS, add the key to the runtime Secret before enabling the feature; `deploy/aws/secrets.py` does not write it yet.
 
 ## AWS handoff (operator only)
 

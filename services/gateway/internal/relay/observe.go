@@ -51,7 +51,7 @@ func (h *handler) refuse(rec *recorder, call *Call, e *PublicError) {
 
 // refusalResult maps the status of a refusal to its result, by the errors that
 // api/errors.md lists before dispatch: 400 and 413 from the checks; 401, 402, 403,
-// 500 and 503 from the checks or admission. An unknown status is internal_error.
+// 429, 500 and 503 from the checks or admission. An unknown status is internal_error.
 func refusalResult(status int) observability.Result {
 	switch status {
 	case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
@@ -62,6 +62,8 @@ func refusalResult(status int) observability.Result {
 		return observability.InsufficientBalance
 	case http.StatusForbidden:
 		return observability.PermissionDenied
+	case http.StatusTooManyRequests:
+		return observability.TenantLimited
 	case http.StatusServiceUnavailable:
 		return observability.DependencyError
 	}

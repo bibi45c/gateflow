@@ -34,7 +34,7 @@ SEED_KEY = 'ACCESS_SEED_SECRET'
 # the seed secret comes only from the Secret, never from the command line.
 SETTINGS = ('PAIRED', 'MODEL', 'MAX_TOKENS', 'INPUT_BYTES', 'TENANTS', 'LEVELS', 'WARMUP_S', 'RAMP_S',
             'HOLD_S', 'TTFB_DEADLINE_MS', 'TOTAL_DEADLINE_S', 'MOCK_FIRST_EVENT_DELAY_MS', 'MAX_VUS', 'STREAM_S',
-            'CONNECTION_REUSE', 'DIRECT_URL', 'TEMPERATURE')
+            'CONNECTION_REUSE', 'DIRECT_URL', 'TEMPERATURE', 'HOT_SHARE')
 FROM_RELEASE = ('GATEWAY_URL', 'MOCK_URL')
 PREALLOC = 'PREALLOC_VUS'  # set with --prealloc-vus, which checks it against MAX_VUS
 PROMPTS = 'PROMPTS'  # set with --prompts, which puts the file next to messages.js

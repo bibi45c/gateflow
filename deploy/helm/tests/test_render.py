@@ -52,6 +52,37 @@ class ChartTests(unittest.TestCase):
         self.assertTrue(all('valueFrom' in e for e in bootstrap['env']))
         self.assertNotIn('local-only',json.dumps(jobs))
 
+    def test_rate_limit_redis_and_seed_plans(self):
+        docs=render()
+        self.assertFalse([d for d in docs if d['metadata']['name']=='gf-redis'])
+        gateway=next(d for d in docs if d['kind']=='Deployment' and d['metadata']['name']=='gf-gateway')
+        self.assertFalse([e for e in gateway['spec']['template']['spec']['containers'][0]['env'] if e['name'].startswith('RATELIMIT')])
+        docs=render('--set','ratelimit.enabled=true','--set','ratelimit.leaseTTL=15m','--set',r'seedPlans=tenant-01=free\,tenant-02=premium')
+        redis=next(d for d in docs if d['kind']=='Deployment' and d['metadata']['name']=='gf-redis')
+        pod=redis['spec']['template']['spec']; c=pod['containers'][0]
+        self.assertEqual(redis['spec']['replicas'],1)
+        self.assertIn('--requirepass',c['args']); self.assertEqual(c['args'][c['args'].index('--requirepass')+1],'$(REDIS_PASSWORD)')
+        self.assertEqual(c['env'],[{'name':'REDIS_PASSWORD','valueFrom':{'secretKeyRef':{'name':'gateflow-runtime','key':'RATELIMIT_REDIS_PASSWORD'}}}])
+        self.assertTrue(c['image'].startswith('redis:8') and '@sha256:' in c['image'])
+        self.assertTrue(pod['securityContext']['runAsNonRoot']); self.assertFalse(pod['automountServiceAccountToken'])
+        self.assertEqual(pod['nodeSelector'],{'gateflow.io/workload':'services'})
+        service=next(d for d in docs if d['kind']=='Service' and d['metadata']['name']=='gf-redis')
+        self.assertEqual(service['spec']['ports'][0]['port'],6379)
+        self.assertFalse(any(d['kind']=='Ingress' and 'redis' in json.dumps(d) for d in docs))
+        gateway=next(d for d in docs if d['kind']=='Deployment' and d['metadata']['name']=='gf-gateway')
+        env={e['name']:e for e in gateway['spec']['template']['spec']['containers'][0]['env']}
+        self.assertEqual(env['RATELIMIT_ENABLED']['value'],'true')
+        self.assertEqual(env['RATELIMIT_REDIS_URL']['value'],'redis://:$(RATELIMIT_REDIS_PASSWORD)@gf-redis:6379/0')
+        self.assertEqual(env['RATELIMIT_LEASE_TTL']['value'],'15m')
+        names=[e['name'] for e in gateway['spec']['template']['spec']['containers'][0]['env']]
+        self.assertLess(names.index('RATELIMIT_REDIS_PASSWORD'),names.index('RATELIMIT_REDIS_URL'))
+        seed=next(d for d in docs if d['kind']=='Job' and d['metadata']['name']=='gf-seed-access')
+        self.assertEqual(seed['spec']['template']['spec']['containers'][0]['args'],['seed','--plans=tenant-01=free,tenant-02=premium'])
+        for setting in ['seedPlans=tenant-01', 'seedPlans=a=b;c', 'ratelimit.leaseTTL=10s']:
+            with self.subTest(setting=setting):
+                p=subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set',setting],capture_output=True,text=True)
+                self.assertNotEqual(p.returncode,0)
+
     def test_invalid_configuration_rejected(self):
         for setting in ['environment=production', 'imageTag=', 'services.gateway.image=', 'shutdown.timeout=10']:
             with self.subTest(setting=setting):

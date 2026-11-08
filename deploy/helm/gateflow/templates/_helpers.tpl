@@ -10,6 +10,13 @@
 {{- if or (eq $n "gateway") (eq $n "metering") (and (eq $n "access") (eq $key "ACCESS_INTERNAL_TOKEN")) -}}
 {{- $env = append $env (dict "name" $key "valueFrom" (dict "secretKeyRef" (dict "name" $r.Values.secretName "key" $key))) -}}
 {{- end -}}{{- end -}}
+{{- /* #157: the gateway enforces plan limits in the chart's Redis; $(VAR) expands the password set just before. */ -}}
+{{- if and (eq $n "gateway") $r.Values.ratelimit.enabled -}}
+{{- $env = append $env (dict "name" "RATELIMIT_ENABLED" "value" "true") -}}
+{{- $env = append $env (dict "name" "RATELIMIT_REDIS_PASSWORD" "valueFrom" (dict "secretKeyRef" (dict "name" $r.Values.secretName "key" "RATELIMIT_REDIS_PASSWORD"))) -}}
+{{- $env = append $env (dict "name" "RATELIMIT_REDIS_URL" "value" (printf "redis://:$(RATELIMIT_REDIS_PASSWORD)@%s-redis:6379/0" $r.Release.Name)) -}}
+{{- with $r.Values.ratelimit.leaseTTL -}}{{- $env = append $env (dict "name" "RATELIMIT_LEASE_TTL" "value" .) -}}{{- end -}}
+{{- end -}}
 {{- if or (eq $n "access") (eq $n "metering") -}}
 {{- $env = append $env (dict "name" "DATABASE_URL" "valueFrom" (dict "secretKeyRef" (dict "name" $r.Values.secretName "key" (printf "%s_DATABASE_URL" (upper $n))))) -}}
 {{- /* A variable of its own, not pool_max_conns in the URL, which the TLS check's psql rejects. */ -}}

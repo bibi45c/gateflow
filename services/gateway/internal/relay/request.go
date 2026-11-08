@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/bibi45c/gateflow/pkg/protocol/anthropic"
@@ -104,6 +105,9 @@ func invalidRequest(message string) *PublicError {
 func (h *handler) writeError(w http.ResponseWriter, e *PublicError) {
 	body, _ := json.Marshal(h.proto.errorBody(e)) // strings always encode
 	w.Header().Set("Content-Type", "application/json")
+	if e.RetryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(e.RetryAfter))
+	}
 	w.WriteHeader(e.Status)
 	_, _ = w.Write(body)
 }
