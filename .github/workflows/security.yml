@@ -24,7 +24,7 @@ jobs:
       - name: Report the Go toolchain
         run: go version
       - name: Scan reachable vulnerabilities in the code and its modules
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   images:
     name: Image scan (${{ matrix.service }})
@@ -66,6 +66,8 @@ jobs:
           push: false
           tags: gateflow-${{ matrix.service }}:scan
       - name: Install the pinned, checksum-verified Trivy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python tools/repo/install_trivy.py --directory "$RUNNER_TEMP/bin"
       - name: Write SARIF for code scanning
         run: >-
@@ -97,6 +99,8 @@ jobs:
         with:
           python-version: '3.13'
       - name: Install the pinned, checksum-verified Trivy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python tools/repo/install_trivy.py --directory "$RUNNER_TEMP/bin"
       - name: Write SARIF for code scanning
         run: >-

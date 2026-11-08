@@ -1,6 +1,7 @@
 """Unit tests of tools/repo/install_trivy.py; they download nothing."""
 import hashlib
 import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -40,11 +41,35 @@ class InstallTrivyTests(unittest.TestCase):
                 mock.patch.object(install_trivy, 'SHA256', pinned), \
                 mock.patch('platform.system', return_value='Windows'), \
                 mock.patch('platform.machine', return_value='AMD64'):
-            urls = []
-            dest = install_trivy.install(Path(tmp) / 'bin', fetch=lambda url: urls.append(url) or archive)
+            names = []
+            dest = install_trivy.install(Path(tmp) / 'bin', fetch=lambda name: names.append(name) or archive)
             self.assertEqual(dest.read_bytes(), b'binary')
-            self.assertEqual(urls, [f'https://github.com/aquasecurity/trivy/releases/download/'
-                                    f'v{install_trivy.VERSION}/trivy_{install_trivy.VERSION}_windows-64bit.zip'])
+            self.assertEqual(names, ['windows-64bit.zip'])
+
+    def test_download_falls_back_to_the_api_after_retries(self):
+        calls = []
+
+        def get(url, accept=None):
+            calls.append((url, accept))
+            if url.startswith('https://github.com/'):
+                raise install_trivy.urllib.error.HTTPError(url, 504, 'Gateway Time-out', None, None)
+            if url.endswith(f'/releases/tags/v{install_trivy.VERSION}'):
+                return json.dumps({'assets': [{'name': f'trivy_{install_trivy.VERSION}_Linux-64bit.tar.gz',
+                                               'url': 'https://api.github.com/assets/1'}]}).encode()
+            return b'archive'
+
+        with mock.patch.object(install_trivy, '_get', get):
+            data = install_trivy.download('Linux-64bit.tar.gz', sleep=lambda s: None)
+        self.assertEqual(data, b'archive')
+        self.assertEqual(sum(1 for url, _ in calls if url.startswith('https://github.com/')), 3)
+        self.assertEqual(calls[-1], ('https://api.github.com/assets/1', 'application/octet-stream'))
+
+    def test_download_gives_up_with_every_error(self):
+        def get(url, accept=None):
+            raise install_trivy.urllib.error.URLError('offline')
+
+        with mock.patch.object(install_trivy, '_get', get), self.assertRaisesRegex(RuntimeError, 'offline'):
+            install_trivy.download('Linux-64bit.tar.gz', sleep=lambda s: None)
 
 
 if __name__ == '__main__':

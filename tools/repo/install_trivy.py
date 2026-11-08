@@ -4,14 +4,23 @@ The checksums are pinned here, not fetched from the release, so a replaced relea
 asset fails the check. Update VERSION and SHA256 together, from the release's
 trivy_<version>_checksums.txt, for a release at least two weeks old.
 
+It tries the release download URL, then the GitHub API's asset URL, each up to three
+times: the download host sometimes answers 504 while the API still serves the asset.
+The pinned checksum makes either source safe. GITHUB_TOKEN, when set, authenticates
+the API calls.
+
 Usage: python tools/repo/install_trivy.py --directory .local/bin
 """
 import argparse
 import hashlib
 import io
+import json
+import os
 from pathlib import Path
 import platform
 import tarfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -53,14 +62,44 @@ def binary(archive, name):
         return bundle.extractfile('trivy').read()
 
 
+def _get(url, accept=None):
+    request = urllib.request.Request(url, headers={'User-Agent': 'gateflow-install-trivy'})
+    if accept:
+        request.add_header('Accept', accept)
+    token = os.environ.get('GITHUB_TOKEN')
+    if token and url.startswith('https://api.github.com/'):
+        request.add_header('Authorization', 'Bearer ' + token)
+    with urllib.request.urlopen(request, timeout=120) as response:
+        return response.read()
+
+
+def _api_asset(name):
+    """Download the asset through the GitHub API, as `gh release download` does."""
+    release = json.loads(_get(f'https://api.github.com/repos/aquasecurity/trivy/releases/tags/v{VERSION}'))
+    wanted = f'trivy_{VERSION}_{name}'
+    asset = next((a for a in release.get('assets', []) if a.get('name') == wanted), None)
+    if asset is None:
+        raise ValueError(f'release v{VERSION} has no asset {wanted}')
+    return _get(asset['url'], accept='application/octet-stream')
+
+
+def download(name, attempts=3, sleep=time.sleep):
+    """Return the asset's bytes from the first source that answers, retrying each."""
+    url = f'https://github.com/aquasecurity/trivy/releases/download/v{VERSION}/trivy_{VERSION}_{name}'
+    errors = []
+    for source in (lambda: _get(url), lambda: _api_asset(name)):
+        for attempt in range(attempts):
+            try:
+                return source()
+            except (urllib.error.URLError, TimeoutError, ValueError) as err:
+                errors.append(str(err))
+                sleep(2 * (attempt + 1))
+    raise RuntimeError('could not download Trivy: ' + '; '.join(errors))
+
+
 def install(directory, fetch=None):
     name = asset(platform.system(), platform.machine())
-    url = f'https://github.com/aquasecurity/trivy/releases/download/v{VERSION}/trivy_{VERSION}_{name}'
-    if fetch is None:
-        def fetch(address):
-            with urllib.request.urlopen(address, timeout=120) as response:
-                return response.read()
-    data = verified(fetch(url), name)
+    data = verified(fetch(name) if fetch else download(name), name)
     directory.mkdir(parents=True, exist_ok=True)
     dest = directory / ('trivy.exe' if name.endswith('.zip') else 'trivy')
     dest.write_bytes(binary(data, name))
