@@ -34,6 +34,14 @@ const TENANTS = number('TENANTS', '10');
 if (!Number.isInteger(TENANTS) || TENANTS < 1) {
   throw new Error('TENANTS must be a whole number of at least 1');
 }
+// HOT_SHARE sends that fraction of the requests, from 0 (the default) to 1, with
+// tenant-01's key and spreads the rest over tenant-02 to tenant-TENANTS: the tenant
+// over-limit scenario of issue #157, with tenant-01 on a limited plan.
+const HOT_SHARE = number('HOT_SHARE', '0');
+if (!(HOT_SHARE >= 0 && HOT_SHARE <= 1) || (HOT_SHARE > 0 && TENANTS < 2)) {
+  throw new Error('HOT_SHARE must be from 0 to 1, and needs TENANTS of at least 2');
+}
+const HOT_PER_100 = Math.round(HOT_SHARE * 100);
 const SEED_SECRET = env('ACCESS_SEED_SECRET', 'seed-secret-local-only');
 const LEVELS = env('LEVELS', '5,25,50').split(',').map(Number);
 const WARMUP_S = number('WARMUP_S', '60');
@@ -193,13 +201,22 @@ export function setup() {
   }
 }
 
+// keyFor returns the [tenant, key] of the nth request: round robin over every tenant,
+// or with HOT_SHARE, tenant-01 for HOT_PER_100 of each 100 requests and round robin
+// over the others for the rest.
+export function keyFor(n) {
+  if (HOT_PER_100 === 0) return KEYS[n % KEYS.length];
+  if (n % 100 < HOT_PER_100) return KEYS[0];
+  return KEYS[1 + (n % (KEYS.length - 1))];
+}
+
 function request(url, body, headers, tags) {
   return ['POST', url, body, { headers, timeout: `${TOTAL_DEADLINE_S}s`, tags }];
 }
 
 export default function () {
   if (exec.scenario.iterationInTest === 0) started.add(1);
-  const [tenant, key] = KEYS[exec.scenario.iterationInTest % KEYS.length];
+  const [tenant, key] = keyFor(exec.scenario.iterationInTest);
   const [phase, level] = phaseAt((Date.now() - exec.scenario.startTime) / 1000);
   const tags = { phase, level: String(level), tenant };
   const body = BODIES === null ? BODY : BODIES[exec.scenario.iterationInTest % BODIES.length];

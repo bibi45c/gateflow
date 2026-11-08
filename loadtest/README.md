@@ -73,6 +73,14 @@ Two variants of the run above compare the same arrival levels spread over ten
 tenants and concentrated on one wallet. Run each against its own fresh database,
 with the large-wallet override, and keep every other setting equal.
 
+**Tenant over its limit** (#157): put `tenant-01` on a limited plan with the
+access seed (`--plans tenant-01=free`, 60 requests a minute and 5 at once; compose:
+`SEED_PLANS`, Helm: `seedPlans`) and send it most of the load with `HOT_SHARE`. For
+example, `LEVELS=12` and `HOT_SHARE=0.83` send `tenant-01` about 10 req/s, ten times
+its limit, and the nine others about 2 req/s in all. The per-tenant table then shows
+`tenant-01`'s excess in the 429 column while every other tenant completes. Gateway
+429s from a limit carry the type `rate_limit_error`.
+
 **Tenant isolation**: ten equally loaded tenants. This is the default
 (`TENANTS=10`): request *n* uses `tenant-01` to `tenant-10` in turn, so each tenant
 gets a tenth of the arrivals and its own `accounting.wallets` row.
@@ -360,6 +368,7 @@ Pass each with `-e NAME=value`, or with `--env NAME=value` to `kube_run.py`.
 | `PREALLOC_VUS` | unset | VUs k6 starts before the run, replacing the highest level times `STREAM_S`; a whole number from 1 to `MAX_VUS`, otherwise k6 refuses to start. With `kube_run.py`, pass `--prealloc-vus N` instead of `--env` |
 | `MAX_VUS` | `4000` | VU ceiling; k6 can drop arrivals when every VU is occupied |
 | `CONNECTION_REUSE` | `1` | `1` lets each VU keep its connection; `0` opens a new connection for every request, so gateway Pods added during the run get a share through a Service |
+| `HOT_SHARE` | `0` | Fraction, 0 to 1, of the requests sent with `tenant-01`'s key; the rest go round robin to `tenant-02` … `tenant-TENANTS`. With `tenant-01` on a limited plan, this is the over-limit scenario below |
 | `PROMPTS` | unset | JSONL file whose `prompt` fields become the user messages, request *i* sending item *i* mod *n*; replaces `INPUT_BYTES`. With `kube_run.py`, pass `--prompts FILE` instead of `--env` |
 | `DIRECT_URL` | unset | Direct side of `PAIRED=1` instead of `MOCK_URL`, such as a vLLM server; then `MOCK_FIRST_EVENT_DELAY_MS` is not required |
 | `TEMPERATURE` | unset | `temperature` of every request, 0 to 2; unset leaves it out, so a real model uses its own default |

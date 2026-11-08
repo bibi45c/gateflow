@@ -19,7 +19,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 NODE_IMAGE = 'kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0'
 INGRESS = 'https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml'
-CREDENTIAL_KEYS = ['admin','superuser','access','metering','tokenAccess','tokenMetering','pepper']
+CREDENTIAL_KEYS = ['admin','superuser','access','metering','tokenAccess','tokenMetering','pepper','redis']
 # The disposable seed secret the smoke suite expects; never used outside kind.
 SEED_SECRET = 'seed-secret-local-only'
 # Created by kind/postgres.yaml like the RDS master role: LOGIN CREATEROLE, database owner, not a superuser.
@@ -230,7 +230,8 @@ def main(argv=None):
     secret(kube,args.namespace,'gateflow-runtime',{'ACCESS_DATABASE_URL':f"postgres://access:{keys['access']}@postgres:5432/gateflow?sslmode=disable",
         'METERING_DATABASE_URL':f"postgres://metering:{keys['metering']}@postgres:5432/gateflow?sslmode=disable",
         'ACCESS_INTERNAL_TOKEN':keys['tokenAccess'],'METERING_INTERNAL_TOKEN':keys['tokenMetering'],
-        'ACCESS_KEY_PEPPER':keys['pepper'],'ACCESS_SEED_SECRET':SEED_SECRET})
+        'ACCESS_KEY_PEPPER':keys['pepper'],'ACCESS_SEED_SECRET':SEED_SECRET,
+        'RATELIMIT_REDIS_PASSWORD':keys['redis']})
     run([*kube,'-n',args.namespace,'apply','-f',str(HERE/'kind/postgres.yaml')])
     run([*kube,'-n',args.namespace,'wait','--for=condition=Ready','pod/postgres-0','--timeout=180s'])
     run([*kube,'apply','-f',INGRESS])

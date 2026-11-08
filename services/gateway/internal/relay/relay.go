@@ -117,6 +117,8 @@ type PublicError struct {
 	Type    string // an error type of api/errors.md; both endpoints use the same names
 	Message string // fixed string, never request input
 	Param   string // the request member at fault, or ""; only the Responses body has it
+	// RetryAfter, when above 0, is sent as the retry-after header, in seconds.
+	RetryAfter int
 }
 
 // Config holds what the relay takes from its process. The zero Config reads

@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bibi45c/gateflow/services/gateway/internal/config"
 )
@@ -101,6 +102,7 @@ func TestLoadRefusesInvalidOptionalSettings(t *testing.T) {
 		{config.EnvUpstreamMaxIdleConns, "-1"},
 		{config.EnvUpstreamMaxIdleConns, "10001"},
 		{config.EnvUpstreamMaxIdleConns, "many"},
+		{config.EnvRateLimitEnabled, "yes"},
 	}
 	for _, tt := range tests {
 		_, err := config.Load(with(map[string]string{tt.name: tt.value}))
@@ -140,6 +142,27 @@ func TestLoadNamesEveryEmptyVariable(t *testing.T) {
 	for name := range complete {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error %q does not name %s", err, name)
+		}
+	}
+}
+
+func TestLoadReadsTheRateLimitSettings(t *testing.T) {
+	cfg, err := config.Load(with(nil))
+	if err != nil || cfg.RateLimit.Enabled {
+		t.Fatalf("default: %+v, %v; want disabled", cfg.RateLimit, err)
+	}
+	cfg, err = config.Load(with(map[string]string{config.EnvRateLimitEnabled: "true",
+		config.EnvRateLimitRedisURL: "redis://:pw@redis:6379/0", config.EnvRateLimitLeaseTTL: "15m"}))
+	if err != nil || !cfg.RateLimit.Enabled || cfg.RateLimit.RedisURL != "redis://:pw@redis:6379/0" ||
+		cfg.RateLimit.LeaseTTL != 15*time.Minute {
+		t.Errorf("enabled: %+v, %v", cfg.RateLimit, err)
+	}
+	for _, env := range []map[string]string{
+		{config.EnvRateLimitEnabled: "true"},
+		{config.EnvRateLimitEnabled: "true", config.EnvRateLimitRedisURL: "redis://:secret@r:6379", config.EnvRateLimitLeaseTTL: "10s"},
+	} {
+		if _, err := config.Load(with(env)); err == nil || strings.Contains(err.Error(), "secret") {
+			t.Errorf("%v: got %v, want an error that hides the URL", env, err)
 		}
 	}
 }

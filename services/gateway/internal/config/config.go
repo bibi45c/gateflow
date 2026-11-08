@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The environment variables the service reads.
@@ -18,6 +19,11 @@ const (
 	// EnvModelAliases and EnvUpstreamMaxIdleConns are optional.
 	EnvModelAliases         = "MODEL_ALIASES"
 	EnvUpstreamMaxIdleConns = "UPSTREAM_MAX_IDLE_CONNS"
+	// The rate limit settings of issue #157 are optional too. RATELIMIT_ENABLED is
+	// true or false (the default); when true, RATELIMIT_REDIS_URL is required.
+	EnvRateLimitEnabled  = "RATELIMIT_ENABLED"
+	EnvRateLimitRedisURL = "RATELIMIT_REDIS_URL"
+	EnvRateLimitLeaseTTL = "RATELIMIT_LEASE_TTL"
 )
 
 // DefaultModelAliases are the model names that request logs show as they are when
@@ -54,6 +60,20 @@ type Config struct {
 	// all and to each upstream host. 0, when UPSTREAM_MAX_IDLE_CONNS is unset, means
 	// the relay's default.
 	UpstreamMaxIdleConns int
+	// RateLimit holds the tenant limit settings.
+	RateLimit RateLimit
+}
+
+// RateLimit holds the settings of the tenants' plan limits.
+type RateLimit struct {
+	// Enabled turns enforcement on.
+	Enabled bool
+	// RedisURL is the shared limit store, redis://[:password@]host:port[/db]. It may
+	// hold a password, so errors never show it.
+	RedisURL string
+	// LeaseTTL bounds a concurrency lease whose call never reports; 0 means the
+	// limiter's default.
+	LeaseTTL time.Duration
 }
 
 // Load reads the settings through getenv, such as os.Getenv. It fails when any of
@@ -77,6 +97,10 @@ func Load(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	rateLimit, err := loadRateLimit(getenv)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
 		AccessURL:             getenv(EnvAccessURL),
 		MeteringURL:           getenv(EnvMeteringURL),
@@ -84,7 +108,32 @@ func Load(getenv func(string) string) (Config, error) {
 		MeteringInternalToken: getenv(EnvMeteringInternalToken),
 		ModelAliases:          aliases,
 		UpstreamMaxIdleConns:  idleConns,
+		RateLimit:             rateLimit,
 	}, nil
+}
+
+// loadRateLimit reads the rate limit settings. Unless they are enabled, the others
+// are ignored.
+func loadRateLimit(getenv func(string) string) (RateLimit, error) {
+	switch getenv(EnvRateLimitEnabled) {
+	case "", "false":
+		return RateLimit{}, nil
+	case "true":
+	default:
+		return RateLimit{}, fmt.Errorf("config: %s must be true or false", EnvRateLimitEnabled)
+	}
+	r := RateLimit{Enabled: true, RedisURL: getenv(EnvRateLimitRedisURL)}
+	if r.RedisURL == "" {
+		return RateLimit{}, fmt.Errorf("config: set %s, because %s is true", EnvRateLimitRedisURL, EnvRateLimitEnabled)
+	}
+	if value := getenv(EnvRateLimitLeaseTTL); value != "" {
+		ttl, err := time.ParseDuration(value)
+		if err != nil || ttl < time.Minute || ttl > time.Hour {
+			return RateLimit{}, fmt.Errorf("config: %s must be a duration from 1m to 1h", EnvRateLimitLeaseTTL)
+		}
+		r.LeaseTTL = ttl
+	}
+	return r, nil
 }
 
 // modelAliases reads a comma-separated list, ignoring spaces around a name and empty

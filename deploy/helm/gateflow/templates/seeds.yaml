@@ -7,7 +7,9 @@
 {{- $env = append $env (dict "name" $key "valueFrom" (dict "secretKeyRef" (dict "name" $.Values.secretName "key" $key "optional" true))) -}}
 {{- end -}}
 {{- end -}}
-{{- $c := dict "name" "seed" "image" (include "gf.image" (dict "root" $ "service" $svc)) "args" (list "seed") "env" $env -}}
+{{- $args := list "seed" -}}
+{{- if and (eq $name "access") $.Values.seedPlans -}}{{- $args = append $args (printf "--plans=%s" $.Values.seedPlans) -}}{{- end -}}
+{{- $c := dict "name" "seed" "image" (include "gf.image" (dict "root" $ "service" $svc)) "args" $args "env" $env -}}
 {{- $pod := include "gf.jobPod" $ | fromJson -}}
 {{- $_ := set $pod "containers" (list $c) -}}
 {{- $_ := set $pod "securityContext" (dict "runAsNonRoot" true) }}

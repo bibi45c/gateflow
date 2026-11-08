@@ -101,7 +101,8 @@ services:
       <<: *service-build
       args:
         TARGET: services/access
-    command: ["seed", "--tenants", "10"]
+    # SEED_PLANS puts tenants on plans (#157), such as tenant-01=free,tenant-02=premium.
+    command: ["seed", "--tenants", "10", "--plans", "${SEED_PLANS:-}"]
     restart: "no"
     environment: *access-environment
     depends_on:
@@ -146,6 +147,8 @@ services:
     <<: *stop
     environment:
       <<: [*internal-urls, *internal-tokens]
+      RATELIMIT_ENABLED: ${RATELIMIT_ENABLED:-true}
+      RATELIMIT_REDIS_URL: redis://redis:6379/0
     # Lets the gateway reach an Ollama installed on the host, also on Linux.
     extra_hosts: ["host.docker.internal:host-gateway"]
     ports: ["127.0.0.1:${GATEWAY_PORT:-8080}:8080"]

@@ -1,0 +1,13 @@
+{{- /* #157: the shared state of the tenants' plan limits. One replica, no persistence: a restart forgets the counters and leases, which the limits tolerate (see the README). */ -}}
+{{- if .Values.ratelimit.enabled -}}
+{{- $labels := merge (dict "app.kubernetes.io/component" "redis") (include "gf.labels" . | fromJson) -}}
+{{- $env := list (dict "name" "REDIS_PASSWORD" "valueFrom" (dict "secretKeyRef" (dict "name" .Values.secretName "key" "RATELIMIT_REDIS_PASSWORD"))) -}}
+{{- $args := list "--requirepass" "$(REDIS_PASSWORD)" "--save" "" "--appendonly" "no" "--maxmemory" "64mb" "--maxmemory-policy" "noeviction" -}}
+{{- $probe := dict "tcpSocket" (dict "port" "redis") "periodSeconds" 5 "timeoutSeconds" 1 "failureThreshold" 3 -}}
+{{- $c := dict "name" "redis" "image" .Values.ratelimit.redisImage "command" (list "redis-server") "args" $args "env" $env "ports" (list (dict "name" "redis" "containerPort" 6379)) "resources" .Values.ratelimit.resources "readinessProbe" $probe "livenessProbe" $probe "securityContext" (dict "runAsUser" 999 "runAsGroup" 999 "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL"))) "volumeMounts" (list (dict "name" "data" "mountPath" "/data")) -}}
+{{- $pod := dict "containers" (list $c) "automountServiceAccountToken" false "securityContext" (dict "runAsNonRoot" true "seccompProfile" (dict "type" "RuntimeDefault")) "nodeSelector" (dict "gateflow.io/workload" "services") "volumes" (list (dict "name" "data" "emptyDir" (dict))) -}}
+---
+{{ dict "apiVersion" "apps/v1" "kind" "Deployment" "metadata" (dict "name" (printf "%s-redis" .Release.Name) "labels" $labels) "spec" (dict "replicas" 1 "selector" (dict "matchLabels" $labels) "template" (dict "metadata" (dict "labels" $labels) "spec" $pod)) | toJson }}
+---
+{{ dict "apiVersion" "v1" "kind" "Service" "metadata" (dict "name" (printf "%s-redis" .Release.Name) "labels" $labels) "spec" (dict "selector" $labels "ports" (list (dict "name" "redis" "port" 6379 "targetPort" "redis"))) | toJson }}
+{{- end }}

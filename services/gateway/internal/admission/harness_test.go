@@ -99,6 +99,8 @@ type setup struct {
 	responses bool
 	// observer, when set, observes the gateway's requests.
 	observer *observability.Observer
+	// limiter, when set, enforces the tenant's limits that verify returns.
+	limiter admission.Limiter
 }
 
 // harness is the gateway's POST /v1/messages and POST /v1/responses, as main mounts
@@ -150,6 +152,7 @@ func start(t *testing.T, s setup) *harness {
 		Metering: meteringclient.New(meteringCaller),
 		Getenv:   testEnv,
 		Logger:   logger,
+		Limiter:  s.limiter,
 	})
 	cfg := relay.Config{Getenv: testEnv, Observer: s.observer}
 	if s.tlsUpstream {
@@ -279,6 +282,7 @@ func verifyOK(channel channelJSON) answer {
 			"tenant_id":        "tenant-01",
 			"key_id":           "key-tenant-01",
 			"price_version_id": "pv-fixture-2-5",
+			"limits":           map[string]any{"plan_id": "free", "rpm": 60, "max_concurrent": 5},
 			"channel":          channel,
 		})
 		reply(w, http.StatusOK, string(body))

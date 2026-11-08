@@ -9,6 +9,7 @@ const (
 	ErrorTypePermission      = "permission_error"
 	ErrorTypeRequestTooLarge = "request_too_large"
 	ErrorTypeAPI             = "api_error"
+	ErrorTypeRateLimit       = "rate_limit_error"
 )
 
 // ErrorBody is an Anthropic error: the body of an error response, and the data of an
