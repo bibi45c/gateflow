@@ -86,8 +86,19 @@ jobs:
       - name: Run every test against Postgres and Redis, failing if any of those tests skipped
         shell: bash
         run: |
-          go test -count=1 -v ./... | tee "$RUNNER_TEMP/go-test.log"
+          set -o pipefail
+          go test -count=1 -v -coverprofile="$RUNNER_TEMP/cover.out" ./... | tee "$RUNNER_TEMP/go-test.log"
           if grep -E "set GATEFLOW_TEST_(POSTGRES|REDIS)_URL" "$RUNNER_TEMP/go-test.log"; then exit 1; fi
+      - name: Report statement coverage
+        shell: bash
+        run: |
+          {
+            echo "### Go statement coverage (with Postgres and Redis)"
+            echo '```text'
+            go tool cover -func="$RUNNER_TEMP/cover.out" | grep -E '^total:'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func="$RUNNER_TEMP/cover.out" | grep -E '^total:'
 
   compose:
     name: Compose smoke test

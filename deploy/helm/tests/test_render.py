@@ -81,6 +81,25 @@ class ChartTests(unittest.TestCase):
         for setting in ['seedPlans=tenant-01', 'seedPlans=a=b;c', 'ratelimit.leaseTTL=10s']:
             with self.subTest(setting=setting):
                 p=subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set',setting],capture_output=True,text=True)
+
+    def test_metering_recovery_cronjob(self):
+        self.assertFalse([d for d in render() if d['kind']=='CronJob'])
+        jobs=[d for d in render('--set','recovery.enabled=true','--set','recovery.olderThan=45m') if d['kind']=='CronJob']
+        self.assertEqual(len(jobs),1)
+        cron=jobs[0]; spec=cron['spec']
+        self.assertEqual(cron['metadata']['name'],'gf-metering-recover')
+        self.assertEqual((spec['schedule'],spec['concurrencyPolicy'],spec['suspend']),('*/5 * * * *','Forbid',False))
+        job=spec['jobTemplate']['spec']; pod=job['template']['spec']; c=pod['containers'][0]
+        self.assertEqual((job['backoffLimit'],job['activeDeadlineSeconds']),(0,360))
+        self.assertEqual(c['args'],['recover','--older-than=45m','--limit=1000'])
+        self.assertTrue(c['image'].startswith('ghcr.io/bibi45c/gateflow-metering'))
+        self.assertEqual(c['env'],[{'name':'DATABASE_URL','valueFrom':{'secretKeyRef':{'name':'gateflow-runtime','key':'METERING_DATABASE_URL'}}}])
+        self.assertFalse(pod['automountServiceAccountToken'])
+        self.assertEqual(pod['nodeSelector'],{'gateflow.io/workload':'services'})
+        self.assertTrue(pod['securityContext']['runAsNonRoot'])
+        for setting in ['recovery.olderThan=30', 'recovery.limit=0', 'recovery.limit=10001']:
+            with self.subTest(setting=setting):
+                p=subprocess.run(['helm','template','gf',str(CHART),'--kube-version','1.35.0','--set','recovery.enabled=true','--set',setting],capture_output=True,text=True)
                 self.assertNotEqual(p.returncode,0)
 
     def test_invalid_configuration_rejected(self):

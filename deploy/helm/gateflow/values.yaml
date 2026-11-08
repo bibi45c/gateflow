@@ -136,6 +136,13 @@
       }
     }
   },
+  "recovery": {
+    "enabled": false,
+    "schedule": "*/5 * * * *",
+    "suspend": false,
+    "olderThan": "30m",
+    "limit": 1000
+  },
   "autoscaling": {
     "enabled": false,
     "minReplicas": 2,

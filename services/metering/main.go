@@ -7,7 +7,9 @@
 // and settle operations under /internal/v1, and its Prometheus metrics on GET
 // /metrics, for scrapes inside the cluster only. Run as
 // `metering seed [--balance N] [--tenants N] [--extra-tenants a,b]`, it instead
-// creates the missing test wallets and exits.
+// creates the missing test wallets and exits. Run as
+// `metering recover [--older-than 30m] [--limit 1000] [--dry-run]`, it settles the
+// reservations still held after that age, which a scheduled job does (UC6), and exits.
 package main
 
 import (
@@ -44,6 +46,9 @@ func main() {
 			return
 		case "seed":
 			exitOnError(seed(os.Args[2:]))
+			return
+		case "recover":
+			exitOnError(recoverHeld(os.Args[2:], os.Stdout))
 			return
 		}
 	}

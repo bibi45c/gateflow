@@ -1,0 +1,17 @@
+# Accepted Trivy findings (issue #156). Every entry gives its reason and expires, so
+# the scan fails again on the review date. Never add an entry without a reason.
+
+# AWS-0040 (CRITICAL), EKS public endpoint: the endpoint is public only for the
+# operator's /32 (public_access_cidrs), and private access is on. The operator runs
+# Terraform, Helm and kubectl from outside the VPC; there is no bastion or VPN.
+AWS-0040 exp:2027-03-31
+
+# AWS-0104 (CRITICAL), unrestricted egress from the node security groups: nodes pull
+# images from GHCR and reach AWS APIs through the single NAT gateway. Restricting
+# egress needs VPC endpoints and a GHCR mirror, which are future work.
+AWS-0104 exp:2027-03-31
+
+# AWS-0039 (HIGH), no KMS envelope encryption of Kubernetes Secrets: the cluster only
+# lives for a cloud day and its Secrets hold disposable test credentials; a customer
+# managed KMS key is future work for a long-lived environment.
+AWS-0039 exp:2027-03-31

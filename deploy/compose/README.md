@@ -69,6 +69,16 @@ the gateway starts after them, and a repeated `up` changes nothing.
 Each tenant's key, valid only for this local stack, is in the seed log:
 `docker compose -p <name> -f deploy/compose/compose.yaml logs seed-access`.
 
+## Recover held reservations
+
+The compose stack does not schedule recovery. To settle the reservations still held
+after 30 minutes, at their max cost, run the command once (`--dry-run` only lists
+them):
+
+```text
+docker compose -p <name> -f deploy/compose/compose.yaml run --rm seed-metering recover --older-than 30m
+```
+
 ## Ollama profile
 
 The `ollama` service is optional and starts only with `--profile ollama`. It is for
