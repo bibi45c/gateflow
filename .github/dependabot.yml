@@ -1,0 +1,20 @@
+# Issue #156: weekly update proposals for Go modules, workflow actions and the
+# Dockerfile's digest-pinned images. Each update arrives as a PR and passes the usual
+# checks, including the security scan.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+  - package-ecosystem: docker
+    directory: /deploy/docker
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
