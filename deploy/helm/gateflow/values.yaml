@@ -121,6 +121,13 @@
     "ollamaBaseURL": "http://ollama:11434",
     "ollamaModel": "qwen3:8b"
   },
+  "recovery": {
+    "enabled": false,
+    "schedule": "*/5 * * * *",
+    "suspend": false,
+    "olderThan": "30m",
+    "limit": 1000
+  },
   "autoscaling": {
     "enabled": false,
     "minReplicas": 2,

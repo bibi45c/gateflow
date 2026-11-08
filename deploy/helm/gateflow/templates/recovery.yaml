@@ -1,0 +1,13 @@
+{{- /* UC6: settle the reservations whose caller never settled them (issue #154). */ -}}
+{{- $r := .Values.recovery -}}
+{{- if $r.enabled -}}
+{{- $svc := .Values.services.metering -}}
+{{- $env := list (dict "name" "DATABASE_URL" "valueFrom" (dict "secretKeyRef" (dict "name" .Values.secretName "key" "METERING_DATABASE_URL"))) -}}
+{{- $args := list "recover" (printf "--older-than=%s" $r.olderThan) (printf "--limit=%d" (int $r.limit)) -}}
+{{- $c := dict "name" "recover" "image" (include "gf.image" (dict "root" . "service" $svc)) "args" $args "env" $env "resources" (dict "requests" (dict "cpu" "10m" "memory" "32Mi") "limits" (dict "memory" "64Mi")) "securityContext" (dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL"))) -}}
+{{- $pod := include "gf.jobPod" . | fromJson -}}
+{{- $_ := set $pod "containers" (list $c) -}}
+{{- $_ := set $pod "securityContext" (dict "runAsNonRoot" true "seccompProfile" (dict "type" "RuntimeDefault")) -}}
+{{- $job := dict "activeDeadlineSeconds" 360 "backoffLimit" 0 "template" (dict "metadata" (dict "labels" (merge (dict "app.kubernetes.io/component" "metering-recover") (include "gf.labels" . | fromJson))) "spec" $pod) -}}
+{{ dict "apiVersion" "batch/v1" "kind" "CronJob" "metadata" (dict "name" (printf "%s-metering-recover" .Release.Name) "labels" (include "gf.labels" . | fromJson)) "spec" (dict "schedule" $r.schedule "suspend" (default false $r.suspend) "concurrencyPolicy" "Forbid" "startingDeadlineSeconds" 120 "successfulJobsHistoryLimit" 1 "failedJobsHistoryLimit" 3 "jobTemplate" (dict "spec" $job)) | toJson }}
+{{- end }}

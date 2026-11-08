@@ -189,6 +189,24 @@ Treat those logs as credentials: restrict access and never paste them into PRs o
 issue evidence. The local helper uses the known disposable seed secret required
 by the smoke suite. Use a private seed secret for a real deployment.
 
+## Recovering held reservations (#154)
+
+When a caller never settles a reservation, because its settle failed three times or
+its gateway Pod died, the reservation keeps its amount held in the wallet. The
+opt-in CronJob `<release>-metering-recover` runs `metering recover` every
+`recovery.schedule` (default every 5 minutes, `concurrencyPolicy: Forbid`). It
+settles each reservation still held after `recovery.olderThan` (default `30m`), at
+most `recovery.limit` per run, as an interrupted call with unknown counts, which
+charges its max cost. Each recovery writes a normal ledger entry and one JSON log
+line; a late settle from the gateway then gets `422 idempotency_conflict`.
+
+`recovery.enabled` defaults to false, because the metering image must contain the
+`recover` command: an older image ignores the argument and starts the service
+instead. Enable it with an image built from the commit that added the command or
+later, and turn it off before rolling metering back past that commit. To stop
+recoveries without uninstalling, set `recovery.suspend=true`. To list what would
+be recovered, run the same image once with `recover --dry-run`.
+
 ## AWS handoff (operator only)
 
 Use values-aws.yaml and the existing RDS PostgreSQL 17 endpoint. It gives each
