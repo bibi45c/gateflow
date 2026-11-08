@@ -3,7 +3,7 @@
   "dashboard": {
     "enabled": false
   },
-  "imageTag": "de208ffb766a70706c108c98fa10e00bce37d266",
+  "imageTag": "c9b5bbf82252322bfd2ceb6270fc0373eaec0111",
   "secretName": "gateflow-runtime",
   "bootstrapSecretName": "gateflow-bootstrap",
   "postgresImage": "postgres:17",
