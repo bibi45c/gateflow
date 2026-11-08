@@ -18,6 +18,8 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install verified local tools
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python deploy/helm/toolchain.py --directory .local/bin
       - name: Add tools to PATH
         run: echo "$GITHUB_WORKSPACE/.local/bin" >> "$GITHUB_PATH"
