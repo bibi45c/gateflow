@@ -47,7 +47,8 @@ func TestVerifyAsksTheStoreForTheProtocol(t *testing.T) {
 		"anthropic-messages": {ID: "mock", Protocol: "anthropic-messages", BaseURL: "http://mock-upstream:8090"},
 		"openai-responses":   {ID: "mock-responses", Protocol: "openai-responses", BaseURL: "http://mock-upstream:8090"},
 	}
-	const prefix = `{"tenant_id":"tenant-01","key_id":"key-tenant-01","price_version_id":"pv-seed-1","channel":`
+	const prefix = `{"tenant_id":"tenant-01","key_id":"key-tenant-01","price_version_id":"pv-seed-1",` +
+		`"limits":{"plan_id":"unlimited","rpm":0,"max_concurrent":0},"channel":`
 	tests := []struct{ protocol, want, body string }{
 		{"", "anthropic-messages", prefix +
 			`{"id":"mock","protocol":"anthropic-messages","base_url":"http://mock-upstream:8090","credential_env":""}}`},
@@ -58,7 +59,7 @@ func TestVerifyAsksTheStoreForTheProtocol(t *testing.T) {
 	}
 	for _, tt := range tests {
 		fake := &fakeStore{key: store.VerifiedKey{TenantID: "tenant-01", KeyID: "key-tenant-01",
-			PriceVersionID: "pv-seed-1", Channel: channels[tt.want]}}
+			PriceVersionID: "pv-seed-1", Limits: store.Limits{PlanID: "unlimited"}, Channel: channels[tt.want]}}
 		handler, _ := newTestServer(fake, testToken)
 		got := call(handler, "POST", "/internal/v1/keys/verify", verifyBodyOver(testKey, "mock-fast", tt.protocol), authorized())
 		if got.Code != http.StatusOK {

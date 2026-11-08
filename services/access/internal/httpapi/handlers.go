@@ -24,7 +24,14 @@ type verifyResponse struct {
 	TenantID       string          `json:"tenant_id"`
 	KeyID          string          `json:"key_id"`
 	PriceVersionID string          `json:"price_version_id"`
+	Limits         limitsResponse  `json:"limits"`
 	Channel        channelResponse `json:"channel"`
+}
+
+type limitsResponse struct {
+	PlanID        string `json:"plan_id"`
+	RPM           int    `json:"rpm"`
+	MaxConcurrent int    `json:"max_concurrent"`
 }
 
 type channelResponse struct {
@@ -60,6 +67,7 @@ func (a *API) verifyKey(w http.ResponseWriter, r *http.Request) {
 		TenantID:       key.TenantID,
 		KeyID:          key.KeyID,
 		PriceVersionID: key.PriceVersionID,
+		Limits:         limitsResponse{PlanID: key.Limits.PlanID, RPM: key.Limits.RPM, MaxConcurrent: key.Limits.MaxConcurrent},
 		Channel: channelResponse{
 			ID:            key.Channel.ID,
 			Protocol:      key.Channel.Protocol,

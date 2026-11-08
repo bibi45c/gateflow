@@ -338,6 +338,7 @@ func TestVerifyReturnsTheKeyAndChannel(t *testing.T) {
 		TenantID:       "tenant-01",
 		KeyID:          "key-tenant-01",
 		PriceVersionID: "pv-seed-1",
+		Limits:         store.Limits{PlanID: "free", RPM: 60, MaxConcurrent: 5},
 		Channel:        store.Channel{ID: "mock", Protocol: "anthropic-messages", BaseURL: "http://mock-upstream:8090"},
 	}}
 	handler, _ := newTestServer(fake, testToken)
@@ -346,7 +347,7 @@ func TestVerifyReturnsTheKeyAndChannel(t *testing.T) {
 		t.Fatalf("status = %d, want 200: %s", got.Code, got.Body)
 	}
 	const want = `{"tenant_id":"tenant-01","key_id":"key-tenant-01","price_version_id":"pv-seed-1",` +
-		`"channel":{"id":"mock","protocol":"anthropic-messages","base_url":"http://mock-upstream:8090","credential_env":""}}`
+		`"limits":{"plan_id":"free","rpm":60,"max_concurrent":5},"channel":{"id":"mock","protocol":"anthropic-messages","base_url":"http://mock-upstream:8090","credential_env":""}}`
 	if body := strings.TrimSpace(got.Body.String()); body != want {
 		t.Errorf("body = %s\nwant   %s", body, want)
 	}

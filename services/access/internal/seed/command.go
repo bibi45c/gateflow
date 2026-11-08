@@ -12,15 +12,18 @@ import (
 	"github.com/bibi45c/gateflow/services/access/internal/store"
 )
 
-// Command runs `access seed [--tenants n]`, given the arguments after "seed". It
+// Command runs `access seed [--tenants n] [--plans tenant=plan,...]`, given the
+// arguments after "seed". It
 // applies the migrations, seeds the database at DATABASE_URL and writes one
 // "tenant_id key" line per tenant to stdout, the only place a key is ever written.
 // It also seeds the console users whose passwords are set, and names them on stderr.
-// Usage messages go to stderr.
+// With --plans, it then puts the named tenants on those plans (issue #157); the
+// others keep theirs. Usage messages go to stderr.
 func Command(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("access seed", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	tenants := flags.Int("tenants", 10, "seed tenant-00 to tenant-`n`")
+	plansFlag := flags.String("plans", "", "comma-separated `tenant=plan` assignments, such as tenant-01=free")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -29,6 +32,10 @@ func Command(ctx context.Context, args []string, getenv func(string) string, std
 	}
 	if *tenants < 0 {
 		return errors.New("seed: --tenants must be 0 or more")
+	}
+	plans, err := ParsePlans(*plansFlag)
+	if err != nil {
+		return err
 	}
 	cfg, err := config.LoadSeed(getenv)
 	if err != nil {
@@ -50,6 +57,9 @@ func Command(ctx context.Context, args []string, getenv func(string) string, std
 	}
 	users, err := Console(ctx, pool, cfg)
 	if err != nil {
+		return err
+	}
+	if err := ApplyPlans(ctx, pool, plans); err != nil {
 		return err
 	}
 	for _, k := range keys {

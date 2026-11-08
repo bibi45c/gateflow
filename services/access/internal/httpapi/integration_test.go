@@ -108,7 +108,8 @@ func TestSeededKeyWithAnAllowedModelIsVerified(t *testing.T) {
 		if err := json.Unmarshal(got.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
 		}
-		want := verifyResponse{TenantID: tt.tenant, KeyID: "key-" + tt.tenant, PriceVersionID: seed.PriceVersionID, Channel: tt.channel}
+		want := verifyResponse{TenantID: tt.tenant, KeyID: "key-" + tt.tenant, PriceVersionID: seed.PriceVersionID,
+			Limits: limitsResponse{PlanID: "unlimited"}, Channel: tt.channel}
 		if body != want {
 			t.Errorf("%s, %s over %q: body %+v, want %+v", tt.tenant, tt.model, tt.protocol, body, want)
 		}
